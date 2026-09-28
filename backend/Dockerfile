@@ -11,6 +11,7 @@ RUN pip install -r requirements.txt
 COPY app ./app
 COPY rules ./rules
 COPY tests ./tests
+COPY pytest.ini .
 RUN mkdir -p /app/storage/evidence/original /app/storage/analysis/recovered /app/storage/analysis/carved /app/storage/reports \
     && chown -R dfip:dfip /app
 USER dfip

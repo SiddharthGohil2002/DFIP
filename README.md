@@ -19,15 +19,17 @@ DFIP is a production-oriented digital-forensics case-management and examination 
 
 1. Install Docker Desktop / Docker Engine + Compose.
 2. Copy `.env.example` to `.env` and replace `JWT_SECRET`, MongoDB root credentials, and CORS settings.
-3. For a first demo run, keep `DEMO_MODE=true`.
-4. Start:
+3. For a first demo run, keep `DEMO_MODE=true`. With `DEMO_MODE=false`, the backend refuses to start with a placeholder `JWT_SECRET` and requires `ADMIN_PASSWORD` for the initial `admin@dfip.local` account.
+4. Writes (cases, uploads, analysis, findings, reports) are allowed from the web portal and enforced by RBAC. Set `REQUIRE_DESKTOP_FOR_WRITES=true` to restrict writes to registered DFIP desktop workstations (compose passes it to both the API and the web UI build).
+5. On Linux hosts, make `./storage` writable by the container user: `sudo chown -R 10001:10001 storage`.
+6. Start:
 
 ```bash
 docker compose up --build
 ```
 
-5. Open `http://localhost`.
-6. API health: `http://localhost:8000/health`.
+7. Open `http://localhost`.
+8. API health: `http://localhost:8000/health`.
 
 ### Demo accounts
 

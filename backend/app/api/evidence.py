@@ -3,12 +3,13 @@ from pathlib import Path
 from datetime import datetime, timezone
 import hashlib
 from typing import Optional
-from ..security import current_user, require_desktop_workstation
+from ..security import current_user, require_write
 from ..repositories.evidence import list_evidence, get_evidence, insert
 from ..repositories.cases import get_case
 from ..forensic.hashing import sha256_file
 from ..forensic.adapters import support_status
 from ..services.audit import log
+from ..services.sequences import next_sequence
 from ..services.notifications import create as notify
 from ..database import get_db
 from ..core.config import settings
@@ -45,7 +46,7 @@ async def upload(
     case_id: str = Form(...),
     file: UploadFile = File(...),
     sha512: Optional[str] = Form(None),
-    u=Depends(require_desktop_workstation)
+    u=Depends(require_write('EVIDENCE_UPLOAD'))
 ):
     ext, ok, _ = support_status(file.filename or '')
     if not ok:
@@ -78,7 +79,7 @@ async def upload(
         pass
 
     now = datetime.now(timezone.utc)
-    n = get_db()['evidence'].count_documents({}) + 1
+    n = next_sequence('evidence', floor=get_db()['evidence'].count_documents({}))
     eid = f'EVID-{n:03d}'
     
     doc = {
@@ -140,7 +141,7 @@ async def upload(
     return out
 
 @r.post('/{eid}/verify')
-def verify(eid, u=Depends(require_desktop_workstation)):
+def verify(eid, u=Depends(require_write('EVIDENCE_VERIFY'))):
     x = get_evidence(eid)
     if not x or not get_case(x['case_id'], u):
         raise HTTPException(404, 'Evidence not found or access denied')

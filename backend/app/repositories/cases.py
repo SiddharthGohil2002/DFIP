@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from ..database import get_db
+from ..services.sequences import next_sequence
 
 def col(): return get_db()['cases']
 def serial(x):
@@ -19,6 +20,7 @@ def get_case(case_id,user=None):
     x=col().find_one(q); return serial(x) if x else None
 
 def create_case(data,user):
-    now=datetime.now(timezone.utc); n=col().count_documents({})+1
+    now=datetime.now(timezone.utc)
+    n=next_sequence(f'cases-{now.year}',floor=col().count_documents({'case_id':{'$regex':f'^CASE-{now.year}-'}}))
     doc={'case_id':f"CASE-{now.year}-{n:03d}",'name':data['name'].strip(),'description':data.get('description',''),'status':'OPEN','priority':data.get('priority','MEDIUM'),'investigator_id':data.get('investigator_id') or (str(user['_id']) if user['role']!='ADMIN' else None),'member_ids':data.get('member_ids',[]),'created_by':str(user['_id']),'created_at':now,'updated_at':now}
     r=col().insert_one(doc);return serial(col().find_one({'_id':r.inserted_id}))

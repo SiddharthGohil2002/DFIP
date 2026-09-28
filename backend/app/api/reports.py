@@ -3,15 +3,17 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 from datetime import datetime, timezone
 import hashlib
+from xml.sax.saxutils import escape
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
-from ..security import current_user, require_desktop_workstation, require_permission
+from ..security import current_user, require_write, require_permission
 from ..database import get_db
 from ..core.config import settings
 from ..repositories.cases import get_case
 from ..services.audit import log
+from ..services.sequences import next_sequence
 from ..websocket.manager import manager
 
 r = APIRouter(prefix='/reports', tags=['reports'])
@@ -33,12 +35,12 @@ def reports(u=Depends(current_user)):
     return {'data': docs}
 
 @r.post('')
-def create_report(case_id: str, u=Depends(require_desktop_workstation)):
+def create_report(case_id: str, u=Depends(require_write('REPORT_CREATE'))):
     case = get_case(case_id, u)
     if not case:
         raise HTTPException(404, 'Case not found or access denied')
     db = get_db()
-    rid = f"RPT-{db['reports'].count_documents({}) + 1:03d}"
+    rid = f"RPT-{next_sequence('reports', floor=db['reports'].count_documents({})):03d}"
     root = Path(settings.storage_path) / 'reports'
     root.mkdir(parents=True, exist_ok=True)
     path = root / f'{rid}.pdf'
@@ -53,7 +55,7 @@ def create_report(case_id: str, u=Depends(require_desktop_workstation)):
         Paragraph('DFIP — Digital Forensics Investigation Report', styles['Title']),
         Spacer(1, 12),
         Paragraph(f'Report ID: {rid}', styles['BodyText']),
-        Paragraph(f"Case: {case_id} — {case['name']}", styles['BodyText']),
+        Paragraph(f"Case: {case_id} — {escape(case['name'])}", styles['BodyText']),
         Paragraph(f'Generated: {now.isoformat()}', styles['BodyText']),
         Spacer(1, 18),
         Paragraph('Evidence Register', styles['Heading2'])
@@ -72,10 +74,11 @@ def create_report(case_id: str, u=Depends(require_desktop_workstation)):
     ]))
     story += [t, Spacer(1, 16), Paragraph('Findings', styles['Heading2'])]
     for f in findings:
-        story.append(Paragraph(f"<b>{f['title']}</b> [{f['severity']}] — {f['description']}", styles['BodyText']))
+        story.append(Paragraph(f"<b>{escape(f['title'])}</b> [{escape(f['severity'])}] — {escape(f['description'])}", styles['BodyText']))
     story += [Spacer(1, 12), Paragraph('Timeline', styles['Heading2'])]
     for e in events:
-        story.append(Paragraph(f"{e['timestamp'].isoformat()} — {e.get('type', 'EVENT')} — {e.get('description', '')}", styles['BodyText']))
+        ts = e['timestamp'].isoformat() if hasattr(e['timestamp'], 'isoformat') else str(e['timestamp'])
+        story.append(Paragraph(f"{ts} — {escape(str(e.get('type', 'EVENT')))} — {escape(str(e.get('description', '')))}", styles['BodyText']))
     story += [
         Spacer(1, 16),
         Paragraph('Evidence integrity is represented by recorded cryptographic hashes and audit history. Investigators should preserve source media and follow applicable legal procedures.', styles['BodyText'])

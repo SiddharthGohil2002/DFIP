@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
-from ..security import current_user, require_permission, require_desktop_workstation
+from ..security import current_user, require_permission, require_write
 from bson import ObjectId
 from ..repositories.cases import list_cases, create_case, get_case, col
 from ..services.audit import log
-from ..services.notifications import create as notify
+from ..services.notifications import create as notify, create_sync as notify_sync
 from ..database import get_db
 from ..websocket.manager import manager
 
@@ -36,7 +36,7 @@ def one(case_id: str, u=Depends(current_user)):
     return c
 
 @r.post('')
-def post_case(x: CaseCreate, u=Depends(require_desktop_workstation)):
+def post_case(x: CaseCreate, u=Depends(require_write('CASE_CREATE'))):
     if x.priority not in {'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'}:
         raise HTTPException(400, 'Invalid priority')
     if x.investigator_id:
@@ -57,12 +57,11 @@ def post_case(x: CaseCreate, u=Depends(require_desktop_workstation)):
     })
     
     if c.get('investigator_id') and c['investigator_id'] != str(u['_id']):
-        import asyncio
-        asyncio.create_task(notify(c['investigator_id'], 'Case assigned', f'{c["case_id"]} was assigned to you.'))
+        notify_sync(c['investigator_id'], 'Case assigned', f'{c["case_id"]} was assigned to you.')
     return c
 
 @r.patch('/{case_id}')
-async def update_case(case_id: str, x: CaseUpdate, u=Depends(require_desktop_workstation)):
+async def update_case(case_id: str, x: CaseUpdate, u=Depends(require_write('CASE_UPDATE'))):
     c = get_case(case_id, u)
     if not c:
         raise HTTPException(404, 'Case not found or access denied')

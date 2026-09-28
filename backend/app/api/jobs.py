@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from ..security import current_user, require_desktop_workstation
+from ..security import current_user, require_write
 from ..database import get_db
 from ..websocket.manager import manager
 from datetime import datetime, timezone
@@ -26,7 +26,7 @@ def jobs(status: str | None = None, u=Depends(current_user)):
     return {'data': [serial(x) for x in get_db()['jobs'].find(q).sort('created_at', -1).limit(200)]}
 
 @r.post('/verify/{evidence_id}')
-def enqueue_verify(evidence_id: str, u=Depends(require_desktop_workstation)):
+def enqueue_verify(evidence_id: str, u=Depends(require_write('EVIDENCE_VERIFY'))):
     from ..repositories.evidence import get_evidence
     from ..repositories.cases import get_case
     e = get_evidence(evidence_id)
@@ -43,7 +43,7 @@ def enqueue_verify(evidence_id: str, u=Depends(require_desktop_workstation)):
     return {'job_id': job_id}
 
 @r.post('/analysis/{evidence_id}')
-def enqueue_analysis(evidence_id: str, u=Depends(require_desktop_workstation)):
+def enqueue_analysis(evidence_id: str, u=Depends(require_write('ANALYSIS_RUN'))):
     from ..repositories.evidence import get_evidence
     from ..repositories.cases import get_case
     e = get_evidence(evidence_id)
@@ -69,7 +69,7 @@ def job(job_id, u=Depends(current_user)):
     return serial(x)
 
 @r.post('/{job_id}/cancel')
-def cancel(job_id, u=Depends(require_desktop_workstation)):
+def cancel(job_id, u=Depends(require_write('JOB_CANCEL'))):
     from ..services.jobs import queue
     x = queue.cancel(job_id)
     if not x:
@@ -84,7 +84,7 @@ def cancel(job_id, u=Depends(require_desktop_workstation)):
 def enqueue_desktop_job(
     evidence_id: str,
     job_type: str = 'DESKTOP_ACQUIRE_EVIDENCE',
-    u=Depends(require_desktop_workstation)
+    u=Depends(require_write('ANALYSIS_RUN'))
 ):
     from ..repositories.evidence import get_evidence
     from ..repositories.cases import get_case

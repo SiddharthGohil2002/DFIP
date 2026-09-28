@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export const isDesktop = true;
+export const canWrite = true;
 
 async function executeNative<T>(cmd: string, args?: Record<string, any>): Promise<T> {
   if (typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__)) {

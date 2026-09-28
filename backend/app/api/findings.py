@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
-from ..security import current_user, require_desktop_workstation
+from ..security import current_user, require_write
 from ..database import get_db
 from ..repositories.cases import get_case
 from ..services.audit import log
@@ -30,7 +30,7 @@ def list_findings(case_id: str | None = None, u=Depends(current_user)):
     return {'data': out}
 
 @r.post('')
-def create(x: FindingIn, u=Depends(require_desktop_workstation)):
+def create(x: FindingIn, u=Depends(require_write('FINDING_CREATE'))):
     if not get_case(x.case_id, u):
         raise HTTPException(404, 'Case not found or access denied')
     if x.severity not in {'INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'}:

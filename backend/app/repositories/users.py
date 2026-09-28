@@ -34,12 +34,16 @@ def seed_users():
     # 1. Administrator Account (Production Single Root of Trust)
     admin_email = 'admin@dfip.local'
     if not get_by_email(admin_email):
+        # The well-known demo password is only acceptable in demo mode.
+        admin_password = 'DemoPassword!2026' if settings.demo_mode else settings.admin_password
+        if not admin_password:
+            raise RuntimeError('ADMIN_PASSWORD must be set to create the initial admin account when DEMO_MODE is off')
         col().insert_one({
             'name': 'DFIP Administrator',
             'email': admin_email,
             'role': 'ADMIN',
             'status': 'ACTIVE',
-            'password_hash': hash_password('DemoPassword!2026'),
+            'password_hash': hash_password(admin_password),
             'created_at': now,
             'updated_at': now
         })

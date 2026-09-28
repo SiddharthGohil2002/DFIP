@@ -31,11 +31,18 @@ services:
     container_name: dfip-backend
     restart: unless-stopped
     environment: &backend_env
-      MONGODB_URI: mongodb://dfiproot:${MONGO_ROOT_PASSWORD:-change-me-now}@mongodb:27017/dfip?authSource=admin
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-dfiproot}:${MONGO_ROOT_PASSWORD:-change-me-now}@mongodb:27017/dfip?authSource=admin
       DATABASE_NAME: dfip
       JWT_SECRET: ${JWT_SECRET:-replace-with-a-long-random-secret-at-least-32-characters}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      PASSWORD_PBKDF2_ROUNDS: ${PASSWORD_PBKDF2_ROUNDS:-310000}
       STORAGE_PATH: /app/storage
       DEMO_MODE: ${DEMO_MODE:-true}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      REQUIRE_DESKTOP_FOR_WRITES: ${REQUIRE_DESKTOP_FOR_WRITES:-false}
+      CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-1800}
+      CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-1500}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-53687091200}
       REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-now}@redis:6379/0
@@ -64,7 +71,10 @@ services:
       mongodb: {condition: service_healthy}
       redis: {condition: service_healthy}
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_REQUIRE_DESKTOP_FOR_WRITES: ${REQUIRE_DESKTOP_FOR_WRITES:-false}
     container_name: dfip-frontend
     restart: unless-stopped
     ports: ["80:80"]

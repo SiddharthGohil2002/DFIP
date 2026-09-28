@@ -108,6 +108,16 @@ def require_permission(permission: str):
     return dependency
 
 
+def require_write(permission: str):
+    """Guards a mutating endpoint: always enforces the RBAC permission, and also
+    requires a registered desktop workstation when REQUIRE_DESKTOP_FOR_WRITES is on."""
+    def dependency(request: Request, user=Depends(require_permission(permission))):
+        if settings.require_desktop_for_writes:
+            require_desktop_workstation(request, user)
+        return user
+    return dependency
+
+
 def require_desktop_workstation(request: Request, user=Depends(current_user)):
     """Verifies that the request originates from an authorized, registered desktop workstation.
     

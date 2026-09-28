@@ -2,7 +2,7 @@ from fastapi import APIRouter,Depends,HTTPException
 from datetime import datetime,timezone
 from pathlib import Path
 import hashlib,json,uuid
-from ..security import current_user, require_permission, require_desktop_workstation
+from ..security import current_user, require_permission, require_write
 from ..database import get_db
 from ..repositories.evidence import get_evidence
 from ..repositories.cases import get_case
@@ -30,7 +30,7 @@ def serial(v):
 def tooling(u=Depends(current_user)): return {'data':inventory()}
 
 @r.post('/evidence/{eid}/analyze')
-def analyze(eid,u=Depends(require_desktop_workstation)):
+def analyze(eid,u=Depends(require_write('ANALYSIS_RUN'))):
     e=auth_evidence(eid,u)
     if e.get('demo'): return {'status':'DEMO','evidence_id':e['evidence_id'],'case_id':e['case_id'],'engine':'DFIP Demo Engine','limitations':['Synthetic demo evidence cannot be parsed as a real image.']}
     path=Path(e['storage_path'])
@@ -43,7 +43,7 @@ def analyze(eid,u=Depends(require_desktop_workstation)):
     return serial(dict(result,evidence_id=e['evidence_id'],case_id=e['case_id']))
 
 @r.post('/evidence/{eid}/examine')
-def examine(eid:str,offset:int=0,u=Depends(require_desktop_workstation)):
+def examine(eid:str,offset:int=0,u=Depends(require_write('ANALYSIS_RUN'))):
     e=auth_evidence(eid,u)
     if e.get('demo'): raise HTTPException(400,'Demo evidence cannot be examined as a real image')
     path=Path(e['storage_path'])
@@ -51,12 +51,12 @@ def examine(eid:str,offset:int=0,u=Depends(require_desktop_workstation)):
     parts=parse_mmls(path); fs=parse_filesystem(path,e['format'],offset); stats=filesystem_stats(path,offset)
     now=datetime.now(timezone.utc)
     docs=[]
-    for p in parts.get('partitions',[]): docs.append({'case_id':e['case_id'],'evidence_id':eid,'type':'PARTITION','timestamp':now,'data':p,'source':'SLEUTH_KIT'})
-    for a in fs.get('artifacts',[]): docs.append({'case_id':e['case_id'],'evidence_id':eid,'type':'FILESYSTEM_ENTRY','timestamp':now,'data':a,'source':'SLEUTH_KIT'})
+    for p in parts.get('partitions',[]): docs.append({'case_id':e['case_id'],'evidence_id':e['evidence_id'],'type':'PARTITION','timestamp':now,'data':p,'source':'SLEUTH_KIT'})
+    for a in fs.get('artifacts',[]): docs.append({'case_id':e['case_id'],'evidence_id':e['evidence_id'],'type':'FILESYSTEM_ENTRY','timestamp':now,'data':a,'source':'SLEUTH_KIT'})
     if docs: get_db()['forensic_artifacts'].insert_many(docs)
     log(u,'FORENSIC_EXAMINATION','evidence',e['_id'],{'offset':offset,'partitions':len(parts.get('partitions',[])),'filesystem_entries':len(fs.get('artifacts',[]))})
-    manager.emit_sync('ARTIFACT_BATCH_CREATED', {'case_id': e['case_id'], 'evidence_id': eid, 'count': len(docs)})
-    return serial({'evidence_id':eid,'offset':offset,'partitions':parts,'filesystem':fs,'filesystem_stats':stats,'persisted_artifacts':len(docs)})
+    manager.emit_sync('ARTIFACT_BATCH_CREATED', {'case_id': e['case_id'], 'evidence_id': e['evidence_id'], 'count': len(docs)})
+    return serial({'evidence_id':e['evidence_id'],'offset':offset,'partitions':parts,'filesystem':fs,'filesystem_stats':stats,'persisted_artifacts':len(docs)})
 
 @r.get('/evidence/{eid}/partitions')
 def partitions(eid,u=Depends(current_user)):
@@ -67,23 +67,23 @@ def partitions(eid,u=Depends(current_user)):
     return serial(parse_mmls(p))
 
 @r.post('/evidence/{eid}/istat')
-def istat(eid:str,inode:int,offset:int=0,u=Depends(require_desktop_workstation)):
+def istat(eid:str,inode:int,offset:int=0,u=Depends(require_write('ANALYSIS_RUN'))):
     e=auth_evidence(eid,u)
     if e.get('demo'): raise HTTPException(400,'Demo evidence cannot be examined')
     return serial(inode_stat(Path(e['storage_path']),inode,offset))
 
 @r.post('/evidence/{eid}/recover')
-def recover(eid:str,inode:int,offset:int=0,u=Depends(require_desktop_workstation)):
+def recover(eid:str,inode:int,offset:int=0,u=Depends(require_write('ANALYSIS_RUN'))):
     e=auth_evidence(eid,u)
     if e.get('demo'): raise HTTPException(400,'Demo evidence cannot be recovered')
-    image=Path(e['storage_path']); root=Path(settings.storage_path).resolve()/'analysis'/'recovered'/eid
+    image=Path(e['storage_path']); root=Path(settings.storage_path).resolve()/'analysis'/'recovered'/e['evidence_id']
     name=f'{inode}_{uuid.uuid4().hex}.bin'; dest=root/name
     result=recover_file(image,inode,dest,offset)
     if result.get('status')!='COMPLETED': return result
     digest=hashlib.sha256(dest.read_bytes()).hexdigest(); size=dest.stat().st_size
     dest.chmod(0o440)
     now=datetime.now(timezone.utc); aid=str(uuid.uuid4())
-    doc={'artifact_id':aid,'case_id':e['case_id'],'evidence_id':eid,'type':'RECOVERED_FILE','timestamp':now,'path':str(dest),'filename':name,'inode':inode,'offset':offset,'size':size,'sha256':digest,'source':'SLEUTH_KIT_ICAT'}
+    doc={'artifact_id':aid,'case_id':e['case_id'],'evidence_id':e['evidence_id'],'type':'RECOVERED_FILE','timestamp':now,'path':str(dest),'filename':name,'inode':inode,'offset':offset,'size':size,'sha256':digest,'source':'SLEUTH_KIT_ICAT'}
     get_db()['forensic_artifacts'].insert_one(doc); log(u,'FILE_RECOVERED','evidence',e['_id'],{'artifact_id':aid,'inode':inode,'sha256':digest})
     manager.emit_sync('ARTIFACT_CREATED', {'artifact_id': aid, 'case_id': e['case_id'], 'type': 'RECOVERED_FILE', 'filename': name})
     return serial({'status':'COMPLETED','artifact_id':aid,'size':size,'sha256':digest,'filename':name})
@@ -187,7 +187,7 @@ def browser_parse(artifact_id, u=Depends(require_permission('ANALYSIS_RUN'))):
 
 
 @r.post('/evidence/{eid}/carve')
-def carve_evidence(eid:str,engine:str='photorec',u=Depends(require_desktop_workstation)):
+def carve_evidence(eid:str,engine:str='photorec',u=Depends(require_write('ANALYSIS_RUN'))):
     """Runs file carving (PhotoRec by default) against the original evidence
     image and registers each recovered file as a chain-of-custody-tracked
     forensic artifact with a real SHA-256 hash."""
@@ -196,7 +196,7 @@ def carve_evidence(eid:str,engine:str='photorec',u=Depends(require_desktop_works
     image=Path(e['storage_path'])
     if not image.exists(): raise HTTPException(409,'Original evidence object is unavailable')
     from ..forensic.carving import carve
-    output_dir=Path(settings.storage_path).resolve()/'analysis'/'carved'/eid
+    output_dir=Path(settings.storage_path).resolve()/'analysis'/'carved'/e['evidence_id']
     result=carve(engine,image,output_dir)
     if result.get('status')=='TOOL_UNAVAILABLE':
         return serial(result)
@@ -205,12 +205,12 @@ def carve_evidence(eid:str,engine:str='photorec',u=Depends(require_desktop_works
     for f in result.get('recovered_files', []):
         if 'sha256' not in f: continue
         aid=str(uuid.uuid4())
-        docs.append({'artifact_id':aid,'case_id':e['case_id'],'evidence_id':eid,'type':'CARVED_FILE',
+        docs.append({'artifact_id':aid,'case_id':e['case_id'],'evidence_id':e['evidence_id'],'type':'CARVED_FILE',
                      'timestamp':now,'path':f['path'],'filename':f['filename'],'size':f['size'],
                      'sha256':f['sha256'],'source':f'FILE_CARVING_{engine.upper()}'})
     if docs: get_db()['forensic_artifacts'].insert_many(docs)
     log(u,'FILE_CARVING_COMPLETED','evidence',e['_id'],{'engine':engine,'status':result.get('status'),'files_recovered':len(docs)})
-    manager.emit_sync('ARTIFACT_BATCH_CREATED', {'case_id': e['case_id'], 'evidence_id': eid, 'type': 'CARVED_FILE', 'count': len(docs)})
+    manager.emit_sync('ARTIFACT_BATCH_CREATED', {'case_id': e['case_id'], 'evidence_id': e['evidence_id'], 'type': 'CARVED_FILE', 'count': len(docs)})
     return serial({'status':result.get('status'),'engine':engine,'files_recovered':len(docs),
                    'stderr':result.get('stderr','')[-2000:] if result.get('stderr') else ''})
 
@@ -226,7 +226,7 @@ def timeline(case_id:str|None=None,u=Depends(current_user)):
     return {'data':out}
 
 @r.post('/patterns')
-def patterns(case_id:str,u=Depends(require_desktop_workstation)):
+def patterns(case_id:str,u=Depends(require_write('ANALYSIS_RUN'))):
     if not get_case(case_id,u):raise HTTPException(404,'Case not found or access denied')
     ev=list(get_db()['timeline_events'].find({'case_id':case_id}));p=PatternService().run(ev);get_db()['patterns'].delete_many({'case_id':case_id});now=datetime.now(timezone.utc);docs=[dict(x,case_id=case_id,created_at=now) for x in p]
     if docs:get_db()['patterns'].insert_many(docs)
@@ -241,7 +241,7 @@ def get_patterns(case_id:str|None=None,u=Depends(current_user)):
     return {'data':out}
 
 @r.post('/anomalies')
-def anomalies(case_id:str,u=Depends(require_desktop_workstation)):
+def anomalies(case_id:str,u=Depends(require_write('ANALYSIS_RUN'))):
     if not get_case(case_id,u):raise HTTPException(404,'Case not found or access denied')
     ev=list(get_db()['timeline_events'].find({'case_id':case_id}))
     from ..analysis.services import AnomalyService,MLAnomalyService

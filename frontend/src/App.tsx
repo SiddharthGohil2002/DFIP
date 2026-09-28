@@ -23,9 +23,9 @@ const modules: any[] = [
   ['email', 'Email Forensics', I.Mail, 'Inspect email metadata and attachments.'],
   ['network', 'Network Forensics', I.Network, 'Review network artifacts and events.'],
   ['malware', 'Malware Analysis', I.Bug, 'Review static indicators and malware artifacts.'],
-  ['patterns', 'Pattern Detection', I.Activity, 'Rule-based activity pattern analysis.'],
-  ['anomalies', 'Anomaly Analysis', I.BrainCircuit, 'Review potentially anomalous activity.'],
-  ['ai-assistant', 'AI Forensic Assistant', I.Sparkles, 'Evidence-grounded investigation assistance.'],
+  ['patterns', 'Patterns', I.Activity, 'Rule-based activity pattern analysis.'],
+  ['anomalies', 'Anomalies', I.BrainCircuit, 'Review potentially anomalous activity.'],
+  ['ai-assistant', 'AI Assistant', I.Sparkles, 'Evidence-grounded investigation assistance.'],
 ];
 
 function Investigator() {

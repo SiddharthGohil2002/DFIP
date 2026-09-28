@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import * as I from 'lucide-react';
 import { api, uploadEvidence, downloadReport } from '../services/api';
-import { isDesktop } from '../native';
+import { isDesktop, canWrite } from '../native';
 import DesktopRequired from '../components/DesktopRequired';
 import OperationBadge from '../components/OperationBadge';
 import DesktopStatus from '../components/DesktopStatus';
@@ -63,12 +63,13 @@ const Button = ({
   </button>
 );
 
-function useLoad(path: string) {
+function useLoad(path: string | null) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(path !== null);
 
   const load = () => {
+    if (path === null) return;
     setLoading(true);
     api<any>(path)
       .then((r) => {
@@ -155,8 +156,8 @@ export function Dashboard({ admin = false }: { admin?: boolean }) {
   const c = useLoad('/cases');
   const e = useLoad('/evidence');
   const a = useLoad('/forensics/timeline');
-  const stats = admin ? useLoad('/admin/stats') : null;
-  const s = stats?.data || {};
+  const stats = useLoad(admin ? '/admin/stats' : null);
+  const s = stats.data || {};
 
   const activeCases = admin ? s.cases ?? 0 : (c.data || []).filter((x: any) => x.status !== 'COMPLETED').length;
   const totalEvidence = admin ? s.evidence ?? (e.data || []).length : (e.data || []).length;
@@ -169,7 +170,7 @@ export function Dashboard({ admin = false }: { admin?: boolean }) {
         title={admin ? 'Platform Command Center' : 'Investigation Workspace'}
         sub={admin ? 'Comprehensive operational telemetry and active forensic case overview.' : 'Overview of your assigned investigations, evidence health, and verification telemetry.'}
         action={
-          isDesktop ? (
+          canWrite ? (
             <div style={{ display: 'flex', gap: 10 }}>
               <Button primary onClick={() => nav(admin ? '/admin/cases' : '/investigator/cases')}>
                 <I.FolderPlus size={15} /> New Case
@@ -328,7 +329,7 @@ export function Cases() {
       />
 
       {/* Case Creation Toolbar */}
-      {isDesktop ? (
+      {canWrite ? (
         <Card style={{ marginBottom: 20, padding: 18 }}>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <input
@@ -492,6 +493,19 @@ export function Evidence() {
             <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>Server upload is for evidence stored on network-attached storage accessible to the backend. For local evidence, use the native acquisition above.</div>
           </div>
         </Card>
+      ) : canWrite ? (
+        <Card style={{ marginBottom: 20, padding: 22 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Upload Evidence Image</h3>
+            <OperationBadge type="WEB" />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr auto', gap: 10 }}>
+            <input className="input" value={caseId} onChange={(e) => setCaseId(e.target.value)} placeholder="Case ID" />
+            <input className="input" type="file" accept=".E01,.e01,.RAW,.raw,.DD,.dd,.AFF,.aff,.AFF4,.aff4" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+            <Button primary onClick={upload} disabled={busy}>{busy ? 'Uploading…' : 'Upload to Server'}</Button>
+          </div>
+          <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>The server computes SHA-256 and SHA-512 on receipt, marks the original read-only and records the chain-of-custody entry.</div>
+        </Card>
       ) : (
         <div style={{ marginBottom: 20 }}>
           <DesktopRequired
@@ -620,7 +634,7 @@ export function EvidenceVerify() {
               </div>
             </div>
 
-            {isDesktop ? (
+            {canWrite ? (
               <Button primary onClick={verify} disabled={busy} style={{ width: '100%', padding: '12px 18px', fontSize: 14 }}>
                 {busy ? 'Computing Bitstream Checksum…' : 'Run Live Cryptographic Verification'}
               </Button>
@@ -813,7 +827,7 @@ export function Module({
       <Title title={name} sub={description} />
 
       {/* Desktop-only guard for acquisition and file recovery */}
-      {isDesktopOnly && !isDesktop ? (
+      {isDesktopOnly && !canWrite ? (
         <DesktopRequired
           operation={name}
           description={
@@ -831,7 +845,7 @@ export function Module({
             {/* Operation badge */}
             <OperationBadge type={
               isDesktopOnly ? 'DESKTOP' :
-              ['Pattern Detection', 'Anomaly Analysis', 'AI Forensic Assistant'].includes(name) ? 'WEB' : 'WEB+SYNC'
+              ['Patterns', 'Anomalies', 'AI Assistant'].includes(name) ? 'WEB' : 'WEB+SYNC'
             } />
 
             <input
@@ -859,19 +873,19 @@ export function Module({
               </>
             )}
 
-            {isDesktop && ['Patterns', 'Anomalies', 'Acquisition', 'File Recovery'].includes(name) && (
+            {canWrite && ['Patterns', 'Anomalies', 'Acquisition', 'File Recovery'].includes(name) && (
               <Button primary onClick={run} disabled={busy}>
                 {busy ? 'Executing Parser…' : name === 'Acquisition' ? 'Queue Background Triage' : name === 'File Recovery' ? 'Recover Inode' : 'Run Pattern Detection'}
               </Button>
             )}
 
-            {!isDesktop && ['Patterns', 'Anomalies'].includes(name) && (
+            {!canWrite && ['Patterns', 'Anomalies'].includes(name) && (
               <span className="badge" style={{ fontSize: 11, padding: '6px 10px' }}>
                 Analysis Engine Restricted to Desktop Workstation
               </span>
             )}
 
-            {isDesktop && name === 'Acquisition' && (
+            {canWrite && name === 'Acquisition' && (
               <Button onClick={examine} disabled={busy}>
                 {busy ? 'Inspecting…' : 'Inspect Partition Table'}
               </Button>
@@ -1081,7 +1095,7 @@ export function Carving() {
         sub="Perform raw block-level header/footer signature recovery for deleted or unallocated file fragments."
       />
 
-      {!isDesktop ? (
+      {!canWrite ? (
         <div style={{ marginBottom: 20 }}>
           <DesktopRequired
             operation="Signature File Carving"
@@ -1169,7 +1183,7 @@ export function Findings() {
         sub="Formally document forensic observations linked directly to verified evidence and timeline events."
       />
 
-      {isDesktop ? (
+      {canWrite ? (
         <Card style={{ marginBottom: 20, padding: 22 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 14px' }}>Document New Observation</h3>
           <div style={{ display: 'grid', gap: 12 }}>
@@ -1247,7 +1261,7 @@ export function Reports() {
         title="Forensic Reports & Documentation"
         sub="Generate court-admissible PDF investigation reports with cryptographic report hashes and custody metadata."
         action={
-          isDesktop ? (
+          canWrite ? (
             <div style={{ display: 'flex', gap: 10 }}>
               <input className="input" style={{ width: 200 }} value={caseId} onChange={(e) => setCaseId(e.target.value)} />
               <Button primary onClick={create} disabled={busy}>

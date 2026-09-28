@@ -363,7 +363,7 @@ export function Login() {
       localStorage.setItem('dfip_token', r.access_token);
       localStorage.setItem('dfip_refresh', r.refresh_token);
       setUser(r.user);
-      nav('/admin/dashboard');
+      nav(r.user.role === 'ADMIN' ? '/admin/dashboard' : '/investigator/dashboard');
     } catch (e: any) {
       setErr(e.message || 'Authentication failed. Please verify credentials.');
     } finally {

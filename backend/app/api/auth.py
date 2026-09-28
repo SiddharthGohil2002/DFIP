@@ -36,13 +36,6 @@ def login(x: Login, request: Request):
     u = get_by_email(str(x.email).lower())
     if not u or not verify_password(x.password, u.get('password_hash', '')) or u.get('status') != 'ACTIVE':
         raise HTTPException(401, 'Invalid credentials')
-    
-    # Enforce Admin-only access across platform clients
-    if u.get('role') != 'ADMIN':
-        raise HTTPException(
-            status_code=403,
-            detail="This account can only access DFIP through the authorized desktop application."
-        )
 
     client_type = x.client or 'web'
     access = create_access_token(u, client_type=client_type)
@@ -80,12 +73,6 @@ def refresh(x: Refresh):
     u = get_user_by_id(doc['user_id'])
     if not u or u.get('status') != 'ACTIVE':
         raise HTTPException(401, 'User is inactive')
-    
-    if u.get('role') != 'ADMIN':
-        raise HTTPException(
-            status_code=403,
-            detail="This account can only access DFIP through the authorized desktop application."
-        )
 
     raw, new = create_refresh_token(u)
     db['refresh_tokens'].update_one(
