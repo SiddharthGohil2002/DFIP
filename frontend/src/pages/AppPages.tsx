@@ -1668,6 +1668,7 @@ export function Reports() {
                 <th>Target Case</th>
                 <th>Document Version</th>
                 <th>Compiled At</th>
+                <th>PDF SHA-256</th>
                 <th>Export</th>
               </tr>
             </thead>
@@ -1680,6 +1681,7 @@ export function Reports() {
                   <td className="mono">{x.case_id}</td>
                   <td><span className="badge">v{x.version}</span></td>
                   <td className="mono" style={{ fontSize: 12 }}>{new Date(x.created_at).toLocaleString()}</td>
+                  <td className="mono" style={{ fontSize: 11 }} title={x.sha256}>{x.sha256 ? `${x.sha256.slice(0, 16)}…` : "—"}</td>
                   <td>
                     <Button sm onClick={() => downloadReport(x.report_id)}>
                       <I.Download size={13} /> Download PDF
