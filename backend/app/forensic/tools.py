@@ -56,19 +56,22 @@ def parse_mmls(path: Path):
     if r.get('available') and r.get('returncode') == 0:
         for line in r.get('stdout','').splitlines():
             s=line.strip()
-            if not s or s.lower().startswith(('offset','units','slot')) or '-----' in s:
+            if not s or s.lower().startswith(('offset','units','slot','dos partition','gpt','mac partition','bsd')):
                 continue
             cols=s.split()
-            if len(cols) >= 5:
-                # Typical mmls: Slot Start End Length Description
+            if len(cols) >= 6:
+                # mmls rows: "002:  000:000   0000002048   0000131071   0000129024   Win95 FAT32 (0x0c)"
+                # -> index, slot (Meta / ------- / table:entry), start, end, length, description
                 try:
                     start=int(cols[2])
                     end=int(cols[3])
+                    length=int(cols[4])
                 except (ValueError, IndexError):
                     continue
-                partitions.append({'slot':cols[0], 'start':start, 'end':end,
-                                   'length':max(0,end-start+1),
-                                   'description':' '.join(cols[4:])})
+                slot=cols[1]
+                partitions.append({'index':cols[0].rstrip(':'), 'slot':slot, 'start':start, 'end':end,
+                                   'length':length, 'description':' '.join(cols[5:]),
+                                   'is_meta':slot.lower()=='meta', 'is_unallocated':set(slot)=={'-'}})
     return {'status':'COMPLETED' if r.get('returncode') == 0 else ('TOOL_UNAVAILABLE' if not r.get('available') else 'FAILED'),
             'tool':'mmls', 'partitions':partitions, 'stdout':r.get('stdout',''), 'stderr':r.get('stderr','')}
 
@@ -81,12 +84,13 @@ def parse_filesystem(path: Path, format_name: str, offset: int = 0):
         args += ['-o', str(offset)]
     args.append(str(path))
     result=run('sleuthkit_fls', args, timeout=180, max_output=1_000_000)
+    from .filesystem import parse_bodyfile_line
     artifacts=[]
     if result.get('available') and result.get('returncode') == 0:
         for line in result.get('stdout','').splitlines()[:20_000]:
-            parts=line.split('|')
-            if len(parts)>=5:
-                artifacts.append({'path':parts[-1], 'raw':line, 'source':'SLEUTH_KIT', 'offset':offset})
+            entry=parse_bodyfile_line(line)
+            if entry:
+                artifacts.append(dict(entry, raw=line, source='SLEUTH_KIT', offset=offset))
     return {'status':'COMPLETED' if result.get('returncode')==0 else ('TOOL_UNAVAILABLE' if not result.get('available') else 'FAILED'),
             'tool':'fls','offset':offset,'artifacts':artifacts,'stderr':result.get('stderr','')}
 
@@ -109,7 +113,7 @@ def inode_stat(path: Path, inode: int, offset: int = 0):
             'tool':'istat','inode':inode,'offset':offset,'stdout':r.get('stdout',''),'stderr':r.get('stderr','')}
 
 
-def recover_file(image: Path, inode: int, destination: Path, offset: int = 0):
+def recover_file(image: Path, inode: int | str, destination: Path, offset: int = 0):
     destination.parent.mkdir(parents=True, exist_ok=True)
     args=[]
     if offset: args += ['-o', str(offset)]

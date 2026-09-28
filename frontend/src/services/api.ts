@@ -117,8 +117,16 @@ export async function uploadEvidence(form: FormData) {
 }
 
 export async function downloadReport(id: string) {
+  return downloadFile('/reports/' + encodeURIComponent(id) + '/download', id + '.pdf');
+}
+
+export async function downloadArtifact(artifactId: string, filename: string) {
+  return downloadFile('/forensics/artifacts/' + encodeURIComponent(artifactId) + '/download', filename);
+}
+
+async function downloadFile(path: string, filename: string) {
   const API = getServerBaseUrl();
-  const r = await fetch(API + '/reports/' + encodeURIComponent(id) + '/download', {
+  const r = await fetch(API + path, {
     headers: { Authorization: `Bearer ${localStorage.getItem('dfip_token') || ''}` },
   });
   if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: 'Download failed' }))).detail || 'Download failed');
@@ -126,7 +134,7 @@ export async function downloadReport(id: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = id + '.pdf';
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

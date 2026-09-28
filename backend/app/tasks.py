@@ -94,7 +94,7 @@ def hash_verify_task(self, job_id: str, evidence_id: str, created_by: str):
 @celery_app.task(bind=True, name='dfip.forensic_analysis', max_retries=1, default_retry_delay=30)
 def forensic_analysis_task(self, job_id: str, evidence_id: str, created_by: str):
     from .repositories.evidence import get_evidence
-    from .forensic.engine import ForensicEngine, extract_demo_artifacts
+    from .forensic.engine import extract_demo_artifacts
 
     if _is_cancelled(job_id):
         return {'job_id': job_id, 'status': 'CANCELLED'}
@@ -114,23 +114,29 @@ def forensic_analysis_task(self, job_id: str, evidence_id: str, created_by: str)
             db['forensic_artifacts'].insert_many([dict(x, analysis_job_id=job_id) for x in docs])
             result = {'status': 'DEMO', 'engine': 'DFIP Demo Engine', 'warning': 'Synthetic data only'}
         else:
-            _set_job(job_id, progress=10, stage='validating-evidence')
-            path = Path(e['storage_path'])
-            if not path.exists():
-                raise FileNotFoundError('Original evidence object is unavailable')
-
-            _set_job(job_id, progress=25, stage='forensic-examination')
+            from .forensic.pipeline import AnalysisPipeline, Cancelled
 
             def progress_cb(p, s):
                 _set_job(job_id, progress=p, stage=s)
 
-            result = ForensicEngine().analyze(path, e['format'], progress=progress_cb)
-            _set_job(job_id, progress=90, stage='persisting-artifacts')
+            db['evidence'].update_one({'_id': e['_id']}, {'$set': {'analysis_status': 'RUNNING', 'last_analysis_job': job_id}})
+            try:
+                result = AnalysisPipeline(db, e, job_id, progress=progress_cb,
+                                          is_cancelled=lambda: _is_cancelled(job_id)).run()
+            except Cancelled:
+                db['evidence'].update_one({'_id': e['_id']}, {'$set': {'analysis_status': 'CANCELLED'}})
+                return {'job_id': job_id, 'status': 'CANCELLED'}
+            except Exception:
+                db['evidence'].update_one({'_id': e['_id']}, {'$set': {'analysis_status': 'FAILED'}})
+                raise
             db['forensic_artifacts'].insert_one({
                 'case_id': e['case_id'], 'evidence_id': e['evidence_id'], 'type': 'ANALYSIS_RUN',
                 'timestamp': datetime.now(timezone.utc), 'data': result,
-                'source': 'DFIP_ENGINE', 'analysis_job_id': job_id,
+                'source': 'DFIP_ANALYSIS_PIPELINE', 'analysis_job_id': job_id,
             })
+            db['evidence'].update_one({'_id': e['_id']}, {'$set': {
+                'analysis_status': 'COMPLETED', 'analysis_summary': result['counts'],
+                'analyzed_at': datetime.now(timezone.utc)}})
 
         summary = {'evidence_id': e['evidence_id'], 'case_id': e['case_id'], 'summary': result}
         _set_job(job_id, status='COMPLETED', progress=100, stage='complete',

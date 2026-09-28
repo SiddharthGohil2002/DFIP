@@ -34,12 +34,18 @@ def carve_with_photorec(image_path: Path, output_dir: Path, timeout: int = 1800)
     if not binary:
         return {'status': 'TOOL_UNAVAILABLE', 'engine': 'photorec'}
     output_dir.mkdir(parents=True, exist_ok=True)
-    # /d <dir> sets destination, /cmd <image> <partition> ... runs headless.
-    # 'wholespace' scans the entire image rather than just a filesystem's
-    # allocated area — this is the point of carving (recovering deleted data).
-    cmd = [binary, '/log', '/d', str(output_dir), '/cmd', str(image_path), 'wholespace', 'search']
+    # `/d <prefix>` is a path prefix: PhotoRec writes <prefix>.1/, <prefix>.2/ ...
+    # `/cmd <image> <options>` runs headless; the options are ONE comma-joined
+    # argument. partition_none = treat the image as a whole disk; wholespace =
+    # scan free and allocated space (the point of carving is recovering deleted data).
+    # All signatures are enabled except 'dovecot', whose weak header matches
+    # registry hive pages and floods results with hundreds of false positives.
+    cmd = [binary, '/log', '/d', str(output_dir / 'recup_dir'), '/cmd', str(image_path),
+           'partition_none,options,paranoid,fileopt,everything,enable,dovecot,disable,wholespace,search']
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False, shell=False)
+        # cwd = output_dir so photorec.log lands with the carved output.
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False, shell=False,
+                              cwd=str(output_dir))
     except subprocess.TimeoutExpired:
         return {'status': 'TIMEOUT', 'engine': 'photorec', 'timeout_seconds': timeout}
     recovered = _inventory_recovered_files(output_dir)
@@ -53,15 +59,16 @@ def carve_with_photorec(image_path: Path, output_dir: Path, timeout: int = 1800)
 
 def carve_with_scalpel(image_path: Path, output_dir: Path, config_path: Path, timeout: int = 1800) -> dict:
     """Runs Scalpel with an explicit signature config file (required — Scalpel
-    refuses to run meaningfully without one). Callers must supply a real
-    scalpel.conf; we do not ship a default that silently narrows what gets
-    recovered without the investigator's knowledge."""
+    refuses to run meaningfully without one). DFIP ships backend/rules/scalpel.conf,
+    whose enabled file types are listed in that file so investigators can see
+    exactly what the default run looks for."""
     binary = shutil.which(ENGINES['scalpel'])
     if not binary:
         return {'status': 'TOOL_UNAVAILABLE', 'engine': 'scalpel'}
     if not config_path.is_file():
         return {'status': 'FAILED', 'engine': 'scalpel', 'error': 'No scalpel config file supplied'}
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Scalpel refuses to write into an existing non-empty directory.
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
     cmd = [binary, '-c', str(config_path), '-o', str(output_dir), str(image_path)]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False, shell=False)

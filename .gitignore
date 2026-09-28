@@ -15,6 +15,7 @@ storage/evidence/**
 storage/analysis/**
 storage/reports/**
 storage/downloads/**
+storage/test-images/**
 !storage/**/
 !storage/**/.gitkeep
 

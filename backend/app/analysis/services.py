@@ -91,3 +91,41 @@ class MLAnomalyService:
             'results': sorted(results, key=lambda r: r['anomaly_score'], reverse=True)[:200],
         }
 
+
+
+# Upper bound on events loaded for case analytics; filesystem timelines of real
+# disks run to hundreds of thousands of events.
+MAX_ANALYTIC_EVENTS = 50_000
+
+
+def _case_events(db, case_id):
+    return list(db['timeline_events'].find({'case_id': case_id}, {'_id': 0}).sort('timestamp', -1).limit(MAX_ANALYTIC_EVENTS))
+
+
+def compute_patterns(db, case_id):
+    """Recomputes and stores pattern results for a case; returns the stored docs."""
+    now = datetime.now(timezone.utc)
+    docs = [dict(x, case_id=case_id, created_at=now) for x in PatternService().run(_case_events(db, case_id))]
+    db['patterns'].delete_many({'case_id': case_id})
+    if docs:
+        db['patterns'].insert_many(docs)
+    return docs
+
+
+def compute_anomalies(db, case_id):
+    """Recomputes and stores anomaly results for a case. Uses IsolationForest when
+    there is enough data, otherwise the rule-based scorer (reported as such)."""
+    events = _case_events(db, case_id)
+    ml_result = MLAnomalyService().run(events)
+    if ml_result.get('status') == 'COMPLETED':
+        results, method = ml_result['results'], 'ISOLATION_FOREST'
+        extra = {'ml_summary': {k: v for k, v in ml_result.items() if k != 'results'}}
+    else:
+        results, method = AnomalyService().run(events), 'RULE_BASED_FALLBACK'
+        extra = {'ml_status': ml_result}
+    now = datetime.now(timezone.utc)
+    docs = [dict(x, case_id=case_id, created_at=now, detection_method=method) for x in results]
+    db['anomalies'].delete_many({'case_id': case_id})
+    if docs:
+        db['anomalies'].insert_many(docs)
+    return docs, method, extra

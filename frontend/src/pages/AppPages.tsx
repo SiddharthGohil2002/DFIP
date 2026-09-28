@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import * as I from 'lucide-react';
-import { api, uploadEvidence, downloadReport } from '../services/api';
+import { api, uploadEvidence, downloadReport, downloadArtifact } from '../services/api';
 import { isDesktop, canWrite } from '../native';
 import DesktopRequired from '../components/DesktopRequired';
 import OperationBadge from '../components/OperationBadge';
@@ -390,7 +390,7 @@ export function Cases() {
                   <td><StatusBadge status={x.status} /></td>
                   <td className="mono" style={{ fontSize: 12 }}>{new Date(x.created_at).toLocaleString()}</td>
                   <td>
-                    <Link to="/investigator/evidence" className="btn sm">
+                    <Link to="../evidence" relative="path" className="btn sm">
                       Evidence Register →
                     </Link>
                   </td>
@@ -552,8 +552,8 @@ export function Evidence() {
                     <StatusBadge status={x.verification_status} />
                   </td>
                   <td>
-                    <Link to={`/investigator/evidence/${x._id}`} className="btn sm">
-                      <I.ShieldCheck size={14} /> Verify
+                    <Link to={x.evidence_id} className="btn sm">
+                      <I.Microscope size={14} /> Open
                     </Link>
                   </td>
                 </tr>
@@ -590,7 +590,7 @@ export function EvidenceVerify() {
         title="Evidence Verification Audit"
         sub="Recalculate the on-disk cryptographic digest and compare against the intake manifest."
         action={
-          <Link to="/investigator/evidence" className="btn sm">
+          <Link to=".." relative="path" className="btn sm">
             ← Back to Register
           </Link>
         }
@@ -647,6 +647,369 @@ export function EvidenceVerify() {
           </div>
         ) : null}
       </Card>
+
+      {data && <AnalysisPanel evidence={data} onChange={reload} />}
+    </div>
+  );
+}
+
+/* =========================================================================
+   3b. DISK IMAGE ANALYSIS — pickers, full analysis job, files / USB / browser
+========================================================================= */
+const fmtTime = (v: any) => (v ? new Date(v).toLocaleString() : '—');
+const fmtSize = (n: any) => (n === null || n === undefined ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+const TERMINAL_JOB = ['COMPLETED', 'FAILED', 'CANCELLED'];
+
+function CasePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { data } = useLoad('/cases');
+  const cases = data || [];
+  useEffect(() => {
+    if (cases.length && !cases.find((c: any) => c.case_id === value)) onChange(cases[0].case_id);
+  }, [data]);
+  return (
+    <select className="input" style={{ maxWidth: 320 }} value={value} onChange={(e) => onChange(e.target.value)}>
+      {!cases.length && <option value="">No accessible cases</option>}
+      {cases.map((c: any) => <option key={c.case_id} value={c.case_id}>{c.case_id} — {c.name}</option>)}
+    </select>
+  );
+}
+
+function EvidencePicker({ caseId, value, onChange }: { caseId: string; value: string; onChange: (v: string) => void }) {
+  const { data } = useLoad('/evidence');
+  const items = (data || []).filter((e: any) => e.case_id === caseId && !e.demo);
+  useEffect(() => {
+    if (items.length && !items.find((e: any) => e.evidence_id === value)) onChange(items[0].evidence_id);
+    if (!items.length && value) onChange('');
+  }, [data, caseId]);
+  return (
+    <select className="input" style={{ maxWidth: 320 }} value={value} onChange={(e) => onChange(e.target.value)}>
+      {!items.length && <option value="">No evidence in this case</option>}
+      {items.map((e: any) => <option key={e.evidence_id} value={e.evidence_id}>{e.evidence_id} — {e.filename}</option>)}
+    </select>
+  );
+}
+
+function ProgressBar({ value }: { value: number }) {
+  return (
+    <div style={{ flex: 1, height: 8, background: 'var(--bg-subtle)', borderRadius: 999, overflow: 'hidden' }}>
+      <div style={{ width: `${value || 0}%`, height: '100%', background: 'var(--red)', borderRadius: 999, transition: 'width .4s' }} />
+    </div>
+  );
+}
+
+function AnalysisPanel({ evidence, onChange }: { evidence: any; onChange: () => void }) {
+  const [job, setJob] = useState<any>(null);
+  const [tab, setTab] = useState<'deleted' | 'files' | 'usb' | 'browser'>('deleted');
+  const [err, setErr] = useState('');
+  const summary = evidence.analysis_summary || {};
+
+  // Resume progress display for an analysis that is already running.
+  useEffect(() => {
+    if (evidence.analysis_status === 'RUNNING' && evidence.last_analysis_job) setJob({ job_id: evidence.last_analysis_job, status: 'RUNNING' });
+  }, [evidence.evidence_id]);
+
+  useEffect(() => {
+    if (!job || TERMINAL_JOB.includes(job.status)) return;
+    const t = setInterval(async () => {
+      try {
+        const j = await api<any>(`/jobs/${job.job_id}`);
+        setJob(j);
+        if (TERMINAL_JOB.includes(j.status)) onChange();
+      } catch (e: any) {
+        setErr(e.message);
+      }
+    }, 1500);
+    return () => clearInterval(t);
+  }, [job?.job_id, job?.status]);
+
+  async function start() {
+    setErr('');
+    try {
+      const r = await api<any>(`/jobs/analysis/${encodeURIComponent(evidence.evidence_id)}`, { method: 'POST' });
+      setJob({ job_id: r.job_id, status: 'QUEUED', progress: 0, stage: 'queued' });
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  const running = job && !TERMINAL_JOB.includes(job.status);
+  const analyzed = evidence.analysis_status === 'COMPLETED';
+
+  return (
+    <Card style={{ marginTop: 20, padding: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>DISK IMAGE ANALYSIS</div>
+          <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>Sleuth Kit examination</h3>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
+            Re-verifies the SHA-256, indexes every file (including deleted), builds the MACB timeline, and extracts browser history and USB device history.
+          </div>
+        </div>
+        {canWrite && !evidence.demo && (
+          <Button primary onClick={start} disabled={!!running}>
+            <I.Play size={15} /> {running ? 'Analysis running…' : analyzed ? 'Re-run Full Analysis' : 'Run Full Analysis'}
+          </Button>
+        )}
+      </div>
+
+      {err && <div className="badge danger" style={{ display: 'block', marginBottom: 12 }}>{err}</div>}
+      {job && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <span className="mono" style={{ fontSize: 12, fontWeight: 700 }}>{job.job_id}</span>
+          <ProgressBar value={job.progress} />
+          <span className="mono" style={{ fontSize: 11, minWidth: 190 }}>{job.status} · {job.stage} · {job.progress || 0}%</span>
+        </div>
+      )}
+      {job?.status === 'FAILED' && <div className="badge danger" style={{ display: 'block', marginBottom: 12 }}>{job.error}</div>}
+
+      {analyzed ? (
+        <>
+          <div className="grid4" style={{ marginBottom: 18 }}>
+            <Stat label="Files indexed" value={summary.files} icon={I.Files} trend={`${summary.deleted_files ?? 0} deleted`} />
+            <Stat label="Timeline events" value={summary.timeline_events} icon={I.Clock} trend={`Analyzed ${fmtTime(evidence.analyzed_at)}`} />
+            <Stat label="Browser records" value={(summary.browser_history ?? 0) + (summary.browser_downloads ?? 0)} icon={I.Globe} trend={`${summary.browser_downloads ?? 0} downloads`} />
+            <Stat label="USB devices" value={summary.usb_devices} icon={I.Usb} trend={`${summary.yara_matches ?? 0} YARA matches`} />
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+            {([['deleted', 'Deleted files'], ['files', 'All files'], ['usb', 'USB devices'], ['browser', 'Browser']] as const).map(([k, label]) => (
+              <button key={k} className={`feature-tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{label}</button>
+            ))}
+          </div>
+          {tab === 'deleted' && <FilesTable evidenceId={evidence.evidence_id} deletedOnly />}
+          {tab === 'files' && <FilesTable evidenceId={evidence.evidence_id} />}
+          {tab === 'usb' && <UsbTable caseId={evidence.case_id} evidenceId={evidence.evidence_id} />}
+          {tab === 'browser' && <BrowserTables caseId={evidence.case_id} evidenceId={evidence.evidence_id} />}
+        </>
+      ) : (
+        !running && <Empty text={evidence.demo ? 'Demo evidence is synthetic and cannot be analyzed.' : 'This image has not been analyzed yet.'} />
+      )}
+    </Card>
+  );
+}
+
+function FilesTable({ evidenceId, deletedOnly = false }: { evidenceId: string; deletedOnly?: boolean }) {
+  const [q, setQ] = useState('');
+  const [search, setSearch] = useState('');
+  const [skip, setSkip] = useState(0);
+  const [recovered, setRecovered] = useState<Record<string, any>>({});
+  const [busy, setBusy] = useState('');
+  const limit = 100;
+  const path = `/forensics/evidence/${encodeURIComponent(evidenceId)}/files?limit=${limit}&skip=${skip}${deletedOnly ? '&deleted=true' : ''}${search ? `&q=${encodeURIComponent(search)}` : ''}`;
+  const [res, setRes] = useState<any>(null);
+  useEffect(() => {
+    api<any>(path).then(setRes).catch((e) => setRes({ data: [], error: e.message }));
+  }, [path]);
+  useEffect(() => setSkip(0), [search, deletedOnly]);
+
+  async function recover(f: any) {
+    const key = `${f.partition_offset}:${f.inode}`;
+    setBusy(key);
+    try {
+      const r = await api<any>(`/forensics/evidence/${encodeURIComponent(evidenceId)}/recover?inode=${encodeURIComponent(f.inode)}&offset=${f.partition_offset}`, { method: 'POST' });
+      if (r.status !== 'COMPLETED') throw new Error(r.stderr || r.status);
+      setRecovered({ ...recovered, [key]: r });
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  const rows = res?.data || [];
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input className="input" style={{ maxWidth: 320 }} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setSearch(q)} placeholder="Filter by path (Enter)…" />
+        <Button sm onClick={() => setSearch(q)}><I.Search size={13} /> Filter</Button>
+        <span className="muted" style={{ fontSize: 12 }}>{res ? `${res.total ?? 0} ${deletedOnly ? 'deleted ' : ''}entries` : 'Loading…'}</span>
+        {res?.error && <span className="badge danger">{res.error}</span>}
+      </div>
+      <div className="table-container">
+        <table className="table">
+          <thead>
+            <tr><th>Path</th><th>Inode</th><th>Size</th><th>Modified</th><th>Created</th><th>Accessed</th><th></th></tr>
+          </thead>
+          <tbody>
+            {rows.map((f: any) => {
+              const key = `${f.partition_offset}:${f.inode}`;
+              const rec = recovered[key];
+              return (
+                <tr key={f._id}>
+                  <td style={{ maxWidth: 420, wordBreak: 'break-all' }}>
+                    {f.is_dir ? <I.Folder size={13} style={{ verticalAlign: 'middle', marginRight: 6 }} /> : <I.File size={13} style={{ verticalAlign: 'middle', marginRight: 6 }} />}
+                    <span style={{ fontWeight: f.deleted ? 700 : 500 }}>{f.path}</span>
+                    {f.deleted && <span className="badge danger" style={{ marginLeft: 8, fontSize: 10 }}>{f.deleted_status?.toUpperCase()}</span>}
+                  </td>
+                  <td className="mono" style={{ fontSize: 11 }}>{f.inode}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmtSize(f.size)}</td>
+                  <td className="mono" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{fmtTime(f.mtime)}</td>
+                  <td className="mono" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{fmtTime(f.crtime)}</td>
+                  <td className="mono" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{fmtTime(f.atime)}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {rec ? (
+                      <Button sm onClick={() => downloadArtifact(rec.artifact_id, rec.filename).catch((e) => alert(e.message))}>
+                        <I.Download size={13} /> Download
+                      </Button>
+                    ) : (
+                      canWrite && !f.is_dir && (
+                        <Button sm onClick={() => recover(f)} disabled={busy === key}>
+                          <I.RotateCcw size={13} /> {busy === key ? 'Recovering…' : 'Recover'}
+                        </Button>
+                      )
+                    )}
+                    {rec && <div className="mono muted" style={{ fontSize: 10, marginTop: 4 }} title={rec.sha256}>SHA-256 {rec.sha256.slice(0, 16)}…</div>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {res && !rows.length && <Empty text={deletedOnly ? 'No deleted file entries found.' : 'No files match.'} />}
+      </div>
+      {res && res.total > limit && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+          <Button sm disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - limit))}>← Prev</Button>
+          <span className="muted" style={{ fontSize: 12 }}>{skip + 1}–{Math.min(skip + limit, res.total)} of {res.total}</span>
+          <Button sm disabled={skip + limit >= res.total} onClick={() => setSkip(skip + limit)}>Next →</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UsbTable({ caseId, evidenceId }: { caseId: string; evidenceId?: string }) {
+  const { data, error } = useLoad(caseId ? `/forensics/usb?case_id=${encodeURIComponent(caseId)}${evidenceId ? `&evidence_id=${encodeURIComponent(evidenceId)}` : ''}` : null);
+  return (
+    <div className="table-container">
+      {error && <div className="badge danger">{error}</div>}
+      <table className="table">
+        <thead>
+          <tr><th>Device</th><th>Serial</th><th>VID:PID</th><th>Drive</th><th>First install</th><th>Last connected</th><th>Last removed</th><th>Source</th></tr>
+        </thead>
+        <tbody>
+          {(data || []).map((d: any) => (
+            <tr key={d._id}>
+              <td>
+                <div style={{ fontWeight: 700 }}>{d.friendly_name || `${d.vendor || ''} ${d.product || ''}`}</div>
+                <div className="muted" style={{ fontSize: 11 }}>{d.vendor} · {d.product} · rev {d.revision || '—'}</div>
+              </td>
+              <td className="mono" style={{ fontSize: 11 }}>
+                {d.serial}
+                {d.serial_is_unique === false && <div className="badge warn" style={{ fontSize: 9 }}>OS-GENERATED</div>}
+              </td>
+              <td className="mono" style={{ fontSize: 11 }}>{d.vid ? `${d.vid}:${d.pid}` : '—'}</td>
+              <td>{(d.drive_letters || []).join(', ') || '—'}</td>
+              <td className="mono" style={{ fontSize: 11 }}>
+                {fmtTime(d.first_install)}
+                {d.setupapi_first_install && <div className="muted" title="setupapi.dev.log">setupapi: {fmtTime(d.setupapi_first_install)}</div>}
+              </td>
+              <td className="mono" style={{ fontSize: 11 }}>{fmtTime(d.last_arrival)}</td>
+              <td className="mono" style={{ fontSize: 11 }}>{fmtTime(d.last_removal)}</td>
+              <td><span className="badge info" style={{ fontSize: 10 }}>{d.source}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {data && !data.length && <Empty text="No USB storage devices found in the SYSTEM hive or setupapi.dev.log (run Full Analysis on a Windows image)." />}
+    </div>
+  );
+}
+
+function BrowserTables({ caseId, evidenceId }: { caseId: string; evidenceId?: string }) {
+  const [kind, setKind] = useState<'BROWSER_HISTORY' | 'BROWSER_DOWNLOAD'>('BROWSER_HISTORY');
+  const { data, error } = useLoad(caseId ? `/forensics/browser?case_id=${encodeURIComponent(caseId)}&kind=${kind}${evidenceId ? `&evidence_id=${encodeURIComponent(evidenceId)}` : ''}` : null);
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+        <button className={`feature-tab ${kind === 'BROWSER_HISTORY' ? 'active' : ''}`} onClick={() => setKind('BROWSER_HISTORY')}>History</button>
+        <button className={`feature-tab ${kind === 'BROWSER_DOWNLOAD' ? 'active' : ''}`} onClick={() => setKind('BROWSER_DOWNLOAD')}>Downloads</button>
+      </div>
+      {error && <div className="badge danger">{error}</div>}
+      <div className="table-container">
+        <table className="table">
+          <thead>
+            {kind === 'BROWSER_HISTORY'
+              ? <tr><th>Browser</th><th>Last visit</th><th>Visits</th><th>URL / title</th><th>Source database</th></tr>
+              : <tr><th>Browser</th><th>Started</th><th>Saved to</th><th>From</th><th>Source database</th></tr>}
+          </thead>
+          <tbody>
+            {(data || []).map((r: any) => (
+              <tr key={r._id}>
+                <td><span className="badge">{r.browser}</span></td>
+                <td className="mono" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{fmtTime(kind === 'BROWSER_HISTORY' ? r.last_visit_time : r.start_time)}</td>
+                {kind === 'BROWSER_HISTORY' ? (
+                  <>
+                    <td>{r.visit_count}</td>
+                    <td style={{ maxWidth: 460, wordBreak: 'break-all' }}>
+                      <div style={{ fontWeight: 600 }}>{r.title || '—'}</div>
+                      <div className="mono muted" style={{ fontSize: 11 }}>{r.url}</div>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="mono" style={{ fontSize: 11, wordBreak: 'break-all' }}>{r.target_path}</td>
+                    <td className="mono" style={{ fontSize: 11, wordBreak: 'break-all' }}>{r.tab_url}</td>
+                  </>
+                )}
+                <td className="mono muted" style={{ fontSize: 10, maxWidth: 220, wordBreak: 'break-all' }}>{r.source_path}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {data && !data.length && <Empty text="No browser records found (Chrome/Edge/Brave History, Firefox places.sqlite)." />}
+      </div>
+    </div>
+  );
+}
+
+function CaseArtifactPage({ title, sub, children }: { title: string; sub: string; children: (caseId: string) => any }) {
+  const [caseId, setCaseId] = useState('');
+  return (
+    <div className="fade">
+      <Title title={title} sub={sub} action={<CasePicker value={caseId} onChange={setCaseId} />} />
+      <Card style={{ padding: 20 }}>{caseId ? children(caseId) : <Empty text="Select a case." />}</Card>
+    </div>
+  );
+}
+
+export function BrowserForensics() {
+  return (
+    <CaseArtifactPage title="Browser Forensics" sub="History and downloads parsed from Chrome, Edge, Brave and Firefox databases extracted from analyzed images.">
+      {(caseId) => <BrowserTables caseId={caseId} />}
+    </CaseArtifactPage>
+  );
+}
+
+export function UsbForensics() {
+  return (
+    <CaseArtifactPage title="USB Forensics" sub="Removable storage history from the SYSTEM registry hive (USBSTOR, USB, MountedDevices) and setupapi.dev.log.">
+      {(caseId) => <UsbTable caseId={caseId} />}
+    </CaseArtifactPage>
+  );
+}
+
+export function FileRecovery() {
+  const [caseId, setCaseId] = useState('');
+  const [evidenceId, setEvidenceId] = useState('');
+  const [deletedOnly, setDeletedOnly] = useState(true);
+  return (
+    <div className="fade">
+      <Title
+        title="Deleted File Recovery"
+        sub="Browse the Sleuth Kit file index of an analyzed image and recover files with icat. Recovered copies are hashed and logged to the chain of custody."
+        action={
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <CasePicker value={caseId} onChange={setCaseId} />
+            <EvidencePicker caseId={caseId} value={evidenceId} onChange={setEvidenceId} />
+          </div>
+        }
+      />
+      <Card style={{ padding: 20 }}>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, marginBottom: 12 }}>
+          <input type="checkbox" checked={deletedOnly} onChange={(e) => setDeletedOnly(e.target.checked)} /> Deleted entries only
+        </label>
+        {evidenceId ? <FilesTable key={`${evidenceId}-${deletedOnly}`} evidenceId={evidenceId} deletedOnly={deletedOnly} /> : <Empty text="Select evidence that has been analyzed." />}
+      </Card>
     </div>
   );
 }
@@ -654,42 +1017,63 @@ export function EvidenceVerify() {
 /* =========================================================================
    4. TIMELINE ANALYSIS
 ========================================================================= */
+const TIMELINE_TYPES: Record<string, string> = {
+  ALL: '',
+  NOTABLE: 'BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY',
+  FILE: 'FILE_MACB',
+  BROWSER: 'BROWSER_VISIT,BROWSER_DOWNLOAD',
+  USB: 'USB_ACTIVITY',
+};
+
 export function Timeline() {
-  const { data } = useLoad('/forensics/timeline');
+  const [caseId, setCaseId] = useState('');
   const [filter, setFilter] = useState('ALL');
   const [query, setQuery] = useState('');
-
-  const events = (data || []).filter((x: any) => {
-    const matchType = filter === 'ALL' || (x.type || '').includes(filter);
-    const matchQuery = !query || (x.description || '').toLowerCase().includes(query.toLowerCase());
-    return matchType && matchQuery;
-  });
+  const [search, setSearch] = useState('');
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  const [order, setOrder] = useState<'asc' | 'desc'>('asc');
+  const [skip, setSkip] = useState(0);
+  const limit = 200;
+  const params = new URLSearchParams({ limit: String(limit), skip: String(skip), order });
+  if (caseId) params.set('case_id', caseId);
+  if (TIMELINE_TYPES[filter]) params.set('type', TIMELINE_TYPES[filter]);
+  if (search) params.set('q', search);
+  if (start) params.set('start', new Date(start).toISOString());
+  if (end) params.set('end', new Date(end).toISOString());
+  const [res, setRes] = useState<any>(null);
+  useEffect(() => {
+    if (!caseId) return;
+    api<any>('/forensics/timeline?' + params.toString()).then(setRes).catch((e) => setRes({ data: [], error: e.message }));
+  }, [params.toString()]);
+  useEffect(() => setSkip(0), [caseId, filter, search, start, end, order]);
+  const events = res?.data || [];
 
   return (
     <div className="fade">
       <Title
         title="Unified Timeline Analysis"
-        sub="Multi-source chronological correlation spanning browser, USB, filesystem, network, and system artifacts."
-        action={
-          <div style={{ display: 'flex', gap: 10 }}>
-            <input
-              className="input"
-              style={{ width: 220 }}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search event descriptions…"
-            />
-            <select className="input" style={{ width: 150 }} value={filter} onChange={(e) => setFilter(e.target.value)}>
-              <option value="ALL">All Event Types</option>
-              <option value="USB">USB Artifacts</option>
-              <option value="BROWSER">Browser History</option>
-              <option value="NETWORK">Network Events</option>
-              <option value="FILE">Filesystem Activity</option>
-              <option value="MALWARE">Malware Indicators</option>
-            </select>
-          </div>
-        }
+        sub="Filesystem MACB times (Sleuth Kit), browser visits and downloads, and USB device events in one chronology. Times shown in your local time zone."
+        action={<CasePicker value={caseId} onChange={setCaseId} />}
       />
+
+      <Card style={{ padding: 16, marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select className="input" style={{ width: 190 }} value={filter} onChange={(e) => setFilter(e.target.value)}>
+            <option value="ALL">All event types</option>
+            <option value="NOTABLE">Browser + USB only</option>
+            <option value="FILE">Filesystem (MACB)</option>
+            <option value="BROWSER">Browser activity</option>
+            <option value="USB">USB activity</option>
+          </select>
+          <input className="input" style={{ width: 240 }} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setSearch(query)} placeholder="Search descriptions (Enter)…" />
+          <label className="muted" style={{ fontSize: 12 }}>From <input className="input" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} style={{ width: 200 }} /></label>
+          <label className="muted" style={{ fontSize: 12 }}>To <input className="input" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} style={{ width: 200 }} /></label>
+          <Button sm onClick={() => setOrder(order === 'asc' ? 'desc' : 'asc')}>{order === 'asc' ? 'Oldest first' : 'Newest first'}</Button>
+          <span className="muted" style={{ fontSize: 12 }}>{res ? `${res.total ?? 0} events` : ''}</span>
+          {res?.error && <span className="badge danger">{res.error}</span>}
+        </div>
+      </Card>
 
       <Card style={{ padding: 0 }}>
         <div className="table-container" style={{ border: 'none' }}>
@@ -721,9 +1105,16 @@ export function Timeline() {
               ))}
             </tbody>
           </table>
-          {!events.length && <Empty text="No matching forensic events found in timeline." />}
+          {!events.length && <Empty text={caseId ? 'No matching events. Run Full Analysis on the case evidence to build its timeline.' : 'Select a case.'} />}
         </div>
       </Card>
+      {res && res.total > limit && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+          <Button sm disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - limit))}>← Prev</Button>
+          <span className="muted" style={{ fontSize: 12 }}>{skip + 1}–{Math.min(skip + limit, res.total)} of {res.total}</span>
+          <Button sm disabled={skip + limit >= res.total} onClick={() => setSkip(skip + limit)}>Next →</Button>
+        </div>
+      )}
     </div>
   );
 }

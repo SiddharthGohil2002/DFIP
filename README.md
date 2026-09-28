@@ -85,6 +85,17 @@ cd backend
 pytest -q
 ```
 
+Or inside the backend image (no local Python needed): `docker compose build backend && docker run --rm dfip-backend python -m pytest -q`.
+
+End-to-end check of the analysis pipeline against a running stack, using a generated Windows-like test disk:
+
+```bash
+docker run --rm -v "$PWD:/repo" -w /repo python:3.11-slim sh scripts/test-image/make-test-image.sh
+python scripts/test-image/e2e_analysis.py        # uploads, analyzes, recovers, reports
+```
+
+See `docs/forensic-engine.md` for the pipeline stages and known limitations.
+
 Frontend:
 
 ```bash

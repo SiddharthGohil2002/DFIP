@@ -19,9 +19,45 @@ Supported integration points:
 
 Tool availability is exposed by `GET /api/forensics/tooling`.
 
+## Full analysis pipeline
+
+`POST /api/jobs/analysis/{evidence_id}` queues a `FORENSIC_ANALYSIS` Celery job (`app/tasks.py`) that runs `app/forensic/pipeline.py`:
+
+1. **Integrity**: re-hash the original image (SHA-256) and refuse to continue if it no longer matches the acquisition hash. The check is logged to the chain of custody.
+2. **Partitions**: `mmls`; every non-meta, allocated, non-extended slot is examined. An image without a partition table is examined at offset 0.
+3. **Filesystem index**: per partition, `fsstat` (filesystem type) and `fls -r -m /` written to a bodyfile under `storage/analysis/pipeline/<EVID>/<JOB>/`. Every entry, allocated or deleted, goes into the `fs_entries` collection (`app/forensic/filesystem.py`).
+4. **Timeline**: one `FILE_MACB` event per distinct timestamp of each entry, labelled like `mactime` (`m.cb` etc.) (`app/forensic/timeline.py`). The bodyfile is kept so results can be re-checked with `mactime -b`.
+5. **Artifact extraction** (`app/forensic/artifact_locator.py`): known paths are matched while the listing streams and copied out with `icat`, keeping their names and SQLite `-journal`/`-wal` sidecars:
+   - Chrome / Edge / Brave / Chromium `.../User Data/<profile>/History`
+   - Firefox `.../Profiles/<profile>/places.sqlite`
+   - `Windows/System32/config/SYSTEM`
+   - `Windows/INF/setupapi.dev*.log`
+6. **Browser history** (`app/forensic/browser_artifacts.py`): visits and downloads (Chromium `urls`/`downloads`; Firefox `moz_places` and `moz_annos` download annotations), stored as `BROWSER_HISTORY` / `BROWSER_DOWNLOAD` artifacts and timeline events.
+7. **USB history** (`app/forensic/usb.py`, using `regipy`): `Enum\USBSTOR` (vendor, product, revision, serial, friendly name), `Enum\USB` (VID/PID), `MountedDevices` (drive letter, volume GUID), and the device-property timestamps `0064` first install, `0065` last install, `0066` last arrival, `0067` last removal (Windows 7 and 8+ layouts). `setupapi.dev.log` first-install times are converted to UTC with the hive's `ActiveTimeBias`. Results go to `usb_artifacts` and `USB_ACTIVITY` timeline events.
+8. **YARA**: user-profile scripts and executables (bounded: 200 files, 20 MB each) are extracted and scanned with `backend/rules/default.yar`; matches become `MALWARE_INDICATOR` artifacts.
+9. **Case analytics**: patterns and anomalies are recomputed for the case.
+
+Re-running the job replaces that evidence item's previous pipeline output. Everything written carries `analysis_job_id` for provenance.
+
+### Deleted file recovery
+
+`GET /api/forensics/evidence/{id}/files?deleted=true` lists deleted entries from the index; `POST /api/forensics/evidence/{id}/recover?inode=&offset=` recovers one with `icat` (NTFS `64-128-2` addresses are accepted), hashes it, records it in the chain of custody and keeps the original filename. `GET /api/forensics/artifacts/{artifact_id}/download` returns the recovered copy with its SHA-256 in `X-DFIP-SHA256`. Signature carving of unallocated space (`/carve`) uses PhotoRec (all signatures except the noisy `dovecot` one) or Scalpel with `backend/rules/scalpel.conf`.
+
+### Known limitations
+
+- FAT timestamps are stored by Windows in local time; Sleuth Kit reports them as UTC unless told the zone, so FAT `FILE_MACB` times are local time. NTFS times are true UTC.
+- Only allocated artifact files are parsed automatically; deleted browser databases or hives must be recovered and parsed manually (`/artifacts/{id}/browser-parse?kind=`).
+- Chromium cookie values are not decrypted (DPAPI); Firefox downloads before version 26 (`downloads.sqlite`) are not read.
+- The Celery hard time limit (`CELERY_TASK_TIME_LIMIT`, default 30 min) bounds analysis of very large images; raise it for multi-terabyte evidence.
+- Multi-segment E01 sets (`.E02`...) are not supported by upload yet.
+
+## Test image
+
+`scripts/test-image/make-test-image.sh` builds a 64 MiB MBR/FAT32 image with a Windows-like layout: a real Windows 7 SYSTEM hive (regipy test data, MIT) with a USB device, a synthetic `setupapi.dev.log`, Chrome and Firefox history, a deleted CSV and a PowerShell script that triggers the YARA rule. `scripts/test-image/e2e_analysis.py` uploads it to a running stack, runs Full Analysis and prints the results.
+
 ## High-volume operation
 
-The durable MongoDB job queue supports `HASH_VERIFY` and `FORENSIC_ANALYSIS`. A production deployment should move the worker into a dedicated service/container and add horizontal worker scaling, retry policy, dead-letter queues and resource isolation.
+Jobs run in the `celery_worker` service (Redis broker). Scale with more workers or `--concurrency`; consider retry policy, dead-letter queues and resource isolation for production.
 
 ## Specialist validation
 

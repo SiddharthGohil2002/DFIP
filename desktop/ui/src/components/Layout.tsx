@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import * as I from 'lucide-react';
 import { AuthContext } from '../main';
 import { WS, api } from '../services/api';
-import { isDesktop } from '../native';
+import { isDesktop, canWrite } from '../native';
 import DesktopStatus from './DesktopStatus';
 
 
@@ -52,6 +52,10 @@ const adminNav: any[] = [
     ['Roles & RBAC Policies', '/admin/roles', I.KeyRound],
     ['Active Cases', '/admin/cases', I.Folders],
     ['Evidence Register', '/admin/evidence', I.Shield],
+    ['Timeline Analysis', '/admin/timeline', I.Clock3],
+    ['Filesystem Recovery', '/admin/file-recovery', I.FileSearch],
+    ['Browser Forensics', '/admin/browser', I.Globe],
+    ['USB Removable Media', '/admin/usb', I.Usb],
     ['Security Telemetry', '/admin/security', I.ShieldAlert],
     ['Audit Hash Chain', '/admin/audit', I.ListChecks],
     ['Job Orchestration', '/admin/jobs', I.ListTodo],
@@ -340,6 +344,11 @@ export function AppLayout({ children, admin: adminMode = false }: { children: Re
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', background: 'var(--green-bg)', border: '1px solid var(--green-border)', borderRadius: 999, fontSize: 11, fontWeight: 700, color: 'var(--green-dark)' }}>
                 <span className="beacon active" />
                 <span>WORKSTATION ONLINE — OPERATIONAL</span>
+              </div>
+            ) : canWrite ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 999, fontSize: 11, fontWeight: 700, color: 'var(--ink)' }}>
+                <I.Globe size={12} />
+                <span>WEB PORTAL — ROLE-BASED ACCESS</span>
               </div>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', background: 'rgba(200, 16, 46, 0.08)', border: '1px solid rgba(200, 16, 46, 0.25)', borderRadius: 999, fontSize: 11, fontWeight: 700, color: 'var(--red)' }}>

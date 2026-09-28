@@ -3,17 +3,13 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 from datetime import datetime, timezone
 import hashlib
-from xml.sax.saxutils import escape
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
 from ..security import current_user, require_write, require_permission
 from ..database import get_db
 from ..core.config import settings
 from ..repositories.cases import get_case
 from ..services.audit import log
 from ..services.sequences import next_sequence
+from ..services.report_pdf import build_case_report
 from ..websocket.manager import manager
 
 r = APIRouter(prefix='/reports', tags=['reports'])
@@ -44,56 +40,18 @@ def create_report(case_id: str, u=Depends(require_write('REPORT_CREATE'))):
     root = Path(settings.storage_path) / 'reports'
     root.mkdir(parents=True, exist_ok=True)
     path = root / f'{rid}.pdf'
-    styles = getSampleStyleSheet()
     now = datetime.now(timezone.utc)
-    
-    evid = list(db['evidence'].find({'case_id': case_id}))
-    findings = list(db['findings'].find({'case_id': case_id}))
-    events = list(db['timeline_events'].find({'case_id': case_id}).sort('timestamp', 1).limit(1000))
-    
-    story = [
-        Paragraph('DFIP — Digital Forensics Investigation Report', styles['Title']),
-        Spacer(1, 12),
-        Paragraph(f'Report ID: {rid}', styles['BodyText']),
-        Paragraph(f"Case: {case_id} — {escape(case['name'])}", styles['BodyText']),
-        Paragraph(f'Generated: {now.isoformat()}', styles['BodyText']),
-        Spacer(1, 18),
-        Paragraph('Evidence Register', styles['Heading2'])
-    ]
-    data = [['Evidence', 'Format', 'SHA-256', 'Status']] + [
-        [e['evidence_id'], e['format'], e['sha256'][:32] + '…', e.get('verification_status', 'NOT_VERIFIED')]
-        for e in evid
-    ]
-    if len(data) == 1:
-        data.append(['—', '—', '—', 'No evidence'])
-    t = Table(data, colWidths=[75, 55, 250, 90])
-    t.setStyle(TableStyle([
-        ('GRID', (0, 0), (-1, -1), .4, colors.grey),
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e7eef5')),
-        ('FONTSIZE', (0, 0), (-1, -1), 8)
-    ]))
-    story += [t, Spacer(1, 16), Paragraph('Findings', styles['Heading2'])]
-    for f in findings:
-        story.append(Paragraph(f"<b>{escape(f['title'])}</b> [{escape(f['severity'])}] — {escape(f['description'])}", styles['BodyText']))
-    story += [Spacer(1, 12), Paragraph('Timeline', styles['Heading2'])]
-    for e in events:
-        ts = e['timestamp'].isoformat() if hasattr(e['timestamp'], 'isoformat') else str(e['timestamp'])
-        story.append(Paragraph(f"{ts} — {escape(str(e.get('type', 'EVENT')))} — {escape(str(e.get('description', '')))}", styles['BodyText']))
-    story += [
-        Spacer(1, 16),
-        Paragraph('Evidence integrity is represented by recorded cryptographic hashes and audit history. Investigators should preserve source media and follow applicable legal procedures.', styles['BodyText'])
-    ]
-    SimpleDocTemplate(str(path), pagesize=A4).build(story)
-    pdf_bytes = path.read_bytes()
-    pdf_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
-    
+    version = db['reports'].count_documents({'case_id': case_id}) + 1
+    build_case_report(db, case, rid, version, path, u, now)
+    pdf_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+
     doc = {
         'report_id': rid,
         'case_id': case_id,
         'path': str(path.resolve()),
         'created_at': now,
         'created_by': str(u['_id']),
-        'version': 1,
+        'version': version,
         'sha256': pdf_sha256
     }
     db['reports'].insert_one(doc)

@@ -157,13 +157,12 @@ def parse_chromium_cookies(source_path: Path, case_id: str, evidence_id: str, li
 
 
 def parse_firefox_places(source_path: Path, case_id: str, evidence_id: str, limit: int = 50_000):
-    """Parses a Firefox `places.sqlite` file: moz_places (history) + moz_annos-adjacent
-    download info isn't stored here in modern Firefox (downloads live in a
-    separate JSON file on disk, not in places.sqlite) — so we only extract
-    real history, and explicitly do not claim download data from this source."""
+    """Parses a Firefox `places.sqlite` file: moz_places (history) and, for
+    Firefox 26+, downloads recorded as `downloads/destinationFileURI`
+    annotations in moz_annos. Older Firefox kept downloads in downloads.sqlite,
+    which this parser does not read."""
     result = {'status': 'COMPLETED', 'source_file': str(source_path), 'browser_family': 'FIREFOX',
-               'history': [], 'errors': [],
-               'note': 'Firefox download history is stored outside places.sqlite; not extracted by this parser.'}
+               'history': [], 'downloads': [], 'errors': []}
     scratch_dir = None
     try:
         conn, scratch_dir = _open_readonly_copy(source_path)
@@ -181,6 +180,22 @@ def parse_firefox_places(source_path: Path, case_id: str, evidence_id: str, limi
         except sqlite3.Error as exc:
             result['errors'].append(f'moz_places table: {exc}')
             result['status'] = 'PARTIAL' if result['history'] else 'FAILED'
+        try:
+            cur = conn.execute(
+                "SELECT a.id, p.url, a.content, a.dateAdded FROM moz_annos a "
+                "JOIN moz_anno_attributes n ON a.anno_attribute_id = n.id "
+                "JOIN moz_places p ON p.id = a.place_id "
+                "WHERE n.name = 'downloads/destinationFileURI' ORDER BY a.dateAdded DESC LIMIT ?", (limit,))
+            for row in cur.fetchall():
+                result['downloads'].append({
+                    'case_id': case_id, 'evidence_id': evidence_id, 'type': 'BROWSER_DOWNLOAD',
+                    'source': 'FIREFOX_PLACES_SQLITE', 'source_file': str(source_path), 'row_id': row['id'],
+                    'target_path': row['content'], 'tab_url': row['url'],
+                    'start_time': _firefox_time_us(row['dateAdded']),
+                })
+        except sqlite3.Error as exc:
+            # moz_annos is absent in some profiles; history is still valid.
+            result['errors'].append(f'moz_annos downloads: {exc}')
         conn.close()
     except (sqlite3.Error, OSError) as exc:
         result['status'] = 'FAILED'

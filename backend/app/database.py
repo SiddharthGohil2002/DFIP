@@ -6,7 +6,7 @@ _db=None
 def get_db():
     global _client,_db
     if _db is None:
-        _client=MongoClient(settings.mongodb_uri,serverSelectionTimeoutMS=5000,connectTimeoutMS=5000,maxPoolSize=100,minPoolSize=5,appname='DFIP')
+        _client=MongoClient(settings.mongodb_uri,serverSelectionTimeoutMS=5000,connectTimeoutMS=5000,maxPoolSize=100,minPoolSize=5,appname='DFIP',tz_aware=True)
         _db=_client[settings.database_name]
         _client.admin.command('ping')
     return _db

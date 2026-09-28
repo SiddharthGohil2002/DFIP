@@ -3,7 +3,7 @@ import { useContext } from 'react';
 import { AuthContext } from './main';
 import { AppLayout } from './components/Layout';
 import { Landing, Login, InfoPage, DownloadPage, FunctionsPage } from './pages/Public';
-import { Dashboard, Cases, Evidence, EvidenceVerify, Timeline, Module, Reports, Findings, Chain, Audit, Notifications, AdminUsers, AdminRoles, AdminSecurity, AdminSettings, Jobs, Tooling, ThreatIntel, Carving } from './pages/AppPages';
+import { Dashboard, Cases, Evidence, EvidenceVerify, Timeline, Module, FileRecovery, BrowserForensics, UsbForensics, Reports, Findings, Chain, Audit, Notifications, AdminUsers, AdminRoles, AdminSecurity, AdminSettings, Jobs, Tooling, ThreatIntel, Carving } from './pages/AppPages';
 import DesktopOperations from './pages/DesktopOperations';
 import * as I from 'lucide-react';
 
@@ -18,8 +18,6 @@ function Protected({ children, admin = false }: { children: any; admin?: boolean
 
 const modules: any[] = [
   ['acquisition', 'Acquisition', I.Upload, 'Secure evidence acquisition workflow.'],
-  ['browser', 'Browser Forensics', I.Globe, 'Review browser artifacts available from analyzed evidence.'],
-  ['usb', 'USB Forensics', I.Usb, 'Review removable-device activity.'],
   ['email', 'Email Forensics', I.Mail, 'Inspect email metadata and attachments.'],
   ['network', 'Network Forensics', I.Network, 'Review network artifacts and events.'],
   ['malware', 'Malware Analysis', I.Bug, 'Review static indicators and malware artifacts.'],
@@ -36,7 +34,9 @@ function Investigator() {
       <Route path="evidence" element={<Evidence />} />
       <Route path="evidence/:id" element={<EvidenceVerify />} />
       <Route path="timeline" element={<Timeline />} />
-      <Route path="file-recovery" element={<Module name="File Recovery" icon={I.FileSearch} description="Inspect filesystem artifacts and recovery results without modifying original evidence." />} />
+      <Route path="file-recovery" element={<FileRecovery />} />
+      <Route path="browser" element={<BrowserForensics />} />
+      <Route path="usb" element={<UsbForensics />} />
       {modules.map(([p, n, Icon, d]) => <Route key={p} path={p} element={<Module name={n} icon={Icon} description={d} />} />)}
       <Route path="findings" element={<Findings />} />
       <Route path="reports" element={<Reports />} />
@@ -64,6 +64,11 @@ function Admin() {
       <Route path="permissions" element={<AdminRoles />} />
       <Route path="cases" element={<Cases />} />
       <Route path="evidence" element={<Evidence />} />
+      <Route path="evidence/:id" element={<EvidenceVerify />} />
+      <Route path="timeline" element={<Timeline />} />
+      <Route path="file-recovery" element={<FileRecovery />} />
+      <Route path="browser" element={<BrowserForensics />} />
+      <Route path="usb" element={<UsbForensics />} />
       <Route path="security" element={<AdminSecurity />} />
       <Route path="audit" element={<Audit />} />
       <Route path="reports" element={<Reports />} />

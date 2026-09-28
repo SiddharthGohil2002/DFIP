@@ -2,6 +2,7 @@ from pathlib import Path
 import hashlib, mimetypes
 from datetime import datetime, timezone
 from .tools import parse_mmls, parse_filesystem, filesystem_stats
+from .hashing import sha256_file
 
 class ForensicEngine:
     """Orchestrates safe forensic examination; original evidence is never modified."""
@@ -13,17 +14,14 @@ class ForensicEngine:
             size=evidence_path.stat().st_size
             result['file_size']=size
             result['mime_type']=mimetypes.guess_type(evidence_path.name)[0] or 'application/octet-stream'
-            if size <= 16*1024*1024:
-                result['sha256']=hashlib.sha256(evidence_path.read_bytes()).hexdigest()
-            else:
-                result['sha256']='computed-at-acquisition-and-stored-in-evidence-record'
+            result['sha256']=sha256_file(evidence_path)
         except Exception as e:
             result['status']='FAILED';result['error']=str(e);return result
         if format_name.upper() in {'E01','EX01','AFF','AFF4','RAW','DD'}:
             result['partitions']=parse_mmls(evidence_path)
             if progress: progress(45, 'parsing-partitions')
             partitions=result['partitions'].get('partitions',[])
-            offsets=[0]+[p['start'] for p in partitions if p.get('description','').lower() not in {'unallocated',''}]
+            offsets=[p['start'] for p in partitions if not p.get('is_meta') and not p.get('is_unallocated') and 'extended' not in p.get('description','').lower()] or [0]
             seen=set()
             for offset in offsets[:8]:
                 if offset in seen: continue

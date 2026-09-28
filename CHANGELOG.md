@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added — MVP disk image analysis
+- **Full analysis pipeline** (`app/forensic/pipeline.py`) run by the `FORENSIC_ANALYSIS` job: integrity re-check, partition and filesystem indexing (Sleuth Kit bodyfile), MACB timeline, browser history/downloads, USB device history, YARA scan of user scripts/executables, case patterns/anomalies. Idempotent per evidence item.
+- **Deleted file listing and recovery**: `GET /forensics/evidence/{id}/files`, recovery keeps original names and logs to chain of custody, `GET /forensics/artifacts/{id}/download`.
+- **USB activity detection** (`app/forensic/usb.py`) from the SYSTEM hive and setupapi.dev.log; `GET /forensics/usb`.
+- **Timeline API** filters (type, time range, text, order, paging); `GET /forensics/browser`.
+- **PDF report** now covers evidence, chain of custody, analysis summary, deleted/recovered files, USB, browser history and downloads, YARA hits, findings, notable timeline and audit-chain status.
+- **UI**: analysis panel with live progress on the evidence page; Deleted File Recovery, Browser and USB pages; server-side timeline filters.
+- Test disk image builder, end-to-end script, and parser unit tests with a real SYSTEM hive fixture.
+
+### Fixed — MVP
+- fls bodyfile parsing read the file name from the wrong column; mmls descriptions included the length column.
+- PhotoRec wrote output outside the inventoried directory and received malformed `/cmd` options; Scalpel had no config and could never run.
+- Non-admin users could not log in; web writes required the (unbuildable) desktop app; case assignment crashed; IDs could collide; report text was not escaped; nginx lost the backend after it was recreated.
+
 ### Fixed
 - `POST /api/forensics/demo/seed/{case_id}` could previously be called on any real case with evidence, injecting synthetic ("DEMO_DATA") timeline events and artifacts with no check that the case was actually a demo case. Now requires `DEMO_MODE=true` and that both the case and its evidence record are explicitly flagged `demo: true`.
 

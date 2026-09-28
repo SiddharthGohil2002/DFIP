@@ -36,6 +36,12 @@ async def startup():
         for collection,index,unique in [('cases','case_id',True),('evidence','evidence_id',True),('audit_logs','timestamp',False),('timeline_events','timestamp',False),('notifications','user_id',False),('findings','case_id',False),('jobs','status',False),('jobs','job_id',True),('refresh_tokens','token_hash',True),('audit_logs','sequence',True),('forensic_artifacts','case_id',False),('forensic_artifacts','artifact_id',False),('patterns','case_id',False),('anomalies','case_id',False),('desktop_devices','device_id',True),('desktop_devices','user_id',False),('reports','report_id',True)]:
             try:db[collection].create_index(index,unique=unique)
             except Exception:pass
+        # Compound indexes for the analysis pipeline's high-volume collections.
+        for collection,keys in [('timeline_events',[('case_id',1),('timestamp',-1)]),('timeline_events',[('evidence_id',1),('pipeline',1)]),
+                                ('fs_entries',[('evidence_id',1),('deleted',-1),('path',1)]),('fs_entries',[('evidence_id',1),('inode',1),('partition_offset',1)]),
+                                ('usb_artifacts',[('case_id',1),('evidence_id',1)]),('forensic_artifacts',[('case_id',1),('type',1)])]:
+            try:db[collection].create_index(keys)
+            except Exception:pass
         if settings.demo_mode and db['cases'].count_documents({})==0:
             inv=db['users'].find_one({'email':'investigator@dfip.local'});now=datetime.now(timezone.utc)
             case={'case_id':'CASE-2026-001','name':'Unauthorized Data Access Investigation','description':'Demonstration investigation. All records in this case are synthetic demo data.','status':'IN_PROGRESS','priority':'HIGH','investigator_id':str(inv['_id']),'member_ids':[],'created_by':str(inv['_id']),'created_at':now,'updated_at':now,'demo':True}
