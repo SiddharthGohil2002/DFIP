@@ -1,0 +1,9 @@
+{
+  "$schema":"https://schema.tauri.app/config/2",
+  "productName":"DFIP Investigator",
+  "version":"1.0.0",
+  "identifier":"local.dfip.investigator",
+  "build":{"beforeDevCommand":"npm run dev","devUrl":"http://127.0.0.1:1420","beforeBuildCommand":"npm run build","frontendDist":"../ui/dist"},
+  "app":{"windows":[{"title":"DFIP Investigator","width":1440,"height":920,"minWidth":1100,"minHeight":720,"resizable":true}],"security":{"csp":"default-src 'self' ipc: http://ipc.localhost https://ipc.localhost data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' http: https: ws: wss: ipc: http://ipc.localhost"}},
+  "bundle":{"active":true,"targets":["msi","nsis"],"icon":[]}
+}

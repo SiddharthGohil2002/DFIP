@@ -1,0 +1,22 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+.pytest_cache/
+.DS_Store
+
+# Tauri / Rust build output
+desktop/src-tauri/target/
+
+# Runtime data: evidence, analysis output and generated reports never go in git
+storage/evidence/**
+storage/analysis/**
+storage/reports/**
+storage/downloads/**
+!storage/**/
+!storage/**/.gitkeep
+
+# Local scratch scripts
+scratch/

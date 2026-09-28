@@ -1,0 +1,15 @@
+# Security Model
+
+- Access tokens are short-lived JWTs.
+- Refresh tokens are random, stored only as SHA-256 digests, rotatable and revocable.
+- Passwords use PBKDF2-SHA256 with a configurable work factor.
+- Backend permissions are enforced independently of UI visibility.
+- CORS is explicitly configured.
+- Uploaded evidence filenames are reduced to safe basenames.
+- Upload size is bounded by configuration.
+- Original evidence is chmod'd read-only after hashing.
+- Audit records form a hash-linked chain with verification endpoint.
+- Report downloads require `REPORT_EXPORT` and case authorization.
+- WebSockets require a valid access token.
+
+For production, add TLS, encrypted storage, secrets management, network segmentation, MFA/SSO, rate limiting at the edge, malware sandboxing, SIEM integration, backups, retention controls and periodic security assessment.

@@ -1,0 +1,75 @@
+services:
+  mongodb:
+    image: mongo:8
+    container_name: dfip-mongodb
+    restart: unless-stopped
+    command: ["mongod","--bind_ip_all","--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-dfiproot}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-change-me-now}
+      MONGO_INITDB_DATABASE: admin
+    ports: ["27017:27017"]
+    volumes: [dfip_mongo:/data/db]
+    healthcheck:
+      test: ["CMD-SHELL","mongosh --quiet -u $$MONGO_INITDB_ROOT_USERNAME -p $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'db.runCommand({ping:1}).ok' | grep 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    container_name: dfip-redis
+    restart: unless-stopped
+    command: ["redis-server","--appendonly","yes","--requirepass","${REDIS_PASSWORD:-change-me-now}"]
+    volumes: [dfip_redis:/data]
+    healthcheck:
+      test: ["CMD-SHELL","redis-cli -a ${REDIS_PASSWORD:-change-me-now} ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  backend:
+    build: ./backend
+    container_name: dfip-backend
+    restart: unless-stopped
+    environment: &backend_env
+      MONGODB_URI: mongodb://dfiproot:${MONGO_ROOT_PASSWORD:-change-me-now}@mongodb:27017/dfip?authSource=admin
+      DATABASE_NAME: dfip
+      JWT_SECRET: ${JWT_SECRET:-replace-with-a-long-random-secret-at-least-32-characters}
+      STORAGE_PATH: /app/storage
+      DEMO_MODE: ${DEMO_MODE:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-53687091200}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-now}@redis:6379/0
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
+      ABUSEIPDB_API_KEY: ${ABUSEIPDB_API_KEY:-}
+      OTX_API_KEY: ${OTX_API_KEY:-}
+    # Keep API internal; frontend nginx proxies /api and /ws.
+    ports: ["8000:8000"]
+    volumes: [./storage:/app/storage]
+    depends_on:
+      mongodb: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL","python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8000/health\")'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+  celery_worker:
+    build: ./backend
+    container_name: dfip-celery-worker
+    restart: unless-stopped
+    command: ["celery","-A","app.celery_app.celery_app","worker","--loglevel=INFO","--concurrency=2","-Q","dfip_forensics"]
+    environment: *backend_env
+    volumes: [./storage:/app/storage]
+    depends_on:
+      mongodb: {condition: service_healthy}
+      redis: {condition: service_healthy}
+  frontend:
+    build: ./frontend
+    container_name: dfip-frontend
+    restart: unless-stopped
+    ports: ["80:80"]
+    depends_on:
+      backend: {condition: service_healthy}
+volumes:
+  dfip_mongo:
+  dfip_redis:
