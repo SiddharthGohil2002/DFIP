@@ -65,7 +65,12 @@ def job(job_id, u=Depends(current_user)):
     if not x:
         raise HTTPException(404, 'Job not found')
     if u['role'] != 'ADMIN' and x.get('created_by') != str(u['_id']):
-        raise HTTPException(403, 'Job access denied')
+        # Members of the job's case may follow it too (e.g. an analysis started by a colleague).
+        from ..repositories.evidence import get_evidence
+        from ..repositories.cases import get_case
+        e = get_evidence((x.get('payload') or {}).get('evidence_id', ''))
+        if not e or not get_case(e['case_id'], u):
+            raise HTTPException(403, 'Job access denied')
     return serial(x)
 
 @r.post('/{job_id}/cancel')

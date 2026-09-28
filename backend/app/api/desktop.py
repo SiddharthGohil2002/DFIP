@@ -234,7 +234,12 @@ def _apply_sync_record(db, rec: SyncPushRecord, u) -> str:
     elif rec.record_type == 'audit_event':
         existing = db['audit_logs'].find_one({'local_id': rec.record_id})
         if not existing:
-            db['audit_logs'].insert_one({**rec.data, 'local_id': rec.record_id, 'synced_at': datetime.now(timezone.utc)})
+            # Appended through the hash chain so offline events keep it verifiable.
+            from ..services.audit import append
+            append({'timestamp': datetime.now(timezone.utc).isoformat(), 'user_id': str(u['_id']), 'user_name': u.get('name'),
+                    'user_role': u.get('role'), 'action': str(rec.data.get('action', 'DESKTOP_OFFLINE_EVENT')),
+                    'resource_type': str(rec.data.get('resource_type', 'desktop')), 'resource_id': str(rec.data.get('resource_id', '')),
+                    'metadata': rec.data, 'local_id': rec.record_id, 'source': 'DESKTOP_OFFLINE'})
         return 'SYNCED'
     elif rec.record_type == 'case_update':
         case_id = rec.case_id

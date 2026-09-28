@@ -19,6 +19,7 @@ from typing import Iterator
 from .tools import TOOLS
 
 _DELETED_SUFFIX = re.compile(r' \((deleted|deleted-realloc|realloc)\)$')
+_FN_SUFFIX = ' ($FILE_NAME)'
 # icat address forms: "123" (FAT/ext) or "64-128-2" (NTFS type/id)
 INODE_RE = re.compile(r'^\d+(-\d+(-\d+)?)?$')
 
@@ -49,6 +50,11 @@ def parse_bodyfile_line(line: str) -> dict | None:
     name = '|'.join(parts[1:-9])
     if not name:
         return None
+    # NTFS: fls -m adds a second line per file for the $FILE_NAME attribute's times,
+    # e.g. "/a.txt ($FILE_NAME)" or "/a.txt (deleted) ($FILE_NAME)" -- flagged, not a separate file.
+    fn_attr = name.endswith(_FN_SUFFIX)
+    if fn_attr:
+        name = name[:-len(_FN_SUFFIX)]
     status = None
     m = _DELETED_SUFFIX.search(name)
     if m:
@@ -66,6 +72,7 @@ def parse_bodyfile_line(line: str) -> dict | None:
         'is_dir': mode.startswith('d'),
         # Sleuth Kit virtual entries ($MBR, $FAT1, $OrphanFiles ...) have mode v/v or V/V.
         'is_virtual': mode[:1] in ('v', 'V'),
+        'fn_attr': fn_attr,
         'deleted': status is not None,
         'deleted_status': status,  # 'deleted' | 'deleted-realloc' | 'realloc'
         'size': size_n,

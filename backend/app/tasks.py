@@ -18,6 +18,7 @@ from celery.utils.log import get_task_logger
 
 from .celery_app import celery_app
 from .database import get_db
+from .core.config import settings
 
 logger = get_task_logger(__name__)
 
@@ -91,7 +92,8 @@ def hash_verify_task(self, job_id: str, evidence_id: str, created_by: str):
         raise
 
 
-@celery_app.task(bind=True, name='dfip.forensic_analysis', max_retries=1, default_retry_delay=30)
+@celery_app.task(bind=True, name='dfip.forensic_analysis', max_retries=1, default_retry_delay=30,
+                 soft_time_limit=settings.analysis_time_limit, time_limit=settings.analysis_time_limit + 600)
 def forensic_analysis_task(self, job_id: str, evidence_id: str, created_by: str):
     from .repositories.evidence import get_evidence
     from .forensic.engine import extract_demo_artifacts

@@ -1,12 +1,19 @@
 from datetime import datetime,timezone
 
+NON_AUTH_TYPES={'FILE_MACB','BROWSER_VISIT','BROWSER_DOWNLOAD','USB_ACTIVITY'}
+
 class PatternService:
     def run(self,events):
         out=[]
-        failed=sum(1 for e in events if 'failed' in str(e.get('description','')).lower())
-        usb=sum(1 for e in events if e.get('type')=='USB_ACTIVITY')
+        # File, browser and USB events can mention "failed" in a path or URL; only
+        # log/authentication-type events count as authentication failures.
+        failed=sum(1 for e in events if e.get('type') not in NON_AUTH_TYPES and 'failed' in str(e.get('description','')).lower())
+        # Several timeline events describe one device (install, arrival, removal...),
+        # so count distinct devices; events without a serial count individually.
+        usb_events=[e for e in events if e.get('type')=='USB_ACTIVITY']
+        usb=len({e.get('serial') or id(e) for e in usb_events})
         if failed>=3: out.append({'pattern':'Repeated authentication failures','risk':'HIGH','confidence':0.92,'reason':f'{failed} failed authentication events found.'})
-        if usb>=2: out.append({'pattern':'Repeated removable-media activity','risk':'MEDIUM','confidence':0.78,'reason':f'{usb} USB activity events found.'})
+        if usb>=2: out.append({'pattern':'Repeated removable-media activity','risk':'MEDIUM','confidence':0.78,'reason':f'{usb} distinct USB devices or events found.'})
         return out
 
 class AnomalyService:

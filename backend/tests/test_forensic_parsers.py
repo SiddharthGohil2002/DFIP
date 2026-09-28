@@ -190,3 +190,27 @@ def test_firefox_places_history_and_downloads(tmp_path):
     assert len(r['history']) == 1
     assert r['downloads'][0]['target_path'] == 'file:///C:/Users/a/Downloads/a.zip'
     assert r['downloads'][0]['tab_url'] == 'https://cdn.example.org/a.zip'
+
+
+def test_bodyfile_ntfs_file_name_attribute_lines():
+    fn = parse_bodyfile_line('0|/Users/a/x.txt (deleted) ($FILE_NAME)|70-48-2|r/rrwxrwxrwx|0|0|82|1|2|3|4')
+    assert fn['fn_attr'] is True and fn['deleted'] is True and fn['path'] == '/Users/a/x.txt'
+    assert parse_bodyfile_line('0|/Users/a/x.txt|70-128-1|r/rrwxrwxrwx|0|0|5|1|2|3|4')['fn_attr'] is False
+
+
+def test_pattern_rules_ignore_file_paths_and_count_devices():
+    from app.analysis.services import PatternService
+    files = [{'type': 'FILE_MACB', 'description': f'[m...] /logs/failed-{i}.txt'} for i in range(5)]
+    one_stick = [{'type': 'USB_ACTIVITY', 'serial': 'S1', 'description': 'x'} for _ in range(4)]
+    assert PatternService().run(files + one_stick) == []
+    two_sticks = one_stick + [{'type': 'USB_ACTIVITY', 'serial': 'S2', 'description': 'y'}]
+    assert [p['pattern'] for p in PatternService().run(two_sticks)] == ['Repeated removable-media activity']
+
+
+def test_audit_metadata_is_hashed_as_stored():
+    import json
+    from app.services.audit import _canonical
+    meta = {'updated_at': datetime(2026, 9, 1, 10, 0, 0, 123456, tzinfo=timezone.utc)}
+    normalised = json.loads(_canonical(meta))
+    # A datetime becomes its full string before hashing, so Mongo's millisecond truncation cannot change it.
+    assert normalised == {'updated_at': '2026-09-01 10:00:00.123456+00:00'}

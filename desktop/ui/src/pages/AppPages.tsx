@@ -155,7 +155,8 @@ export function Dashboard({ admin = false }: { admin?: boolean }) {
   const nav = useNavigate();
   const c = useLoad('/cases');
   const e = useLoad('/evidence');
-  const a = useLoad('/forensics/timeline');
+  const [timelineTotal, setTimelineTotal] = useState<number | null>(null);
+  useEffect(() => { if (!admin) api<any>('/forensics/timeline?limit=1').then((r) => setTimelineTotal(r.total ?? 0)).catch(() => setTimelineTotal(null)); }, [admin]);
   const stats = useLoad(admin ? '/admin/stats' : null);
   const s = stats.data || {};
 
@@ -204,7 +205,7 @@ export function Dashboard({ admin = false }: { admin?: boolean }) {
         <Stat label="Active Cases" value={activeCases} icon={I.Folders} trend="Active investigations in flight" />
         <Stat label="Evidence Items" value={totalEvidence} icon={I.Shield} trend="SHA-256 hashed disk/memory objects" />
         <Stat label="Integrity Ratio" value={`${integrityPct}%`} icon={I.BadgeCheck} color="var(--green)" trend={`${verifiedCount} of ${totalEvidence} verified`} />
-        <Stat label={admin ? 'Active Users' : 'Timeline Artifacts'} value={admin ? s.active_users ?? 0 : (a.data || []).length} icon={admin ? I.Users : I.Clock3} trend="Indexed forensic events" />
+        <Stat label={admin ? 'Active Users' : 'Timeline Artifacts'} value={admin ? s.active_users ?? 0 : timelineTotal ?? '—'} icon={admin ? I.Users : I.Clock3} trend="Indexed forensic events" />
       </div>
 
       <div className="grid2" style={{ marginTop: 20 }}>
@@ -411,7 +412,7 @@ export function Cases() {
 export function Evidence() {
   const { data, reload } = useLoad('/evidence');
   const [file, setFile] = useState<File | null>(null);
-  const [caseId, setCaseId] = useState('CASE-2026-001');
+  const [caseId, setCaseId] = useState('');
   const [busy, setBusy] = useState(false);
   // Desktop native acquisition state
   const [nativePath, setNativePath] = useState('');
@@ -475,7 +476,7 @@ export function Evidence() {
             <OperationBadge type="DESKTOP" />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr auto', gap: 10, marginBottom: 10 }}>
-            <input className="input" value={caseId} onChange={(e) => setCaseId(e.target.value)} placeholder="Assign to Case ID" />
+            <CasePicker value={caseId} onChange={setCaseId} />
             <input className="input" value={nativePath} onChange={(e) => setNativePath(e.target.value)} placeholder="Full local path to evidence file (e.g. D:\evidence\image.E01)" />
             <Button primary onClick={acquireNative} disabled={nativeBusy || !nativePath.trim() || !caseId.trim()}>
               {nativeBusy ? 'Computing SHA-256…' : 'Acquire & Hash'}
@@ -486,7 +487,7 @@ export function Evidence() {
           <div style={{ borderTop: '1px solid var(--border)', marginTop: 16, paddingTop: 14 }}>
             <h4 style={{ fontSize: 13, fontWeight: 700, margin: '0 0 8px' }}>Upload Evidence Image to Server Storage</h4>
             <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr auto', gap: 10 }}>
-              <input className="input" value={caseId} onChange={(e) => setCaseId(e.target.value)} placeholder="Case ID" />
+              <CasePicker value={caseId} onChange={setCaseId} />
               <input className="input" type="file" accept=".E01,.e01,.RAW,.raw,.DD,.dd,.AFF,.aff,.AFF4,.aff4" onChange={(e) => setFile(e.target.files?.[0] || null)} />
               <Button primary onClick={upload} disabled={busy}>{busy ? 'Uploading…' : 'Upload to Server'}</Button>
             </div>
@@ -500,7 +501,7 @@ export function Evidence() {
             <OperationBadge type="WEB" />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr auto', gap: 10 }}>
-            <input className="input" value={caseId} onChange={(e) => setCaseId(e.target.value)} placeholder="Case ID" />
+            <CasePicker value={caseId} onChange={setCaseId} />
             <input className="input" type="file" accept=".E01,.e01,.RAW,.raw,.DD,.dd,.AFF,.aff,.AFF4,.aff4" onChange={(e) => setFile(e.target.files?.[0] || null)} />
             <Button primary onClick={upload} disabled={busy}>{busy ? 'Uploading…' : 'Upload to Server'}</Button>
           </div>
@@ -658,7 +659,7 @@ export function EvidenceVerify() {
 ========================================================================= */
 const fmtTime = (v: any) => (v ? new Date(v).toLocaleString() : '—');
 const fmtSize = (n: any) => (n === null || n === undefined ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
-const TERMINAL_JOB = ['COMPLETED', 'FAILED', 'CANCELLED'];
+const TERMINAL_JOB = ['COMPLETED', 'FAILED', 'CANCELLED', 'UNAVAILABLE'];
 
 function CasePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { data } = useLoad('/cases');
@@ -716,7 +717,9 @@ function AnalysisPanel({ evidence, onChange }: { evidence: any; onChange: () => 
         setJob(j);
         if (TERMINAL_JOB.includes(j.status)) onChange();
       } catch (e: any) {
+        // Stop polling (e.g. no access to the job) instead of retrying forever.
         setErr(e.message);
+        setJob({ ...job, status: 'UNAVAILABLE' });
       }
     }, 1500);
     return () => clearInterval(t);
@@ -1131,7 +1134,7 @@ export function Module({
   icon?: any;
   description: string;
 }) {
-  const [caseId, setCaseId] = useState('CASE-2026-001');
+  const [caseId, setCaseId] = useState('');
   const [evidenceId, setEvidenceId] = useState('');
   const [inode, setInode] = useState('');
   const [offset, setOffset] = useState('0');
@@ -1156,7 +1159,7 @@ export function Module({
     ? `/forensics/timeline?case_id=${encodeURIComponent(caseId)}`
     : `/forensics/artifacts?case_id=${encodeURIComponent(caseId)}`;
 
-  const { data, error, reload } = useLoad(endpoint);
+  const { data, error, reload } = useLoad(caseId ? endpoint : null);
 
   async function run() {
     setBusy(true);
@@ -1239,13 +1242,7 @@ export function Module({
               ['Patterns', 'Anomalies', 'AI Assistant'].includes(name) ? 'WEB' : 'WEB+SYNC'
             } />
 
-            <input
-              className="input"
-              style={{ maxWidth: 220 }}
-              value={caseId}
-              onChange={(e) => setCaseId(e.target.value)}
-              placeholder="Case ID (e.g. CASE-2026-001)"
-            />
+            <CasePicker value={caseId} onChange={setCaseId} />
 
             {(name === 'Acquisition' || name === 'File Recovery') && (
               <input
@@ -1373,7 +1370,7 @@ export function Module({
    6. THREAT INTEL
 ========================================================================= */
 export function ThreatIntel() {
-  const [caseId, setCaseId] = useState('CASE-2026-001');
+  const [caseId, setCaseId] = useState('');
   const [indicator, setIndicator] = useState('');
   const [kind, setKind] = useState<'hash' | 'ip' | 'domain'>('hash');
   const [busy, setBusy] = useState(false);
@@ -1417,13 +1414,7 @@ export function ThreatIntel() {
         </div>
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input
-            className="input"
-            style={{ maxWidth: 200 }}
-            value={caseId}
-            onChange={(e) => setCaseId(e.target.value)}
-            placeholder="Case ID"
-          />
+          <CasePicker value={caseId} onChange={setCaseId} />
           <select className="input" style={{ maxWidth: 160 }} value={kind} onChange={(e) => setKind(e.target.value as any)}>
             <option value="hash">File Hash (MD5/SHA)</option>
             <option value="ip">IPv4 / IPv6 Address</option>
@@ -1536,7 +1527,7 @@ export function Carving() {
 ========================================================================= */
 export function Findings() {
   const { data, reload } = useLoad('/findings');
-  const [caseId, setCaseId] = useState('CASE-2026-001');
+  const [caseId, setCaseId] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [severity, setSeverity] = useState('HIGH');
@@ -1579,7 +1570,7 @@ export function Findings() {
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 14px' }}>Document New Observation</h3>
           <div style={{ display: 'grid', gap: 12 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 160px', gap: 10 }}>
-              <input className="input" value={caseId} onChange={(e) => setCaseId(e.target.value)} placeholder="Case ID" />
+              <CasePicker value={caseId} onChange={setCaseId} />
               <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Finding Headline (e.g. Tor Browser Activity Detected)" />
               <select className="input" value={severity} onChange={(e) => setSeverity(e.target.value)}>
                 <option value="LOW">Severity: LOW</option>
@@ -1631,7 +1622,7 @@ export function Findings() {
 
 export function Reports() {
   const { data, reload } = useLoad('/reports');
-  const [caseId, setCaseId] = useState('CASE-2026-001');
+  const [caseId, setCaseId] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function create() {
@@ -1654,7 +1645,7 @@ export function Reports() {
         action={
           canWrite ? (
             <div style={{ display: 'flex', gap: 10 }}>
-              <input className="input" style={{ width: 200 }} value={caseId} onChange={(e) => setCaseId(e.target.value)} />
+              <CasePicker value={caseId} onChange={setCaseId} />
               <Button primary onClick={create} disabled={busy}>
                 {busy ? 'Generating PDF…' : '+ Generate Versioned Report'}
               </Button>
@@ -1710,13 +1701,13 @@ export function Reports() {
 ========================================================================= */
 export function Chain() {
   const { data } = useLoad('/chain');
-  const rows = (data || []).filter((x: any) => String(x.action).includes('EVIDENCE'));
+  const rows = data || [];
 
   return (
     <div className="fade">
       <Title
         title="Chain of Custody Ledger"
-        sub="Legally traceable, append-only custody events for evidence handling, examination, and transfer."
+        sub="Every registration, verification, integrity check and file recovery for the evidence you can access, newest first."
       />
 
       <Card style={{ padding: 0 }}>
@@ -1727,16 +1718,24 @@ export function Chain() {
                 <th>Logged Timestamp</th>
                 <th>Investigator / Handler</th>
                 <th>Custody Action</th>
-                <th>Target Evidence Object</th>
+                <th>Evidence</th>
+                <th>SHA-256 / Result</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((x: any) => (
                 <tr key={x._id}>
                   <td className="mono" style={{ fontSize: 12 }}>{new Date(x.timestamp).toLocaleString()}</td>
-                  <td><div style={{ fontWeight: 600 }}>{x.user_name}</div></td>
-                  <td><span className="badge ok">{x.action}</span></td>
-                  <td className="mono">{x.resource_type} / {x.resource_id}</td>
+                  <td><div style={{ fontWeight: 600 }}>{x.user_name || x.user_id}</div></td>
+                  <td><span className={`badge ${x.status === 'INTEGRITY_FAILED' ? 'danger' : 'ok'}`}>{x.action}</span></td>
+                  <td>
+                    <div className="mono" style={{ fontWeight: 600 }}>{x.evidence_id}</div>
+                    <div className="muted" style={{ fontSize: 11 }}>{x.case_id}{x.original_path ? ` · ${x.original_path}` : ''}</div>
+                  </td>
+                  <td>
+                    {x.sha256 && <div className="mono" style={{ fontSize: 11 }} title={x.sha256}>{x.sha256.slice(0, 24)}…</div>}
+                    <div className="muted" style={{ fontSize: 11 }}>{x.status || x.result || ''}</div>
+                  </td>
                 </tr>
               ))}
             </tbody>

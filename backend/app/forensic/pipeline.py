@@ -148,6 +148,10 @@ class AnalysisPipeline:
         entries, events = [], []
         files = deleted = 0
         for entry in iter_bodyfile(bodyfile):
+            if entry['fn_attr']:
+                # NTFS $FILE_NAME times duplicate the file's own entry; they stay in the
+                # bodyfile for mactime but are not indexed or counted as separate files.
+                continue
             collector.observe(entry, offset)
             if not entry['is_virtual']:
                 files += 1

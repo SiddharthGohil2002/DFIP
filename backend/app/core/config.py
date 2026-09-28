@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     redis_url:str='redis://localhost:6379/0'
     celery_task_time_limit:int=1800
     celery_task_soft_time_limit:int=1500
+    # Full disk-image analysis (seconds); real images take far longer than other jobs.
+    analysis_time_limit:int=6*3600
     desktop_job_timeout_minutes:int=60
     virustotal_api_key:str=''
     abuseipdb_api_key:str=''
