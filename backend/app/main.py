@@ -33,7 +33,7 @@ async def startup():
             copy={k:v for k,v in row.items() if k not in ('_id','record_hash')}
             row['record_hash']=hashlib.sha256(_canonical(copy).encode()).hexdigest()
             db['audit_logs'].replace_one({'_id':row['_id']},row); previous=row['record_hash']
-        for collection,index,unique in [('cases','case_id',True),('evidence','evidence_id',True),('audit_logs','timestamp',False),('timeline_events','timestamp',False),('notifications','user_id',False),('findings','case_id',False),('jobs','status',False),('jobs','job_id',True),('refresh_tokens','token_hash',True),('audit_logs','sequence',True),('forensic_artifacts','case_id',False),('forensic_artifacts','artifact_id',False),('patterns','case_id',False),('anomalies','case_id',False),('desktop_devices','device_id',True),('desktop_devices','user_id',False),('reports','report_id',True)]:
+        for collection,index,unique in [('cases','case_id',True),('evidence','evidence_id',True),('audit_logs','timestamp',False),('timeline_events','timestamp',False),('notifications','user_id',False),('findings','case_id',False),('jobs','status',False),('jobs','job_id',True),('refresh_tokens','token_hash',True),('audit_logs','sequence',True),('forensic_artifacts','case_id',False),('forensic_artifacts','artifact_id',False),('patterns','case_id',False),('anomalies','case_id',False),('desktop_devices','device_id',True),('desktop_devices','user_id',False),('reports','report_id',True),('users','email',True)]:
             try:db[collection].create_index(index,unique=unique)
             except Exception:pass
         # Compound indexes for the analysis pipeline's high-volume collections.
@@ -55,6 +55,7 @@ async def startup():
         print(f'[DFIP] MongoDB unavailable; startup continues in degraded mode: {e}')
 @app.get('/health')
 def health():
-    base={'version':app.version,'demo_mode':settings.demo_mode,'require_desktop_for_writes':settings.require_desktop_for_writes}
+    base={'version':app.version,'demo_mode':settings.demo_mode,'require_desktop_for_writes':settings.require_desktop_for_writes,
+          'registration_mode':settings.registration_mode}
     try:get_db().command('ping');return {'status':'ok','database':'mongodb',**base}
     except Exception as e:return {'status':'degraded','database':'mongodb-unavailable','detail':str(e),**base}

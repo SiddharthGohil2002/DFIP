@@ -28,6 +28,9 @@ export function UsersPage() {
 
   if (!can('USER_MANAGE')) return <Banner tone="warn">Only administrators can manage users.</Banner>;
 
+  const pending = (list.data?.data || []).filter((u) => u.status === 'PENDING');
+  const others = (list.data?.data || []).filter((u) => u.status !== 'PENDING');
+
   async function create() {
     setBusy(true);
     setError('');
@@ -60,13 +63,28 @@ export function UsersPage() {
         subtitle="Accounts and roles. Every permission is enforced by the server; the interface only hides actions a role cannot perform."
         actions={<Button variant="primary" icon={<UserPlus size={15} />} onClick={() => { setForm({ name: '', email: '', role: 'INVESTIGATOR', password: '' }); setError(''); setOpen(true); }}>Add user</Button>}
       />
+      {pending.length > 0 && (
+        <Card title={`Waiting for approval (${pending.length})`} subtitle="Accounts created from the sign-in page. Choose a role and approve, or reject." flush>
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Name</th><th>Email</th><th>Requested</th><th>Role on approval</th><th /></tr></thead>
+              <tbody>
+                {pending.map((u) => (
+                  <PendingRow key={u._id} user={u} requested={time(u.created_at)} onDecide={(change) => update(u, change)} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
       <Card flush>
-        {list.loading && !list.data ? <Loading /> : !list.data?.data.length ? <Empty title="No users" /> : (
+        {list.loading && !list.data ? <Loading /> : !others.length ? <Empty title="No users" /> : (
           <div className="table-wrap">
             <table className="table">
               <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last sign-in</th></tr></thead>
               <tbody>
-                {list.data.data.map((u) => {
+                {others.map((u) => {
                   const self = u._id === me?._id;
                   return (
                     <tr key={u._id}>
@@ -133,5 +151,26 @@ export function UsersPage() {
         {error && <Banner tone="danger">{error}</Banner>}
       </Modal>
     </div>
+  );
+}
+
+function PendingRow({ user, requested, onDecide }: { user: User; requested: string; onDecide: (change: Partial<User>) => void }) {
+  const [role, setRole] = useState<User['role']>('INVESTIGATOR');
+  return (
+    <tr>
+      <td className="strong">{user.name}</td>
+      <td className="small">{user.email}</td>
+      <td className="small nowrap">{requested}</td>
+      <td>
+        <select className="select sm" style={{ width: 150 }} value={role} onChange={(e) => setRole(e.target.value as User['role'])} aria-label={`Role for ${user.email}`}>
+          {ROLES.map((r) => <option key={r}>{r}</option>)}
+        </select>
+        <div className="tiny muted" style={{ marginTop: 4 }}>{ROLE_NOTES[role]}</div>
+      </td>
+      <td className="nowrap right">
+        <Button size="sm" variant="primary" onClick={() => onDecide({ status: 'ACTIVE', role })}>Approve</Button>{' '}
+        <Button size="sm" variant="danger" onClick={() => onDecide({ status: 'DISABLED' })}>Reject</Button>
+      </td>
+    </tr>
   );
 }

@@ -93,7 +93,8 @@ export function FindingsPage() {
           <textarea className="textarea" rows={6} value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
         {!!overview?.evidence.length && (
-          <Field label="Supporting evidence">
+          <fieldset className="field" style={{ border: 'none', padding: 0, margin: 0 }}>
+            <legend className="small strong" style={{ color: 'var(--ink-2)', marginBottom: 6 }}>Supporting evidence</legend>
             <div className="row">
               {overview.evidence.map((e) => (
                 <label key={e.evidence_id} className="check">
@@ -102,7 +103,7 @@ export function FindingsPage() {
                 </label>
               ))}
             </div>
-          </Field>
+          </fieldset>
         )}
         {error && <Banner tone="danger">{error}</Banner>}
       </Modal>

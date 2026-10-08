@@ -73,6 +73,7 @@ export function Landing() {
               <Download size={15} /> Download for Windows
             </a>
           )}
+          <Link to="/login?mode=register" className="btn ghost">Create account</Link>
           <Link to="/login" className="btn primary">Sign in</Link>
         </div>
       </nav>

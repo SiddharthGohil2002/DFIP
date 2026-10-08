@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     # When true, mutating endpoints only accept requests from a registered DFIP
     # desktop workstation. When false, the web portal can write too (RBAC still applies).
     require_desktop_for_writes:bool=False
+    # Self-service "Create account" on the sign-in page (web and desktop):
+    #   approval - new accounts wait until an administrator activates them and picks the role (default)
+    #   open     - new accounts are active immediately as INVESTIGATOR (their own cases only)
+    #   disabled - no self-service accounts; administrators create users
+    registration_mode:str='approval'
     cors_origins:str='http://localhost:5173'
     max_upload_bytes:int=50*1024*1024*1024
     job_poll_seconds:float=1.0
@@ -38,6 +43,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode='after')
     def validate_secret(self):
+        if self.registration_mode not in {'approval','open','disabled'}:
+            raise ValueError("REGISTRATION_MODE must be 'approval', 'open' or 'disabled'")
         if not self.demo_mode and (self.jwt_secret in PLACEHOLDER_SECRETS or len(self.jwt_secret) < 32):
             raise ValueError('JWT_SECRET must be a unique random value of at least 32 characters when DEMO_MODE is off')
         return self

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added — accounts and required sign-in
+- "Create account" on the web and desktop sign-in pages (`POST /api/auth/register`). `REGISTRATION_MODE`: `approval` (default; administrators approve pending accounts and choose the role on the Users page, with a badge on the menu item), `open` or `disabled`.
+- Sign-in is required on every desktop app launch and every new browser session: tokens are kept in session storage, and tokens stored by older versions are deleted at start-up.
+- Clearer sign-in errors for pending and disabled accounts; unique index on user email.
+- Field hints are no longer part of the input's accessible name.
+
 ### Added — Windows installer and download links
 - `desktop/scripts/build-windows-docker.sh` cross-compiles the NSIS installer in Docker (`cargo-xwin`), so no Rust or Visual C++ toolchain is needed; it publishes to `storage/downloads`.
 - "Download for Windows" links on the website navigation and hero, the web sign-in page and the web workspace sidebar, shown whenever an installer is published.

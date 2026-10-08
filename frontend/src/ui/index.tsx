@@ -71,7 +71,7 @@ export function Badge({ tone = 'neutral', children, title }: { tone?: Tone; chil
 
 const STATUS_TONES: Record<string, Tone> = {
   VERIFIED: 'ok', COMPLETED: 'ok', ACTIVE: 'ok', OPEN: 'info', IN_PROGRESS: 'accent', ON_HOLD: 'warn',
-  RUNNING: 'accent', QUEUED: 'warn', PENDING_DESKTOP: 'warn', FAILED: 'danger', INTEGRITY_FAILED: 'danger',
+  RUNNING: 'accent', QUEUED: 'warn', PENDING: 'warn', PENDING_DESKTOP: 'warn', FAILED: 'danger', INTEGRITY_FAILED: 'danger',
   CANCELLED: 'neutral', SUSPENDED: 'danger', DISABLED: 'neutral', ARCHIVED: 'neutral',
   CRITICAL: 'danger', HIGH: 'warn', MEDIUM: 'accent', LOW: 'info', INFO: 'neutral',
 };
@@ -111,11 +111,14 @@ export function ErrorBanner({ error }: { error?: string | null }) {
 
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
-    <label className="field">
-      <span>{label}</span>
-      {children}
+    <div className="field">
+      {/* The hint stays outside the label so it is not part of the input's accessible name. */}
+      <label>
+        <span>{label}</span>
+        {children}
+      </label>
       {hint && <small className="hint">{hint}</small>}
-    </label>
+    </div>
   );
 }
 

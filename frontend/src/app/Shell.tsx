@@ -6,6 +6,7 @@ import { useCase } from '../lib/caseContext';
 import { TimeModeContext } from '../lib/format';
 import { IS_DESKTOP } from '../lib/platform';
 import { serverUrl } from '../lib/api';
+import { useApi } from '../lib/useApi';
 import { Button, StatusBadge } from '../ui';
 import { CaseFormModal } from '../pages/Cases';
 import { Logo } from './Logo';
@@ -23,6 +24,9 @@ export function Shell({ children }: { children: ReactNode }) {
   const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
   const counts = overview?.counts;
+  // Administrators see how many self-created accounts are waiting for approval.
+  const users = useApi<{ data: { status: string }[] }>(can('USER_MANAGE') ? '/admin/users' : null, { pollMs: 60000 });
+  const pendingUsers = (users.data?.data || []).filter((u) => u.status === 'PENDING').length;
 
   return (
     <div className="shell">
@@ -37,13 +41,13 @@ export function Shell({ children }: { children: ReactNode }) {
                 <div className="nav-group-title">{group.title}</div>
                 {items.map((item) => {
                   const Icon = item.icon;
-                  const count = counts && item.count ? item.count(counts) : null;
+                  const count = item.to === '/app/admin/users' ? pendingUsers : counts && item.count ? item.count(counts) : null;
                   return (
                     <NavLink key={item.to} to={item.to} end={item.to === '/app'} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
                       <Icon size={17} />
                       {item.label}
                       {count !== null && count > 0 && (
-                        <span className={`nav-count ${counts && item.alert?.(counts) ? 'alert' : ''}`}>{count.toLocaleString()}</span>
+                        <span className={`nav-count ${(counts && item.alert?.(counts)) || item.to === '/app/admin/users' ? 'alert' : ''}`} title={item.to === '/app/admin/users' ? 'Accounts waiting for approval' : undefined}>{count.toLocaleString()}</span>
                       )}
                     </NavLink>
                   );

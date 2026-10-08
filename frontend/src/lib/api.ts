@@ -8,6 +8,11 @@ const DEVICE_TOKEN = 'dfip_device_token';
 
 export const DEFAULT_DESKTOP_SERVER = 'http://localhost:8000';
 
+// Sign-in tokens live in sessionStorage: closing the desktop app or ending the browser
+// session signs the user out, so DFIP always starts at the sign-in page.
+// Older versions kept them in localStorage; remove any left behind.
+for (const key of [TOKEN, REFRESH, DEVICE_TOKEN]) localStorage.removeItem(key);
+
 /** Origin of the DFIP server. Web: same origin (nginx proxies /api). Desktop: configurable. */
 export function serverUrl(): string {
   if (!IS_DESKTOP) return ((import.meta.env.VITE_API_ORIGIN as string | undefined) || '').replace(/\/+$/, '');
@@ -31,20 +36,20 @@ export class ApiError extends Error {
 }
 
 export const session = {
-  hasToken: () => Boolean(localStorage.getItem(TOKEN)),
-  refreshToken: () => localStorage.getItem(REFRESH),
+  hasToken: () => Boolean(sessionStorage.getItem(TOKEN)),
+  refreshToken: () => sessionStorage.getItem(REFRESH),
   set(access: string, refresh: string) {
-    localStorage.setItem(TOKEN, access);
-    localStorage.setItem(REFRESH, refresh);
+    sessionStorage.setItem(TOKEN, access);
+    sessionStorage.setItem(REFRESH, refresh);
   },
   clear() {
-    localStorage.removeItem(TOKEN);
-    localStorage.removeItem(REFRESH);
-    localStorage.removeItem(DEVICE_TOKEN);
+    sessionStorage.removeItem(TOKEN);
+    sessionStorage.removeItem(REFRESH);
+    sessionStorage.removeItem(DEVICE_TOKEN);
   },
   setDevice(id: string, token: string) {
     localStorage.setItem(DEVICE_ID, id);
-    localStorage.setItem(DEVICE_TOKEN, token);
+    sessionStorage.setItem(DEVICE_TOKEN, token);
   },
 };
 
@@ -59,13 +64,13 @@ export function deviceId(): string {
 
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = {};
-  const token = localStorage.getItem(TOKEN);
+  const token = sessionStorage.getItem(TOKEN);
   if (token) h.Authorization = `Bearer ${token}`;
   // A registered desktop workstation identifies itself so servers running with
   // REQUIRE_DESKTOP_FOR_WRITES=true accept its writes.
   if (IS_DESKTOP) {
     const id = localStorage.getItem(DEVICE_ID);
-    const dt = localStorage.getItem(DEVICE_TOKEN);
+    const dt = sessionStorage.getItem(DEVICE_TOKEN);
     if (id && dt) {
       h['X-DFIP-Device-Id'] = id;
       h['X-DFIP-Device-Token'] = dt;
@@ -76,7 +81,7 @@ function authHeaders(): Record<string, string> {
 
 let refreshing: Promise<boolean> | null = null;
 function refreshSession(): Promise<boolean> {
-  const rt = localStorage.getItem(REFRESH);
+  const rt = sessionStorage.getItem(REFRESH);
   if (!rt) return Promise.resolve(false);
   refreshing ??= fetch(apiBase() + '/auth/refresh', {
     method: 'POST',
@@ -183,6 +188,7 @@ export interface Health {
   version?: string;
   demo_mode?: boolean;
   require_desktop_for_writes?: boolean;
+  registration_mode?: 'approval' | 'open' | 'disabled';
 }
 
 export async function health(base = serverUrl()): Promise<Health> {
