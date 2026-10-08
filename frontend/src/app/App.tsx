@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { BrowserRouter, HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { FolderOpen } from 'lucide-react';
 import { AuthProvider, useAuth } from '../lib/auth';
@@ -25,10 +25,12 @@ import { CustodyPage } from '../pages/Custody';
 import { UsersPage } from '../pages/admin/Users';
 import { AuditPage } from '../pages/admin/Audit';
 import { SystemPage } from '../pages/admin/System';
-import { Landing } from '../site/Landing';
 
 // The desktop shell loads files from its own protocol, so it uses hash routing.
 const Router = IS_DESKTOP ? HashRouter : BrowserRouter;
+
+// The public website (and its screenshots) is only part of the web build.
+const Landing = IS_DESKTOP ? null : lazy(() => import('../site/Landing').then((m) => ({ default: m.Landing })));
 
 export default function App() {
   const [mode, setModeState] = useState<TimeMode>(() => (localStorage.getItem('dfip_time_mode') === 'local' ? 'local' : 'utc'));
@@ -60,7 +62,16 @@ function AppRoutes() {
   }
   return (
     <Routes>
-      {!IS_DESKTOP && <Route path="/" element={<Landing />} />}
+      {Landing && (
+        <Route
+          path="/"
+          element={
+            <Suspense fallback={<div className="center-fill"><Loading /></div>}>
+              <Landing />
+            </Suspense>
+          }
+        />
+      )}
       <Route path="/login" element={user ? <Navigate to="/app" replace /> : <LoginPage />} />
       <Route
         path="/app/*"

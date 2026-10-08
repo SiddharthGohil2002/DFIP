@@ -1,6 +1,6 @@
 import { useContext, useState, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LogOut, Plus, Server } from 'lucide-react';
+import { LogOut, Plus, Search, Server } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { TimeModeContext } from '../lib/format';
@@ -22,6 +22,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const { cases, caseId, setCaseId, activeCase, overview, reloadCases } = useCase();
   const { mode, setMode } = useContext(TimeModeContext);
   const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState('');
   const navigate = useNavigate();
   const counts = overview?.counts;
   const [signingOut, setSigningOut] = useState(false);
@@ -84,6 +85,19 @@ export function Shell({ children }: { children: ReactNode }) {
               </Button>
             )}
           </div>
+          {caseId && (
+            <form
+              className="topbar-search hide-narrow"
+              role="search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (query.trim().length >= 2) navigate(`/app/search?q=${encodeURIComponent(query.trim())}`);
+              }}
+            >
+              <Search size={15} />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search this case…" aria-label="Search this case" />
+            </form>
+          )}
           <div className="spacer" />
           {IS_DESKTOP && (
             <span className="small muted row hide-narrow" title="DFIP server">

@@ -1,5 +1,5 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Search as SearchIcon } from 'lucide-react';
 import { useCase } from '../lib/caseContext';
 import { api } from '../lib/api';
@@ -15,24 +15,35 @@ interface Results {
 export function SearchPage() {
   const { caseId } = useCase();
   const time = useTime();
-  const [q, setQ] = useState('');
+  const [params] = useSearchParams();
+  const [q, setQ] = useState(params.get('q') || '');
   const [res, setRes] = useState<Results | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  async function run(e?: FormEvent) {
+  async function run(e?: FormEvent, term = q) {
     e?.preventDefault();
-    if (q.trim().length < 2) return;
+    if (term.trim().length < 2) return;
     setBusy(true);
     setError('');
     try {
-      setRes(await api<Results>(`/forensics/search?case_id=${encodeURIComponent(caseId)}&q=${encodeURIComponent(q.trim())}`));
+      setRes(await api<Results>(`/forensics/search?case_id=${encodeURIComponent(caseId)}&q=${encodeURIComponent(term.trim())}`));
     } catch (err: any) {
       setError(err.message);
     } finally {
       setBusy(false);
     }
   }
+
+  // A search started from the top bar arrives as ?q=…
+  useEffect(() => {
+    const term = params.get('q');
+    if (term) {
+      setQ(term);
+      run(undefined, term);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params, caseId]);
 
   const total = res ? Object.values(res.totals).reduce((a, b) => a + b, 0) : 0;
 

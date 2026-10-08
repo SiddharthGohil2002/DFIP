@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FileText, FolderPlus, HardDrive, Play, Upload } from 'lucide-react';
+import { ArrowRight, Check, FileText, FolderPlus, HardDrive, Play, Upload } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { formatBytes, humanize, useTime } from '../lib/format';
 import { post } from '../lib/api';
 import { IS_DESKTOP } from '../lib/platform';
-import type { Evidence, Job } from '../lib/types';
+import type { CaseCounts, Evidence, Job } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, Loading, ProgressBar, StatusBadge, useToast } from '../ui';
 import { NAV } from '../app/nav';
 import { WorkstationCard } from '../app/Workstation';
@@ -71,11 +71,7 @@ export function HomePage() {
         </div>
       </section>
 
-      {!evidence.length && (
-        <Banner tone="info">
-          <HardDrive size={16} /> No evidence yet. <Link to="/app/evidence">Upload a disk image</Link> (E01, RAW/DD or AFF) to start the investigation.
-        </Banner>
-      )}
+      <GettingStarted counts={counts} />
 
       <div className="grid" style={{ gridTemplateColumns: IS_DESKTOP ? 'minmax(0, 2fr) minmax(280px, 1fr)' : '1fr' }}>
         <EvidenceCard evidence={evidence} jobs={jobs} onChange={reloadOverview} />
@@ -197,5 +193,41 @@ function EvidenceCard({ evidence, jobs, onChange }: { evidence: Evidence[]; jobs
         })
       )}
     </Card>
+  );
+}
+
+/** Four steps from an empty case to a report, ticked off from the case's own data; hidden when complete. */
+function GettingStarted({ counts }: { counts: CaseCounts }) {
+  const steps = [
+    { label: 'Upload a disk image', hint: 'E01, RAW/DD or AFF; hashed and sealed read-only', done: counts.evidence > 0, to: '/app/evidence', action: 'Upload' },
+    { label: 'Run the full analysis', hint: 'Files, timeline, browser history, USB devices', done: counts.evidence_analyzed > 0, to: '/app/evidence', action: 'Analyze' },
+    { label: 'Review and record findings', hint: 'Deleted files, timeline, indicators', done: counts.findings > 0, to: '/app/findings', action: 'Add finding' },
+    { label: 'Generate the report', hint: 'Hash-sealed PDF for the case file', done: counts.reports > 0, to: '/app/reports', action: 'Generate' },
+  ];
+  const done = steps.filter((s) => s.done).length;
+  if (done === steps.length) return null;
+  const next = steps.findIndex((s) => !s.done);
+  return (
+    <section className="card getting-started">
+      <div className="row between">
+        <div>
+          <h3 style={{ fontSize: 15 }}>Getting started</h3>
+          <div className="small muted">{done} of {steps.length} steps done</div>
+        </div>
+        <div style={{ width: 220 }}><ProgressBar value={(done / steps.length) * 100} /></div>
+      </div>
+      <ol className="steps-list">
+        {steps.map((s, i) => (
+          <li key={s.label} className={s.done ? 'done' : i === next ? 'current' : ''}>
+            <span className="step-mark" aria-hidden="true">{s.done ? <Check size={14} /> : i + 1}</span>
+            <div className="grow">
+              <div className="strong small">{s.label}</div>
+              <div className="tiny muted">{s.hint}</div>
+            </div>
+            {i === next && <Link className="btn sm primary" to={s.to}>{s.action} <ArrowRight size={13} /></Link>}
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }

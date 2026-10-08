@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Check, Copy, Inbox, X } from 'lucide-react';
+import { NAV } from '../app/nav';
 
 type Variant = 'default' | 'primary' | 'danger' | 'ghost';
 
@@ -47,12 +49,23 @@ export function Card({ title, subtitle, actions, children, flush, className = ''
 }
 
 export function PageHeader({ title, subtitle, eyebrow, actions }: { title: string; subtitle?: ReactNode; eyebrow?: string; actions?: ReactNode }) {
+  // The page's icon is the one its sidebar entry uses, so both always match.
+  const { pathname } = useLocation();
+  const item = NAV.flatMap((g) => g.items).find((i) => i.to !== '/app' && (pathname === i.to || pathname.startsWith(i.to + '/')));
+  const Icon = item?.icon;
   return (
     <div className="page-head">
-      <div>
-        {eyebrow && <div className="eyebrow">{eyebrow}</div>}
-        <h1>{title}</h1>
-        {subtitle && <p>{subtitle}</p>}
+      <div className="page-head-main">
+        {Icon && (
+          <div className={`page-icon tile-icon ${item?.tone || ''}`} aria-hidden="true">
+            <Icon size={20} />
+          </div>
+        )}
+        <div>
+          {eyebrow && <div className="eyebrow">{eyebrow}</div>}
+          <h1>{title}</h1>
+          {subtitle && <p>{subtitle}</p>}
+        </div>
       </div>
       {actions && <div className="row">{actions}</div>}
     </div>

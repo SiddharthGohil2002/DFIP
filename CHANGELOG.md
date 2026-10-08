@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed — launch-ready website and UI polish
+- New public website: hero with a product screenshot, the tools DFIP is built on, key facts, one section per analysis feature with a real screenshot, the six-step workflow, evidence-integrity safeguards, platforms with the Windows download and its SHA-256, FAQ and a closing call to action. Works down to phone width with a menu button. "Get started" and "Create account" open the account form directly (`/login?mode=register`).
+- Page title, description, theme colour, favicon, Apple touch icon and link-preview (Open Graph / Twitter) image.
+- Inter and JetBrains Mono are bundled with the app, so the desktop app looks the same offline.
+- Workspace: quick case search in the top bar, an icon on every page header, a "Getting started" checklist on the case desktop until the first evidence, analysis, finding and report exist, a refined sidebar, cards and spacing, thin themed scrollbars (instead of the classic Windows ones in the desktop app), and a two-row timeline filter bar.
+- Sign-in on phones shows the DFIP brand and a link back to the website.
+
+### Fixed — UI
+- Evidence text rendered with substituted glyphs: the font's contextual alternates turned `2x8` into `2×8` (for example in a Firefox profile path) and `->` into an arrow. They are now off everywhere.
+- Long paths, URLs and serial numbers broke mid-word even where there was a space; they now wrap at spaces first.
+- The desktop build no longer bundles the website and its screenshots.
+
 ### Added — accounts and required sign-in
 - A labeled **Sign out** button with the signed-in user's name and role in the top bar (web and desktop), replacing the small icon at the bottom of the sidebar; the sign-in page confirms "You have signed out."
 - "Create account" on the web and desktop sign-in pages (`POST /api/auth/register`). `REGISTRATION_MODE`: `approval` (default; administrators approve pending accounts and choose the role on the Users page, with a badge on the menu item), `open` or `disabled`.
@@ -11,7 +23,7 @@
 
 ### Added — Windows installer and download links
 - `desktop/scripts/build-windows-docker.sh` cross-compiles the NSIS installer in Docker (`cargo-xwin`), so no Rust or Visual C++ toolchain is needed; it publishes to `storage/downloads`.
-- "Download for Windows" links on the website navigation and hero, the web sign-in page and the web workspace sidebar, shown whenever an installer is published.
+- "Download for Windows" links on the website, the web sign-in page and the web workspace sidebar, shown whenever an installer is published.
 
 ### Fixed — desktop app
 - The app crashed with a stack overflow at sign-in: two 1 MiB stack buffers (hashing, evidence copy) were inlined into the command dispatcher, exceeding the 1 MiB main-thread stack. Buffers are now on the heap, and hashing, copying and tool discovery run off the UI thread.

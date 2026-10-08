@@ -132,7 +132,7 @@ One React codebase in `frontend/`, built for two targets:
 
 | | Web portal (`npm run build`) | Desktop app (`npm run build:desktop`) |
 |---|---|---|
-| Opens on | Public website (`/`): features, workflow, evidence integrity, desktop download | The sign-in page |
+| Opens on | Public website (`/`): features with screenshots, workflow, evidence integrity, platforms and download, FAQ | The sign-in page |
 | After sign-in | The case workspace | The same case workspace, plus workstation details and local hash verification |
 | Server | Same origin (nginx proxies `/api`) | Configurable on the sign-in page (default `http://localhost:8000`) |
 
@@ -144,4 +144,4 @@ Development: `npm run dev` (web, port 5173, proxies the API on 8000) or `npm run
 
 `desktop/` is the Tauri 2 shell that loads the desktop build of the UI in a native Windows window. Its native commands (Rust, `desktop/src-tauri/src/main.rs`) include streaming SHA-256/SHA-512 hashing of local files, used to verify a local copy of an image against the registered evidence without uploading it again. On sign-in the app registers the workstation with the server, which allows `REQUIRE_DESKTOP_FOR_WRITES=true` deployments.
 
-Build the installers with `desktop/scripts/build-windows.ps1` (needs Rust and the Tauri Windows prerequisites; see `desktop/INSTALL.md`), or with only Docker: `sh desktop/scripts/build-windows-docker.sh` (cross-compiles the NSIS installer). Installers in `storage/downloads` are offered on the website (top navigation, hero and Desktop section), on the web sign-in page and in the web workspace sidebar, each with its SHA-256.
+Build the installers with `desktop/scripts/build-windows.ps1` (needs Rust and the Tauri Windows prerequisites; see `desktop/INSTALL.md`), or with only Docker: `sh desktop/scripts/build-windows-docker.sh` (cross-compiles the NSIS installer). Installers in `storage/downloads` are offered on the website (hero and Platforms section), on the web sign-in page and in the web workspace sidebar, each with its SHA-256.

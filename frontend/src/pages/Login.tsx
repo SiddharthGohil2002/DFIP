@@ -129,6 +129,11 @@ export function LoginPage() {
 
       <div className="login-panel">
         <div className="login-box">
+          {/* Narrow screens hide the left panel, so the brand and the way back sit above the form. */}
+          <div className="login-mobile-head">
+            <Logo />
+            {!IS_DESKTOP && <Link to="/" className="small">Website</Link>}
+          </div>
           <div>
             <h2>{mode === 'register' ? 'Create your account' : 'Sign in'}</h2>
             <p className="muted mt-0" style={{ marginTop: 4 }}>

@@ -62,31 +62,34 @@ export function TimelinePage() {
       />
 
       <Card>
-        <div className="row">
-          <select className="select sm" style={{ width: 170 }} value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Event type">
-            {Object.entries(TYPE_FILTERS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </select>
-          <input className="input sm" style={{ width: 230 }} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setSearch(q.trim())} placeholder="Search descriptions (Enter)" aria-label="Search" />
-          <Button size="sm" icon={<Search size={13} />} onClick={() => setSearch(q.trim())}>Search</Button>
-          <label className="small muted row" style={{ gap: 6 }}>
-            From
-            <input className="input sm" type="datetime-local" style={{ width: 190 }} value={start ? isoToLocalInput(start, mode) : ''} onChange={(e) => setStart(localInputToIso(e.target.value, mode))} />
-          </label>
-          <label className="small muted row" style={{ gap: 6 }}>
-            To
-            <input className="input sm" type="datetime-local" style={{ width: 190 }} value={end ? isoToLocalInput(end, mode) : ''} onChange={(e) => setEnd(localInputToIso(e.target.value, mode))} />
-          </label>
-          {(overview?.evidence.length || 0) > 1 && (
-            <select className="select sm" style={{ width: 160 }} value={evidence} onChange={(e) => setEvidence(e.target.value)} aria-label="Evidence">
-              <option value="">All evidence</option>
-              {overview!.evidence.map((e) => <option key={e.evidence_id} value={e.evidence_id}>{e.evidence_id}</option>)}
+        <div className="stack" style={{ gap: 12 }}>
+          <div className="row">
+            <select className="select sm" style={{ width: 170 }} value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Event type">
+              {Object.entries(TYPE_FILTERS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
-          )}
-          <Button size="sm" onClick={() => setOrder(order === 'asc' ? 'desc' : 'asc')}>{order === 'asc' ? 'Oldest first' : 'Newest first'}</Button>
-          {filtered && <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} onClick={reset}>Reset</Button>}
-        </div>
-        <div className="small muted" style={{ marginTop: 8 }}>
-          Date inputs and displayed times use {mode === 'utc' ? 'UTC' : 'your local time zone'} (switch in the top bar).
+            <input className="input sm grow" style={{ maxWidth: 340 }} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setSearch(q.trim())} placeholder="Search event descriptions (Enter)" aria-label="Search" />
+            <Button size="sm" icon={<Search size={13} />} onClick={() => setSearch(q.trim())}>Search</Button>
+            {(overview?.evidence.length || 0) > 1 && (
+              <select className="select sm" style={{ width: 160 }} value={evidence} onChange={(e) => setEvidence(e.target.value)} aria-label="Evidence">
+                <option value="">All evidence</option>
+                {overview!.evidence.map((e) => <option key={e.evidence_id} value={e.evidence_id}>{e.evidence_id}</option>)}
+              </select>
+            )}
+            <div className="spacer" style={{ flex: 1 }} />
+            <Button size="sm" onClick={() => setOrder(order === 'asc' ? 'desc' : 'asc')}>{order === 'asc' ? 'Oldest first' : 'Newest first'}</Button>
+            {filtered && <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} onClick={reset}>Reset</Button>}
+          </div>
+          <div className="row">
+            <label className="small muted row" style={{ gap: 6 }}>
+              From
+              <input className="input sm" type="datetime-local" style={{ width: 200 }} value={start ? isoToLocalInput(start, mode) : ''} onChange={(e) => setStart(localInputToIso(e.target.value, mode))} />
+            </label>
+            <label className="small muted row" style={{ gap: 6 }}>
+              To
+              <input className="input sm" type="datetime-local" style={{ width: 200 }} value={end ? isoToLocalInput(end, mode) : ''} onChange={(e) => setEnd(localInputToIso(e.target.value, mode))} />
+            </label>
+            <span className="small muted">Times in {mode === 'utc' ? 'UTC' : 'your local time zone'} (switch in the top bar).</span>
+          </div>
         </div>
       </Card>
 
