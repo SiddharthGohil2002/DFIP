@@ -6,6 +6,7 @@ import { health, serverUrl, setServerUrl, type Health } from '../lib/api';
 import { IS_DESKTOP } from '../lib/platform';
 import { Banner, Button, Field } from '../ui';
 import { Logo } from '../app/Logo';
+import { DesktopDownload } from '../app/DesktopDownload';
 
 const DEMO_ACCOUNTS = [
   { email: 'investigator@dfip.local', label: 'Investigator', note: 'Full case work' },
@@ -136,6 +137,8 @@ export function LoginPage() {
               </div>
             </div>
           )}
+
+          <DesktopDownload variant="login" />
         </form>
       </div>
     </div>

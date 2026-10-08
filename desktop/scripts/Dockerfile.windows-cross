@@ -1,0 +1,19 @@
+# Cross-compiles the DFIP Investigator Windows installer (NSIS .exe) on Linux, so
+# no Rust or Visual C++ toolchain is needed on the build machine. This follows Tauri's
+# documented (experimental) path: https://v2.tauri.app/distribute/windows-installer/#build-windows-apps-on-linux-and-macos
+# cargo-xwin downloads the Microsoft CRT and Windows SDK libraries at build time; using
+# them is subject to Microsoft's license terms.
+# Used by desktop/scripts/build-windows-docker.sh.
+# Debian 13: its NSIS (3.11) ships Include/Win/RestartManager.nsh, which Tauri's installer template needs
+# (Debian 12's NSIS 3.08 does not).
+FROM rust:1-trixie
+
+RUN apt-get update && apt-get install -y --no-install-recommends nsis lld llvm clang ca-certificates curl \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add x86_64-pc-windows-msvc \
+    && cargo install --locked cargo-xwin
+
+WORKDIR /src

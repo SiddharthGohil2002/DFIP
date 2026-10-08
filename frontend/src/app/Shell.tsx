@@ -9,6 +9,7 @@ import { serverUrl } from '../lib/api';
 import { Button, StatusBadge } from '../ui';
 import { CaseFormModal } from '../pages/Cases';
 import { Logo } from './Logo';
+import { DesktopDownload } from './DesktopDownload';
 import { NAV } from './nav';
 
 function initials(name: string) {
@@ -51,6 +52,7 @@ export function Shell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
+        <DesktopDownload variant="sidebar" />
         <div className="sidebar-foot">
           <div className="avatar">{initials(user?.name || '?')}</div>
           <div className="who">

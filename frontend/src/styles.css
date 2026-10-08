@@ -340,3 +340,9 @@ button { font: inherit; }
 @media (max-width: 760px) { .site-links { display: none; } .site-hero h1 { font-size: 32px; } }
 .chart .bar:focus { outline: none; }
 .chart .bar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* desktop-app download block in the web workspace sidebar */
+.nav-download { margin: 0 12px 12px; padding: 12px; border-radius: 9px; background: var(--nav-bg-2); border: 1px solid #1f2e4d; color: #dbe5f5; display: grid; gap: 9px; font-size: 13px; }
+.nav-download .tiny { color: var(--nav-muted); }
+.nav-download .btn { background: var(--accent); border-color: var(--accent); color: #fff; }
+.nav-download .btn:hover { background: var(--accent-hover); }

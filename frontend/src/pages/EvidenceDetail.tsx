@@ -258,7 +258,7 @@ function LocalVerifyCard({ expected }: { expected: string }) {
           <div className="row">
             <div className="grow">
               <Field label="Full path of the local image or source media file">
-                <input className="input" value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\\evidence\\laptop.E01" />
+                <input className="input" value={path} onChange={(e) => setPath(e.target.value)} placeholder={'D:\\evidence\\laptop.E01'} />
               </Field>
             </div>
             <Button style={{ alignSelf: 'flex-end' }} busy={busy} disabled={!path.trim()} onClick={run}>Hash and compare</Button>

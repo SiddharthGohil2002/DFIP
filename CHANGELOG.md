@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added — Windows installer and download links
+- `desktop/scripts/build-windows-docker.sh` cross-compiles the NSIS installer in Docker (`cargo-xwin`), so no Rust or Visual C++ toolchain is needed; it publishes to `storage/downloads`.
+- "Download for Windows" links on the website navigation and hero, the web sign-in page and the web workspace sidebar, shown whenever an installer is published.
+
+### Fixed — desktop app
+- The app crashed with a stack overflow at sign-in: two 1 MiB stack buffers (hashing, evidence copy) were inlined into the command dispatcher, exceeding the 1 MiB main-thread stack. Buffers are now on the heap, and hashing, copying and tool discovery run off the UI thread.
+- Tauri build hooks pointed at a non-existent folder (`cwd` is relative to `src-tauri`).
+- The local-copy path example showed doubled backslashes.
+
 ### Changed — rebuilt web and desktop UI (2.1.0)
 - One UI codebase (`frontend/`) with two targets: the web portal (public website + sign-in + workspace) and the desktop app (single sign-in page, then the workspace). The duplicated `desktop/ui` copy is removed.
 - New case workspace: active-case switcher, a "case desktop" home with evidence status, live analysis progress and a tile per function with live counts, and dedicated pages for evidence (drag-and-drop upload with progress), evidence detail (manifest, integrity, partitions/filesystems, custody), deleted files and recovered files (with ExifTool metadata), timeline (zoomable activity chart, filters, paging), browser history, USB devices, indicators, carving, keyword search, findings, reports, chain of custody, and administration (users, audit log, system & tools).

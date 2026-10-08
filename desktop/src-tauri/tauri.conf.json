@@ -4,9 +4,9 @@
   "version": "2.1.0",
   "identifier": "org.dfip.investigator",
   "build": {
-    "beforeDevCommand": { "script": "npm run dev:desktop", "cwd": "../frontend", "wait": false },
+    "beforeDevCommand": { "script": "npm run dev:desktop", "cwd": "../../frontend", "wait": false },
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": { "script": "npm run build:desktop", "cwd": "../frontend" },
+    "beforeBuildCommand": { "script": "npm run build:desktop", "cwd": "../../frontend" },
     "frontendDist": "../../frontend/dist-desktop"
   },
   "app": {

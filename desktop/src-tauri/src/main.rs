@@ -6,17 +6,10 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
-    sync::Mutex,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::State;
 use walkdir::WalkDir;
-
-#[derive(Default)]
-struct AppState {
-    lock: Mutex<()>,
-}
 
 #[derive(Serialize)]
 struct ToolInfo {
@@ -101,7 +94,8 @@ fn hash_reader(mut f: File) -> Result<HashResult, String> {
     let start = Instant::now();
     let mut h256 = Sha256::new();
     let mut h512 = Sha512::new();
-    let mut buf = [0u8; 1024 * 1024];
+    // Heap buffer: 1 MiB on the stack overflows the 1 MiB main-thread stack once inlined.
+    let mut buf = vec![0u8; 1024 * 1024];
     let mut n = 0u64;
     loop {
         let r = f.read(&mut buf).map_err(|e| e.to_string())?;
@@ -138,15 +132,24 @@ fn system_info() -> serde_json::Value {
     })
 }
 
+// Long-running file I/O runs on a blocking worker thread, never on the UI thread.
 #[tauri::command]
-fn hash_file(path: String, state: State<AppState>) -> Result<HashResult, String> {
-    let _g = state.lock.lock().map_err(|_| "lock poisoned".to_string())?;
-    hash_reader(File::open(&path).map_err(|e| format!("Cannot open file '{}': {}", path, e))?)
+async fn hash_file(path: String) -> Result<HashResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        hash_reader(File::open(&path).map_err(|e| format!("Cannot open file '{}': {}", path, e))?)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn copy_evidence(source: String, destination: String, state: State<AppState>) -> Result<CopyResult, String> {
-    let _g = state.lock.lock().map_err(|_| "lock poisoned".to_string())?;
+async fn copy_evidence(source: String, destination: String) -> Result<CopyResult, String> {
+    tauri::async_runtime::spawn_blocking(move || copy_evidence_blocking(source, destination))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn copy_evidence_blocking(source: String, destination: String) -> Result<CopyResult, String> {
     let start = Instant::now();
     let src = Path::new(&source);
     if !src.is_file() {
@@ -167,7 +170,8 @@ fn copy_evidence(source: String, destination: String, state: State<AppState>) ->
         .map_err(|e| e.to_string())?;
     let mut h256 = Sha256::new();
     let mut h512 = Sha512::new();
-    let mut buf = [0u8; 1024 * 1024];
+    // Heap buffer: 1 MiB on the stack overflows the 1 MiB main-thread stack once inlined.
+    let mut buf = vec![0u8; 1024 * 1024];
     let mut n = 0u64;
     loop {
         let r = input.read(&mut buf).map_err(|e| e.to_string())?;
@@ -234,7 +238,12 @@ fn list_directory(path: String, recursive: bool) -> Result<Vec<FileEntry>, Strin
 }
 
 #[tauri::command]
-fn tool_inventory() -> Vec<ToolInfo> {
+async fn tool_inventory() -> Result<Vec<ToolInfo>, String> {
+    // Probing tools spawns processes; keep it off the UI thread.
+    tauri::async_runtime::spawn_blocking(tool_inventory_blocking).await.map_err(|e| e.to_string())
+}
+
+fn tool_inventory_blocking() -> Vec<ToolInfo> {
     let tools = [
         "fls", "istat", "fsstat", "mmls", "icat", "exiftool", "tshark", "yara", "vol", "strings", "file",
     ];
@@ -393,7 +402,6 @@ fn list_local_cases() -> Result<Vec<serde_json::Value>, String> {
 
 fn main() {
     tauri::Builder::default()
-        .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             system_info,
             hash_file,

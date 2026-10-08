@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight, Clock, Download, FileLock2, FileText, FileX, Fingerprint, Globe, KeyRound, Link2, ListChecks, Monitor, ShieldCheck, Usb,
 } from 'lucide-react';
-import { api, serverUrl } from '../lib/api';
+import { installerHref, installerVersion, primaryInstaller, useInstallers } from '../lib/installers';
 import { formatBytes } from '../lib/format';
 import { Logo } from '../app/Logo';
 import { Badge, Hash } from '../ui';
@@ -54,15 +53,9 @@ const SAFEGUARDS = [
   { icon: ShieldCheck, title: 'Leads, not verdicts', text: 'Missing data is reported as missing; patterns and anomalies are marked for review.' },
 ];
 
-interface Installer { filename: string; size: number; sha256: string; format: string; url: string }
-
 export function Landing() {
-  const [installers, setInstallers] = useState<Installer[] | null>(null);
-  useEffect(() => {
-    api<{ available: boolean; files: Installer[] }>('/desktop/download/info')
-      .then((r) => setInstallers(r.files))
-      .catch(() => setInstallers([]));
-  }, []);
+  const installers = useInstallers();
+  const main = primaryInstaller(installers);
 
   return (
     <div className="site">
@@ -75,6 +68,11 @@ export function Landing() {
             <a href="#integrity">Evidence integrity</a>
             <a href="#desktop">Desktop app</a>
           </div>
+          {main && (
+            <a href={installerHref(main)} className="btn" download>
+              <Download size={15} /> Download for Windows
+            </a>
+          )}
           <Link to="/login" className="btn primary">Sign in</Link>
         </div>
       </nav>
@@ -88,7 +86,13 @@ export function Landing() {
           </p>
           <div className="row">
             <Link to="/login" className="btn primary lg">Sign in to the workspace <ArrowRight size={17} /></Link>
-            <a href="#desktop" className="btn lg" style={{ background: 'transparent', color: '#dbe5f5', borderColor: '#33476e' }}><Monitor size={17} /> Desktop app</a>
+            {main ? (
+              <a href={installerHref(main)} className="btn lg" style={{ background: 'transparent', color: '#dbe5f5', borderColor: '#33476e' }} download>
+                <Download size={17} /> Download for Windows{installerVersion(main) && ` · v${installerVersion(main)}`}
+              </a>
+            ) : (
+              <a href="#desktop" className="btn lg" style={{ background: 'transparent', color: '#dbe5f5', borderColor: '#33476e' }}><Monitor size={17} /> Desktop app</a>
+            )}
           </div>
         </div>
       </header>
@@ -168,7 +172,7 @@ export function Landing() {
                       <td className="strong">{f.filename} <Badge>{f.format}</Badge></td>
                       <td className="small">{formatBytes(f.size)}</td>
                       <td><Hash value={f.sha256} short={24} /></td>
-                      <td className="right"><a className="btn primary sm" href={serverUrl() + f.url}><Download size={14} /> Download</a></td>
+                      <td className="right"><a className="btn primary sm" href={installerHref(f)} download><Download size={14} /> Download</a></td>
                     </tr>
                   ))}
                 </tbody>
