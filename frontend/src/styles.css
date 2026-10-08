@@ -239,13 +239,7 @@ button { font: inherit; }
 .nav-link.active { background: var(--nav-active); color: #fff; box-shadow: inset 3px 0 0 #3b82f6; }
 .nav-link .nav-count { margin-left: auto; font-size: 11px; font-weight: 700; background: #1e2c48; color: #c7d4ea; border-radius: 999px; padding: 1px 7px; }
 .nav-link .nav-count.alert { background: #5b1d1d; color: #fecaca; }
-.sidebar-foot { border-top: 1px solid #1a2640; padding: 12px 14px; display: flex; align-items: center; gap: 10px; }
 .avatar { width: 32px; height: 32px; border-radius: 50%; background: #1e3a8a; color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 12px; flex: none; }
-.sidebar-foot .who { min-width: 0; flex: 1; }
-.sidebar-foot .who b { display: block; color: #fff; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sidebar-foot .who span { font-size: 11px; color: var(--nav-muted); }
-.sidebar-foot .btn { background: transparent; border-color: #2a3a5c; color: var(--nav-ink); }
-.sidebar-foot .btn:hover { background: var(--nav-bg-2); }
 
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .topbar { display: flex; align-items: center; gap: 12px; padding: 10px 24px; background: var(--surface); border-bottom: 1px solid var(--border); min-height: 58px; }
@@ -354,3 +348,15 @@ button { font: inherit; }
 .segmented button.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
 .link-btn { border: none; background: none; padding: 0; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; }
 .link-btn:hover { text-decoration: underline; }
+
+/* signed-in user and sign-out in the top bar */
+.topbar-user { display: flex; align-items: center; gap: 10px; padding-left: 14px; margin-left: 2px; border-left: 1px solid var(--border); }
+.topbar-user .avatar { width: 30px; height: 30px; font-size: 11.5px; }
+.topbar-user .who { line-height: 1.2; }
+.topbar-user .who b { display: block; font-size: 13px; white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.topbar-user .who span { font-size: 11px; color: var(--muted); }
+.topbar .case-switch .select { width: 320px; max-width: 30vw; }
+@media (max-width: 1320px) { .hide-narrow { display: none !important; } }
+.topbar .row, .topbar .case-switch { flex-wrap: nowrap; }
+.topbar .case-switch { min-width: 0; flex-shrink: 1; }
+.topbar .case-switch .select { min-width: 180px; }

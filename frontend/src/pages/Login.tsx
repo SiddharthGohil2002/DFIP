@@ -20,7 +20,7 @@ const MIN_PASSWORD = 12;
 type Mode = 'signin' | 'register';
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, signedOut } = useAuth();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const requested: Mode = params.get('mode') === 'register' ? 'register' : 'signin';
@@ -34,7 +34,7 @@ export function LoginPage() {
   const [name, setName] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(signedOut ? 'You have signed out.' : '');
   const [busy, setBusy] = useState(false);
   const [server, setServer] = useState(serverUrl());
   const [showServer, setShowServer] = useState(false);

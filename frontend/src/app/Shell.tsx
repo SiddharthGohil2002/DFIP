@@ -24,6 +24,12 @@ export function Shell({ children }: { children: ReactNode }) {
   const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
   const counts = overview?.counts;
+  const [signingOut, setSigningOut] = useState(false);
+  async function signOut() {
+    setSigningOut(true);
+    // Clearing the session sends every workspace route to the sign-in page.
+    await logout();
+  }
   // Administrators see how many self-created accounts are waiting for approval.
   const users = useApi<{ data: { status: string }[] }>(can('USER_MANAGE') ? '/admin/users' : null, { pollMs: 60000 });
   const pendingUsers = (users.data?.data || []).filter((u) => u.status === 'PENDING').length;
@@ -57,22 +63,6 @@ export function Shell({ children }: { children: ReactNode }) {
           })}
         </nav>
         <DesktopDownload variant="sidebar" />
-        <div className="sidebar-foot">
-          <div className="avatar">{initials(user?.name || '?')}</div>
-          <div className="who">
-            <b>{user?.name}</b>
-            <span>{user?.role}</span>
-          </div>
-          <Button
-            size="sm"
-            icon={<LogOut size={14} />}
-            title="Sign out"
-            onClick={async () => {
-              await logout();
-              navigate('/login');
-            }}
-          />
-        </div>
       </aside>
 
       <div className="main">
@@ -96,7 +86,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
           <div className="spacer" />
           {IS_DESKTOP && (
-            <span className="small muted row" title="DFIP server">
+            <span className="small muted row hide-narrow" title="DFIP server">
               <Server size={14} /> {serverUrl().replace(/^https?:\/\//, '')}
             </span>
           )}
@@ -106,6 +96,16 @@ export function Shell({ children }: { children: ReactNode }) {
             </Button>
             <Button size="sm" variant={mode === 'local' ? 'primary' : 'default'} onClick={() => { setMode('local'); }}>
               Local
+            </Button>
+          </div>
+          <div className="topbar-user">
+            <div className="avatar" aria-hidden="true">{initials(user?.name || '?')}</div>
+            <div className="who hide-narrow">
+              <b>{user?.name}</b>
+              <span>{user?.role}</span>
+            </div>
+            <Button size="sm" icon={<LogOut size={14} />} busy={signingOut} onClick={signOut} title="Sign out of DFIP">
+              Sign out
             </Button>
           </div>
         </header>

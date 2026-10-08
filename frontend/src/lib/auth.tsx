@@ -6,6 +6,8 @@ import type { User } from './types';
 interface AuthState {
   user: User | null;
   ready: boolean;
+  /** True after the user signed out in this session, until the next sign-in. */
+  signedOut: boolean;
   login: (email: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
   /** Mirrors the server's RBAC check; the server enforces it regardless. */
@@ -46,6 +48,7 @@ async function registerWorkstation() {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
+  const [signedOut, setSignedOut] = useState(false);
   const [webReadOnly, setWebReadOnly] = useState(false);
 
   useEffect(() => {
@@ -71,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     session.set(r.access_token, r.refresh_token);
     if (IS_DESKTOP) await registerWorkstation().catch(() => undefined);
+    setSignedOut(false);
     setUser(r.user);
     return r.user;
   }, []);
@@ -79,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const rt = session.refreshToken();
     if (rt) await post('/auth/logout', { refresh_token: rt }).catch(() => undefined);
     session.clear();
+    setSignedOut(true);
     setUser(null);
   }, []);
 
@@ -90,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user, webReadOnly],
   );
 
-  const value = useMemo(() => ({ user, ready, login, logout, can }), [user, ready, login, logout, can]);
+  const value = useMemo(() => ({ user, ready, signedOut, login, logout, can }), [user, ready, signedOut, login, logout, can]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

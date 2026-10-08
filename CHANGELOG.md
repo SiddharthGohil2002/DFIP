@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added — accounts and required sign-in
+- A labeled **Sign out** button with the signed-in user's name and role in the top bar (web and desktop), replacing the small icon at the bottom of the sidebar; the sign-in page confirms "You have signed out."
 - "Create account" on the web and desktop sign-in pages (`POST /api/auth/register`). `REGISTRATION_MODE`: `approval` (default; administrators approve pending accounts and choose the role on the Users page, with a badge on the menu item), `open` or `disabled`.
 - Sign-in is required on every desktop app launch and every new browser session: tokens are kept in session storage, and tokens stored by older versions are deleted at start-up.
 - Clearer sign-in errors for pending and disabled accounts; unique index on user email.
