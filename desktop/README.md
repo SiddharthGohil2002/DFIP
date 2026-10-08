@@ -1,32 +1,21 @@
-# DFIP Investigator Desktop
+# DFIP Investigator (desktop)
 
-DFIP Investigator is the native trusted execution environment for local digital-forensics work. The desktop shell is Tauri 2 + React/TypeScript.
+The Windows desktop client for DFIP. It opens on a single sign-in page; after sign-in it shows the same case workspace as the web portal (case desktop, evidence, deleted files, timeline, browser history, USB devices, indicators, carving, keyword search, findings, reports, chain of custody, administration), connected to a DFIP server.
 
-## Implemented native capabilities
+## How it is built
 
-- SHA-256 hashing of local evidence files.
-- Non-destructive evidence copy/acquisition with create-new semantics and read-only destination preservation.
-- Directory/file inventory for investigation workspaces.
-- Native environment information (OS/architecture/version).
-- Allow-listed forensic tool inventory.
-- Native execution bridge for `fls`, `istat`, `fsstat`, `mmls`, `icat`, `exiftool`, `tshark`, `yara`, `vol`, `strings`, and `file`.
-- No shell interpolation / `shell=true`; arguments are passed as process arguments.
-- Read-only permission control for preserved originals.
-- Platform application-data location.
-- Existing DFIP web console UI reused inside the desktop shell.
-- Desktop Operations page for native hashing/tooling.
+- **UI:** not in this folder. It is the shared React app in `../frontend`, built in desktop mode (`npm run build:desktop` → `frontend/dist-desktop`). Desktop mode drops the public website, uses hash routing, and enables the desktop-only features below.
+- **Shell:** `src-tauri/` is a Tauri 2 app (Rust) that loads that build in a native window (WebView2).
+- **Server:** chosen on the sign-in page (**Server** button), default `http://localhost:8000`. The server's `CORS_ORIGINS` must include `http://tauri.localhost` (the default compose file does).
 
-## Investigation workflow
+## Desktop-only features
 
-1. Select or connect the local evidence source.
-2. Hash the source before processing.
-3. Acquire to a new destination without overwriting.
-4. Mark the preserved copy read-only.
-5. Send the evidence to the DFIP case/backend.
-6. Run specialist tools through the allow-list.
-7. Store tool output, hashes, timestamps and provenance in the backend.
-8. Continue examination, findings, reporting and chain-of-custody from the same case.
+- **Workstation registration:** on sign-in the app registers this workstation (`POST /api/desktop/register`) and sends its device token with every request. Servers running with `REQUIRE_DESKTOP_FOR_WRITES=true` accept writes only from registered workstations.
+- **Verify a local copy** (evidence page): hashes a local file with SHA-256/SHA-512 on the workstation, streaming, without uploading it, and compares it with the registered evidence's acquisition hash.
+- **This workstation** panel: host name, OS, architecture, and which forensic tools are installed locally.
 
-## Planned native integrations
+The Rust side also exposes non-overwriting evidence copy, read-only marking, directory listing and an allow-listed tool runner (`src-tauri/src/main.rs`); the current UI does not use them yet.
 
-The architecture leaves explicit adapter points for physical device acquisition, EWF/libewf workflows, Plaso, registry/SRUM/Jump Lists/Prefetch/Amcache parsers, mobile acquisition providers, hardware write blockers, signed updater packages and dedicated worker processes. These must be implemented and tested per platform before being advertised as supported acquisition capabilities.
+## Build and run
+
+See [INSTALL.md](INSTALL.md).

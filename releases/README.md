@@ -1,10 +1,5 @@
-# DFIP Release Artifacts
+# DFIP release artifacts
 
-Place only signed, validated release artifacts in this directory when a native build pipeline is available.
+Desktop installers are built with `desktop/scripts/build-windows.ps1` and published by copying them to the server's `storage/downloads` folder (`-Publish` does this). The website then offers them with the SHA-256 computed from the file.
 
-Expected names:
-- DFIP-Investigator-Windows-x64.exe
-
-DFIP is currently built and distributed for Windows desktop and the web console only.
-
-Do not publish an artifact until its version, signature and SHA-256 checksum have been recorded in the release manifest.
+Do not commit installers to this repository. Sign them (Tauri `bundle.windows.certificateThumbprint`) before distributing outside a test environment.

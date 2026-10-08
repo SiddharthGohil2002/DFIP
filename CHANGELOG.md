@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed — rebuilt web and desktop UI (2.1.0)
+- One UI codebase (`frontend/`) with two targets: the web portal (public website + sign-in + workspace) and the desktop app (single sign-in page, then the workspace). The duplicated `desktop/ui` copy is removed.
+- New case workspace: active-case switcher, a "case desktop" home with evidence status, live analysis progress and a tile per function with live counts, and dedicated pages for evidence (drag-and-drop upload with progress), evidence detail (manifest, integrity, partitions/filesystems, custody), deleted files and recovered files (with ExifTool metadata), timeline (zoomable activity chart, filters, paging), browser history, USB devices, indicators, carving, keyword search, findings, reports, chain of custody, and administration (users, audit log, system & tools).
+- UTC/local time display switch; role-aware actions using permissions returned at sign-in; web portal becomes read-only automatically when the server requires desktop writes.
+- Desktop: server address set on the sign-in page, workstation registration on sign-in, local hash verification of an image copy, workstation panel. Tauri shell builds from the shared UI and now has icons and a capability file; unused plugins removed.
+- API: `GET /cases/{id}/overview`, `GET /forensics/search`, `GET /forensics/timeline/histogram`, browser filters, reports by case, permissions in `/auth/me`, `demo_mode`/`require_desktop_for_writes` in `/health`.
+- Desktop downloads: the hard-coded "official release" metadata for a 10 KB launcher stub is replaced by an endpoint that lists only real Tauri installers in `storage/downloads`, with hashes computed from the files. Stub launcher files removed from `releases/` and `frontend/public`.
+- `start-dfip.ps1` / `stop-dfip.ps1` now use Docker Compose (they referenced another machine's paths).
+
 ### Added — MVP disk image analysis
 - **Full analysis pipeline** (`app/forensic/pipeline.py`) run by the `FORENSIC_ANALYSIS` job: integrity re-check, partition and filesystem indexing (Sleuth Kit bodyfile), MACB timeline, browser history/downloads, USB device history, YARA scan of user scripts/executables, case patterns/anomalies. Idempotent per evidence item.
 - **Deleted file listing and recovery**: `GET /forensics/evidence/{id}/files`, recovery keeps original names and logs to chain of custody, `GET /forensics/artifacts/{id}/download`.

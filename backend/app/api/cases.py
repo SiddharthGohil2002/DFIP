@@ -92,3 +92,51 @@ async def update_case(case_id: str, x: CaseUpdate, u=Depends(require_write('CASE
     if target and target != str(u['_id']):
         await notify(target, 'Case updated', f'{case_id} was updated.', 'INFO')
     return fresh
+
+
+def _plain(v):
+    if hasattr(v, 'isoformat'):
+        return v.isoformat()
+    if isinstance(v, dict):
+        return {k: _plain(x) for k, x in v.items() if k != '_id'}
+    if isinstance(v, list):
+        return [_plain(x) for x in v]
+    return v
+
+
+@r.get('/{case_id}/overview')
+def overview(case_id: str, u=Depends(current_user)):
+    """Everything the case workspace shows at a glance: evidence with analysis
+    state, per-function counts and the latest jobs."""
+    c = get_case(case_id, u)
+    if not c:
+        raise HTTPException(404, 'Case not found or access denied')
+    db = get_db()
+    evidence = list(db['evidence'].find({'case_id': case_id}, {
+        'evidence_id': 1, 'filename': 1, 'format': 1, 'size': 1, 'sha256': 1, 'verification_status': 1,
+        'analysis_status': 1, 'analysis_summary': 1, 'last_analysis_job': 1, 'analyzed_at': 1,
+        'created_at': 1, 'demo': 1}).sort('created_at', 1))
+    eids = [e['evidence_id'] for e in evidence]
+    art = db['forensic_artifacts']
+    counts = {
+        'evidence': len(evidence),
+        'evidence_analyzed': sum(1 for e in evidence if e.get('analysis_status') == 'COMPLETED'),
+        'files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'is_virtual': False}),
+        'deleted_files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'deleted': True, 'is_virtual': False}),
+        'recovered_files': art.count_documents({'case_id': case_id, 'type': 'RECOVERED_FILE'}),
+        'carved_files': art.count_documents({'case_id': case_id, 'type': 'CARVED_FILE'}),
+        'timeline_events': db['timeline_events'].count_documents({'case_id': case_id}),
+        'browser_history': art.count_documents({'case_id': case_id, 'type': 'BROWSER_HISTORY'}),
+        'browser_downloads': art.count_documents({'case_id': case_id, 'type': 'BROWSER_DOWNLOAD'}),
+        'usb_devices': db['usb_artifacts'].count_documents({'case_id': case_id}),
+        'malware_indicators': art.count_documents({'case_id': case_id, 'type': 'MALWARE_INDICATOR'}),
+        'patterns': db['patterns'].count_documents({'case_id': case_id}),
+        'anomalies_flagged': db['anomalies'].count_documents({'case_id': case_id, 'is_anomaly': True}),
+        'findings': db['findings'].count_documents({'case_id': case_id}),
+        'reports': db['reports'].count_documents({'case_id': case_id}),
+        'custody_events': db['chain_of_custody'].count_documents({'case_id': case_id}),
+    }
+    jobs = list(db['jobs'].find({'payload.evidence_id': {'$in': eids}}, {
+        'job_id': 1, 'type': 1, 'status': 1, 'progress': 1, 'stage': 1, 'error': 1, 'payload': 1,
+        'created_at': 1, 'finished_at': 1}).sort('created_at', -1).limit(8))
+    return {'case': c, 'evidence': _plain(evidence), 'counts': counts, 'jobs': _plain(jobs)}

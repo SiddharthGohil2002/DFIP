@@ -11,6 +11,7 @@ from ..repositories.devices import register_device, heartbeat as hb, get_device_
 from ..services.audit import log
 from ..websocket.manager import manager
 import asyncio
+import hashlib
 
 r = APIRouter(prefix='/desktop', tags=['desktop'])
 
@@ -323,77 +324,47 @@ def create_desktop_job(job_type: str, payload: dict, u=Depends(require_permissio
     log(u, 'DESKTOP_JOB_CREATED', 'job', job_id, {'type': job_type, 'payload': payload})
     return {'job_id': job_id, 'status': 'PENDING_DESKTOP'}
 
+# Installer files produced by the Tauri build (desktop/scripts/build-windows.ps1) and
+# copied to storage/downloads. Only real build outputs are offered; nothing is
+# advertised when no build has been published.
+INSTALLER_PATTERNS = ('*_x64-setup.exe', '*_x64_en-US.msi')
+_hash_cache: dict = {}
+
+
+def _installers():
+    root = Path(settings.storage_path) / 'downloads'
+    files = []
+    for pattern in INSTALLER_PATTERNS:
+        for p in sorted(root.glob(pattern)):
+            if not p.is_file():
+                continue
+            stat = p.stat()
+            key = (p.name, stat.st_size, stat.st_mtime)
+            if key not in _hash_cache:
+                h = hashlib.sha256()
+                with p.open('rb') as f:
+                    while chunk := f.read(1024 * 1024):
+                        h.update(chunk)
+                _hash_cache[key] = h.hexdigest()
+            files.append({'filename': p.name, 'size': stat.st_size, 'sha256': _hash_cache[key],
+                          'format': p.suffix.lstrip('.').upper(), 'url': f'/api/desktop/download/file/{p.name}',
+                          'published_at': datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()})
+    return files
+
+
 @r.get('/download/info')
 def desktop_download_info():
-    """Returns latest desktop application release metadata, direct URLs, and verification checksums."""
-    return {
-        'version': '2.0.0',
-        'release_name': 'DFIP Investigator 2026 Edition',
-        'release_date': '2026-09-14',
-        'status': 'OFFICIAL_RELEASE',
-        'downloads': {
-            'installer': {
-                'title': 'DFIP Investigator Windows Installer (.exe)',
-                'filename': 'DFIP-Investigator-Windows-x64.exe',
-                'url': '/downloads/DFIP-Investigator-Windows-x64.exe',
-                'api_url': '/api/desktop/download/exe',
-                'sha256': '42DCF7204532CD213FA12B432A20FA2A860F822BA1C075C5649E61200667ADC9',
-                'arch': 'x86_64',
-                'format': 'EXE'
-            },
-            'portable': {
-                'title': 'DFIP Investigator Portable Archive (.zip)',
-                'filename': 'DFIP-Investigator-v1.0.0-Windows-x64.zip',
-                'url': '/downloads/DFIP-Investigator-v1.0.0-Windows-x64.zip',
-                'api_url': '/api/desktop/download/zip',
-                'sha256': '1C45B6C880BA34D941F5EF4F23781DAD50D46C7B233138625FD6F6534C8D7B6D',
-                'arch': 'x86_64',
-                'format': 'ZIP'
-            }
-        },
-        'verification': {
-            'algorithm': 'SHA-256',
-            'command_powershell': 'Get-FileHash .\\DFIP-Investigator-Windows-x64.exe -Algorithm SHA256'
-        }
-    }
+    """Published desktop installers with their SHA-256, or available=false when none exist."""
+    files = _installers()
+    return {'available': bool(files), 'files': files,
+            'verification': 'Get-FileHash <file> -Algorithm SHA256 (PowerShell) must match sha256'}
 
-@r.get('/download/exe')
-def download_desktop_exe():
-    """Direct stream download for DFIP Windows Client installer executable."""
-    root = Path(__file__).resolve().parents[3]
-    candidates = [
-        Path(settings.storage_path) / 'downloads' / 'DFIP-Investigator-Windows-x64.exe',
-        root / 'releases' / 'DFIP-Investigator-Windows-x64.exe',
-        root / 'frontend' / 'public' / 'downloads' / 'DFIP-Investigator-Windows-x64.exe',
-        root / 'desktop' / 'ui' / 'public' / 'downloads' / 'DFIP-Investigator-Windows-x64.exe'
-    ]
-    for target in candidates:
-        if target.exists():
-            return FileResponse(
-                str(target),
-                media_type='application/vnd.microsoft.portable-executable',
-                filename='DFIP-Investigator-Windows-x64.exe',
-                headers={'X-DFIP-Release-Version': '2.0.0', 'X-DFIP-SHA256': '42DCF7204532CD213FA12B432A20FA2A860F822BA1C075C5649E61200667ADC9'}
-            )
-    raise HTTPException(404, 'Desktop application installer binary not available in storage')
 
-@r.get('/download/zip')
-def download_desktop_zip():
-    """Direct stream download for DFIP Windows Portable zip package."""
-    root = Path(__file__).resolve().parents[3]
-    candidates = [
-        Path(settings.storage_path) / 'downloads' / 'DFIP-Investigator-v1.0.0-Windows-x64.zip',
-        root / 'releases' / 'DFIP-Investigator-v1.0.0-Windows-x64.zip',
-        root / 'frontend' / 'public' / 'downloads' / 'DFIP-Investigator-v1.0.0-Windows-x64.zip',
-        root / 'desktop' / 'ui' / 'public' / 'downloads' / 'DFIP-Investigator-v1.0.0-Windows-x64.zip'
-    ]
-    for target in candidates:
-        if target.exists():
-            return FileResponse(
-                str(target),
-                media_type='application/zip',
-                filename='DFIP-Investigator-v1.0.0-Windows-x64.zip',
-                headers={'X-DFIP-Release-Version': '2.0.0', 'X-DFIP-SHA256': '1C45B6C880BA34D941F5EF4F23781DAD50D46C7B233138625FD6F6534C8D7B6D'}
-            )
-    raise HTTPException(404, 'Desktop application portable bundle not available in storage')
-
+@r.get('/download/file/{filename}')
+def download_desktop_file(filename: str):
+    match = next((f for f in _installers() if f['filename'] == filename), None)
+    if not match:
+        raise HTTPException(404, 'Installer not published')
+    path = Path(settings.storage_path) / 'downloads' / match['filename']
+    return FileResponse(str(path), filename=match['filename'], media_type='application/octet-stream',
+                        headers={'X-DFIP-SHA256': match['sha256']})

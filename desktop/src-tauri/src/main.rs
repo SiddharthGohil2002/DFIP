@@ -129,7 +129,7 @@ fn system_info() -> serde_json::Value {
     let cores = std::env::var("NUMBER_OF_PROCESSORS").unwrap_or_else(|_| "4".into());
     serde_json::json!({
         "app": "DFIP Investigator",
-        "version": "2.0.0",
+        "version": env!("CARGO_PKG_VERSION"),
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
         "hostname": hostname,

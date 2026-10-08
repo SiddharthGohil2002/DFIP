@@ -44,7 +44,7 @@ services:
       CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-1800}
       CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-1500}
       ANALYSIS_TIME_LIMIT: ${ANALYSIS_TIME_LIMIT:-21600}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1,http://tauri.localhost,tauri://localhost,http://localhost:1420,http://127.0.0.1:1420,http://localhost:5173,http://127.0.0.1:5173}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-53687091200}
       REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-now}@redis:6379/0
       VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
@@ -72,10 +72,7 @@ services:
       mongodb: {condition: service_healthy}
       redis: {condition: service_healthy}
   frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_REQUIRE_DESKTOP_FOR_WRITES: ${REQUIRE_DESKTOP_FOR_WRITES:-false}
+    build: ./frontend
     container_name: dfip-frontend
     restart: unless-stopped
     ports: ["80:80"]

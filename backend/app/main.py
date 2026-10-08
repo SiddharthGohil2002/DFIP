@@ -6,7 +6,7 @@ from .repositories.users import seed_users
 from .api import auth,cases,evidence,notifications,reports,admin,forensics,findings,chain,jobs,threatintel,desktop as desktop_module
 from .ws import r as ws_router
 from datetime import datetime,timezone
-app=FastAPI(title='DFIP API',version='2.0.0',description='Digital Forensics Investigation Platform')
+app=FastAPI(title='DFIP API',version='2.1.0',description='Digital Forensics Investigation Platform')
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in settings.cors_origins.split(',') if x.strip()],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
 for router in [auth.r,cases.r,evidence.r,notifications.r,reports.r,admin.r,forensics.r,findings.r,chain.r,jobs.r,threatintel.r,desktop_module.r]:app.include_router(router,prefix='/api')
 app.include_router(ws_router)
@@ -55,5 +55,6 @@ async def startup():
         print(f'[DFIP] MongoDB unavailable; startup continues in degraded mode: {e}')
 @app.get('/health')
 def health():
-    try:get_db().command('ping');return {'status':'ok','database':'mongodb'}
-    except Exception as e:return {'status':'degraded','database':'mongodb-unavailable','detail':str(e)}
+    base={'version':app.version,'demo_mode':settings.demo_mode,'require_desktop_for_writes':settings.require_desktop_for_writes}
+    try:get_db().command('ping');return {'status':'ok','database':'mongodb',**base}
+    except Exception as e:return {'status':'degraded','database':'mongodb-unavailable','detail':str(e),**base}

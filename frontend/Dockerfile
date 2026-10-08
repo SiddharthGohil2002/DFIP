@@ -3,8 +3,6 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-ARG VITE_REQUIRE_DESKTOP_FOR_WRITES=false
-ENV VITE_REQUIRE_DESKTOP_FOR_WRITES=$VITE_REQUIRE_DESKTOP_FOR_WRITES
 RUN npm run build
 
 FROM nginx:1.27-alpine

@@ -23,9 +23,9 @@ def serial(x):
     return d
 
 @r.get('')
-def reports(u=Depends(current_user)):
+def reports(case_id: str | None = None, u=Depends(current_user)):
     docs = []
-    for x in get_db()['reports'].find().sort('created_at', -1).limit(100):
+    for x in get_db()['reports'].find({'case_id': case_id} if case_id else {}).sort('created_at', -1).limit(100 if not case_id else 1000):
         if get_case(x['case_id'], u):
             docs.append(serial(x))
     return {'data': docs}

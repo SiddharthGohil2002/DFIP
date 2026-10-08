@@ -31,7 +31,9 @@ def serial(v):
     return v
 
 @r.get('/tooling')
-def tooling(u=Depends(current_user)): return {'data':inventory()}
+def tooling(u=Depends(current_user)):
+    from ..forensic.carving import engine_availability
+    return {'data':{**inventory(),**{f'carving_{k}':v for k,v in engine_availability().items()}}}
 
 @r.post('/evidence/{eid}/analyze')
 def analyze(eid,u=Depends(require_write('ANALYSIS_RUN'))):
@@ -132,12 +134,38 @@ def usb_devices(case_id:str,evidence_id:str|None=None,u=Depends(current_user)):
     if evidence_id: q['evidence_id']=evidence_id
     return {'data':[serial(dict(x,_id=str(x['_id']))) for x in get_db()['usb_artifacts'].find(q).sort('first_install',1)]}
 
+@r.get('/search')
+def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
+    """Keyword search across a case: file paths, timeline events, browser
+    records, USB devices and findings (case-insensitive substring match)."""
+    if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
+    term=q.strip()
+    if len(term)<2: raise HTTPException(400,'Search term must be at least 2 characters')
+    db=get_db(); rx={'$regex':re.escape(term),'$options':'i'}; limit=max(1,min(limit,200))
+    eids=[e['evidence_id'] for e in db['evidence'].find({'case_id':case_id},{'evidence_id':1})]
+    queries={
+        'files':('fs_entries',{'evidence_id':{'$in':eids},'is_virtual':False,'path':rx},[('deleted',-1),('path',1)]),
+        'timeline':('timeline_events',{'case_id':case_id,'description':rx},[('timestamp',1)]),
+        'browser':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['BROWSER_HISTORY','BROWSER_DOWNLOAD']},
+                   '$or':[{'url':rx},{'title':rx},{'target_path':rx},{'tab_url':rx}]},[('timestamp',-1)]),
+        'usb':('usb_artifacts',{'case_id':case_id,'$or':[{'friendly_name':rx},{'vendor':rx},{'product':rx},{'serial':rx}]},[('serial',1)]),
+        'findings':('findings',{'case_id':case_id,'$or':[{'title':rx},{'description':rx}]},[('created_at',-1)]),
+    }
+    results,totals={},{}
+    for key,(col,query,sort) in queries.items():
+        totals[key]=db[col].count_documents(query)
+        results[key]=[serial(dict(x,_id=str(x['_id']))) for x in db[col].find(query).sort(sort).limit(limit)]
+    return {'query':term,'results':results,'totals':totals}
+
 @r.get('/browser')
-def browser(case_id:str,evidence_id:str|None=None,kind:str='BROWSER_HISTORY',skip:int=0,limit:int=500,u=Depends(current_user)):
+def browser(case_id:str,evidence_id:str|None=None,kind:str='BROWSER_HISTORY',browser:str|None=None,search:str|None=None,skip:int=0,limit:int=500,u=Depends(current_user)):
     if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
     if kind not in {'BROWSER_HISTORY','BROWSER_DOWNLOAD','BROWSER_COOKIE'}: raise HTTPException(400,'Invalid kind')
     q={'case_id':case_id,'type':kind}
     if evidence_id: q['evidence_id']=evidence_id
+    if browser: q['browser']=browser
+    if search:
+        rx={'$regex':re.escape(search),'$options':'i'}; q['$or']=[{'url':rx},{'title':rx},{'target_path':rx},{'tab_url':rx}]
     sort='start_time' if kind=='BROWSER_DOWNLOAD' else 'last_visit_time' if kind=='BROWSER_HISTORY' else 'created'
     col=get_db()['forensic_artifacts']
     rows=[serial(dict(x,_id=str(x['_id']))) for x in col.find(q).sort(sort,-1).skip(max(0,skip)).limit(max(1,min(limit,1000)))]
@@ -288,15 +316,38 @@ def _parse_when(v,name):
         raise HTTPException(400,f'Invalid {name} timestamp')
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
-@r.get('/timeline')
-def timeline(case_id:str|None=None,evidence_id:str|None=None,type:str|None=None,start:str|None=None,end:str|None=None,
-             q:str|None=None,order:str='desc',skip:int=0,limit:int=500,u=Depends(current_user)):
+def _timeline_query(u,case_id,evidence_id,type,start,end,q):
     query=_case_scope(u,case_id)
     if evidence_id: query['evidence_id']=evidence_id
     if type: query['type']={'$in':[t for t in type.split(',') if t]}
     s,e=_parse_when(start,'start'),_parse_when(end,'end')
     if s or e: query['timestamp']={k:v for k,v in (('$gte',s),('$lte',e)) if v}
     if q: query['description']={'$regex':re.escape(q),'$options':'i'}
+    return query
+
+@r.get('/timeline/histogram')
+def timeline_histogram(case_id:str,evidence_id:str|None=None,type:str|None=None,start:str|None=None,end:str|None=None,
+                       q:str|None=None,u=Depends(current_user)):
+    """Event counts per time bucket (hour, day or month, chosen from the span) and type."""
+    query=_timeline_query(u,case_id,evidence_id,type,start,end,q); col=get_db()['timeline_events']
+    first=col.find_one(query,{'timestamp':1},sort=[('timestamp',1)])
+    last=col.find_one(query,{'timestamp':1},sort=[('timestamp',-1)])
+    if not first: return {'unit':None,'buckets':[]}
+    span=(last['timestamp']-first['timestamp']).total_seconds()
+    unit='hour' if span<=3*86400 else 'day' if span<=180*86400 else 'month'
+    rows=col.aggregate([{'$match':query},
+                        {'$group':{'_id':{'t':{'$dateTrunc':{'date':'$timestamp','unit':unit}},'type':'$type'},'n':{'$sum':1}}},
+                        {'$sort':{'_id.t':1}}])
+    buckets={}
+    for r_ in rows:
+        t=r_['_id']['t']; b=buckets.setdefault(t,{'t':t.isoformat(),'total':0,'by_type':{}})
+        b['total']+=r_['n']; b['by_type'][r_['_id']['type']]=r_['n']
+    return {'unit':unit,'first':first['timestamp'].isoformat(),'last':last['timestamp'].isoformat(),'buckets':list(buckets.values())}
+
+@r.get('/timeline')
+def timeline(case_id:str|None=None,evidence_id:str|None=None,type:str|None=None,start:str|None=None,end:str|None=None,
+             q:str|None=None,order:str='desc',skip:int=0,limit:int=500,u=Depends(current_user)):
+    query=_timeline_query(u,case_id,evidence_id,type,start,end,q)
     limit=max(1,min(limit,2000)); col=get_db()['timeline_events']
     out=[serial(dict(x,_id=str(x['_id']))) for x in col.find(query).sort('timestamp',1 if order=='asc' else -1).skip(max(0,skip)).limit(limit)]
     return {'data':out,'total':col.count_documents(query),'skip':skip,'limit':limit}

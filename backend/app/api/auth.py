@@ -23,12 +23,16 @@ class ChangePassword(BaseModel):
     new_password: str
 
 def public(u):
+    # Permissions come from the role document so clients can hide actions the
+    # server would refuse (the server still enforces them on every request).
+    role = get_db()['roles'].find_one({'name': u['role']}) or {}
     return {
         '_id': str(u['_id']),
         'name': u['name'],
         'email': u['email'],
         'role': u['role'],
-        'status': u['status']
+        'status': u['status'],
+        'permissions': sorted(role.get('permissions', []))
     }
 
 @r.post('/login')

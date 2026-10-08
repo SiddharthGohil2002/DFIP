@@ -1,4 +1,10 @@
-import React,{useEffect,useState} from 'react';import {createRoot} from 'react-dom/client';import {BrowserRouter} from 'react-router-dom';import './index.css';import App from './App';import {api} from './services/api';
-export const AuthContext=React.createContext<any>(null);
-function Root(){const [user,setUser]=useState<any>(null);const [loading,setLoading]=useState(true);useEffect(()=>{api('/auth/me').then(setUser).catch(()=>{}).finally(()=>setLoading(false))},[]);if(loading)return <div className="boot"><div className="boot-orb"/><b>DFIP</b><span>Initializing forensic workspace…</span></div>;return <AuthContext.Provider value={{user,setUser}}><App/></AuthContext.Provider>}
-createRoot(document.getElementById('root')!).render(<React.StrictMode><BrowserRouter><Root/></BrowserRouter></React.StrictMode>);
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './app/App';
+import './styles.css';
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);

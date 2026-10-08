@@ -4,11 +4,11 @@ DFIP is a production-oriented digital-forensics case-management and examination 
 
 ## Architecture
 
-- **Frontend:** React 19 + TypeScript + Vite + Three.js + Framer Motion
+- **UI:** one React 19 + TypeScript + Vite codebase (`frontend/`) built twice: the **web** portal (public website + sign-in + workspace, served by nginx) and the **desktop** app (sign-in + workspace only, inside the Tauri 2 shell in `desktop/`)
 - **API:** FastAPI + Pydantic
 - **Database:** MongoDB with indexes and migration-safe startup
 - **Evidence:** filesystem-backed original store with SHA-256 manifest and read-only permissions
-- **Jobs:** durable MongoDB job queue + worker thread for long-running operations
+- **Jobs:** Celery workers on Redis; job state in MongoDB
 - **Forensic adapters:** allow-listed integrations for The Sleuth Kit, ExifTool, tshark, YARA, Volatility and strings when installed
 - **Security:** JWT access/refresh tokens, PBKDF2-SHA256 password hashing, RBAC, audit hash chain, CORS controls
 - **Reporting:** PDF generation with report hash
@@ -20,7 +20,7 @@ DFIP is a production-oriented digital-forensics case-management and examination 
 1. Install Docker Desktop / Docker Engine + Compose.
 2. Copy `.env.example` to `.env` and replace `JWT_SECRET`, MongoDB root credentials, and CORS settings.
 3. For a first demo run, keep `DEMO_MODE=true`. With `DEMO_MODE=false`, the backend refuses to start with a placeholder `JWT_SECRET` and requires `ADMIN_PASSWORD` for the initial `admin@dfip.local` account.
-4. Writes (cases, uploads, analysis, findings, reports) are allowed from the web portal and enforced by RBAC. Set `REQUIRE_DESKTOP_FOR_WRITES=true` to restrict writes to registered DFIP desktop workstations (compose passes it to both the API and the web UI build).
+4. Writes (cases, uploads, analysis, findings, reports) are allowed from the web portal and enforced by RBAC. Set `REQUIRE_DESKTOP_FOR_WRITES=true` to restrict writes to registered DFIP desktop workstations; the web portal reads this from `/health` and becomes read-only.
 5. On Linux hosts, make `./storage` writable by the container user: `sudo chown -R 10001:10001 storage`.
 6. Start:
 
@@ -96,12 +96,13 @@ python scripts/test-image/e2e_analysis.py        # uploads, analyzes, recovers, 
 
 See `docs/forensic-engine.md` for the pipeline stages and known limitations.
 
-Frontend:
+UI (both targets; `tsc` runs with strict unused-code checks):
 
 ```bash
 cd frontend
-npm install
-npm run build
+npm ci
+npm run build           # web portal  -> frontend/dist
+npm run build:desktop   # desktop UI  -> frontend/dist-desktop
 ```
 
 ## Important forensic boundary
@@ -122,10 +123,24 @@ The default backend image is wired to run these tools in a controlled worker con
 
 The Debian package names used by the image are `sleuthkit`, `ewf-tools`, `libewf2`, `libimage-exiftool-perl`, `tshark`, and `yara`; these are available in Debian Bookworm. Volatility 3 is installed from PyPI; its current release is 2.28.0 and its CLI uses the `vol` command.
 
-The web UI now connects Acquisition/File Recovery/Forensic modules to the backend examination APIs, background jobs, artifact store and specialist-tool runner. No specialist tool is invoked through a shell, and original evidence is never used as a writable destination.
+No specialist tool is invoked through a shell, and original evidence is never used as a writable destination.
+
+## User interface
+
+One React codebase in `frontend/`, built for two targets:
+
+| | Web portal (`npm run build`) | Desktop app (`npm run build:desktop`) |
+|---|---|---|
+| Opens on | Public website (`/`): features, workflow, evidence integrity, desktop download | The sign-in page |
+| After sign-in | The case workspace | The same case workspace, plus workstation details and local hash verification |
+| Server | Same origin (nginx proxies `/api`) | Configurable on the sign-in page (default `http://localhost:8000`) |
+
+The workspace is organised around an **active case** (switcher in the top bar). Its home screen, the *case desktop*, shows the evidence with live analysis progress and a tile for every function with live counts: Evidence, Deleted files, Timeline, Browser history, USB devices, Indicators (YARA, patterns, anomalies), File carving, Keyword search, Findings, Reports and Chain of custody. Administrators also get Users and Audit log. Actions a role cannot perform are hidden; the server enforces every permission regardless. Times display in UTC by default (switchable to local time in the top bar).
+
+Development: `npm run dev` (web, port 5173, proxies the API on 8000) or `npm run dev:desktop` (desktop UI in a browser, port 1420).
 
 ## DFIP Investigator Desktop
 
-The project now includes a Tauri 2 desktop execution layer under `desktop/`. The desktop shell reuses the investigator UI and adds native operations for SHA-256 hashing, non-destructive evidence copying, read-only preservation, local offline-ready case workspaces, directory inventory, specialist-tool discovery, and bounded allow-listed execution of Sleuth Kit/libewf-adjacent tools, ExifTool, YARA, tshark, Volatility, strings and file identification when installed on the host.
+`desktop/` is the Tauri 2 shell that loads the desktop build of the UI in a native Windows window. Its native commands (Rust, `desktop/src-tauri/src/main.rs`) include streaming SHA-256/SHA-512 hashing of local files, used to verify a local copy of an image against the registered evidence without uploading it again. On sign-in the app registers the workstation with the server, which allows `REQUIRE_DESKTOP_FOR_WRITES=true` deployments.
 
-See `desktop/INSTALL.md` for build instructions. Native installers are not included until they can be built and signed on the target platform.
+Build the installers with `desktop/scripts/build-windows.ps1` (needs Rust and the Tauri Windows prerequisites; see `desktop/INSTALL.md`). With `-Publish` the installers are copied to `storage/downloads`, and the website's Desktop section then offers them with their SHA-256.
