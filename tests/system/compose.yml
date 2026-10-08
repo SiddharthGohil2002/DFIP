@@ -1,0 +1,54 @@
+# Isolated, throwaway DFIP stack for destructive testing. No host ports; own database, Redis and storage volume.
+name: dfiptest
+x-env: &env
+  MONGODB_URI: mongodb://root:test-root-pw@mongodb:27017/dfip?authSource=admin
+  DATABASE_NAME: dfip
+  JWT_SECRET: test-stack-secret-not-for-production-0123456789
+  STORAGE_PATH: /app/storage
+  DEMO_MODE: "true"
+  ADMIN_PASSWORD: ""
+  REQUIRE_DESKTOP_FOR_WRITES: ${T_DESKTOP_WRITES:-false}
+  REGISTRATION_MODE: ${T_REGISTRATION:-approval}
+  PASSWORD_PBKDF2_ROUNDS: "310000"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+  REFRESH_TOKEN_EXPIRE_DAYS: "7"
+  CELERY_TASK_TIME_LIMIT: "1800"
+  CELERY_TASK_SOFT_TIME_LIMIT: "1500"
+  ANALYSIS_TIME_LIMIT: "21600"
+  MAX_UPLOAD_BYTES: "53687091200"
+  CORS_ORIGINS: http://localhost
+  REDIS_URL: redis://:test-redis-pw@redis:6379/0
+services:
+  mongodb:
+    image: mongo:8
+    command: ["mongod", "--bind_ip_all", "--auth"]
+    environment: {MONGO_INITDB_ROOT_USERNAME: root, MONGO_INITDB_ROOT_PASSWORD: test-root-pw}
+    volumes: [mongo:/data/db]
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet -u root -p test-root-pw --authenticationDatabase admin --eval 'db.runCommand({ping:1}).ok' | grep 1"]
+      interval: 5s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "test-redis-pw"]
+    healthcheck: {test: ["CMD-SHELL", "redis-cli -a test-redis-pw ping | grep PONG"], interval: 5s, retries: 30}
+  backend:
+    image: dfip-backend:latest
+    environment: *env
+    volumes:
+      - storage:/app/storage
+      - ../../storage/test-images:/testdata:ro
+      - .:/tests:ro
+      - ./out:/out
+    depends_on: {mongodb: {condition: service_healthy}, redis: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8000/health\")'"]
+      interval: 5s
+      retries: 30
+  celery_worker:
+    image: dfip-celery_worker:latest
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "dfip_forensics"]
+    environment: *env
+    volumes: [storage:/app/storage]
+    depends_on: {mongodb: {condition: service_healthy}, redis: {condition: service_healthy}}
+volumes: {mongo: {}, storage: {}}

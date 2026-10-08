@@ -22,3 +22,7 @@ storage/test-images/**
 
 # Local scratch scripts
 scratch/
+
+# Test run output
+tests/system/out/
+tests/ui/out/

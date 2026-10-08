@@ -1,0 +1,222 @@
+"""UI checks not covered by the other suites: keyboard sign-in, UTC/local display, case editing and
+switching, top-bar search, user administration, password change, bad sessions and narrow windows.
+Runs against a DFIP stack at http://host.docker.internal; it first creates and analyses its own case
+from the test image mounted at /img."""
+import json, sys, time, urllib.error, urllib.request, uuid
+from playwright.sync_api import sync_playwright, expect
+
+BASE = 'http://host.docker.internal'
+OUT = '/out'
+PW = 'DemoPassword!2026'
+CASE_NAME = f'UI extra — laptop image {uuid.uuid4().hex[:4]}'
+results = []
+
+
+def api(method, path, token=None, body=None, raw=None, ctype='application/json'):
+    data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
+    req = urllib.request.Request(BASE + '/api' + path, data=data, method=method)
+    if data is not None:
+        req.add_header('Content-Type', ctype)
+    if token:
+        req.add_header('Authorization', 'Bearer ' + token)
+    with urllib.request.urlopen(req, timeout=600) as r:
+        return json.loads(r.read())
+
+
+def analysed_case():
+    """A case holding the analysed test image (deleted payroll export at 09:41:02 UTC, browser and USB data)."""
+    token = api('POST', '/auth/login', body={'email': 'investigator@dfip.local', 'password': PW})['access_token']
+    case_id = api('POST', '/cases', token, {'name': CASE_NAME, 'priority': 'HIGH'})['case_id']
+    b = uuid.uuid4().hex
+    body = (f'--{b}\r\nContent-Disposition: form-data; name="case_id"\r\n\r\n{case_id}\r\n'
+            f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="laptop.dd"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() \
+        + open('/img/dfip-test-disk.dd', 'rb').read() + f'\r\n--{b}--\r\n'.encode()
+    eid = api('POST', '/evidence/upload', token, raw=body, ctype=f'multipart/form-data; boundary={b}')['evidence_id']
+    job = api('POST', f'/jobs/analysis/{eid}', token)['job_id']
+    for _ in range(600):
+        try:
+            if api('GET', f'/jobs/{job}', token)['status'] in ('COMPLETED', 'FAILED'):
+                break
+        except urllib.error.URLError:  # a dropped poll (container networking) is retried
+            pass
+        time.sleep(1)
+    return case_id
+
+
+SHOWCASE = analysed_case()
+
+
+def check(name, cond, detail=''):
+    results.append(bool(cond))
+    print(('  PASS ' if cond else '  FAIL ') + name + ('' if cond else f'  ::  {detail}'), flush=True)
+
+
+def sign_in(page, email, password=PW, enter=False):
+    page.goto(BASE + '/login')
+    page.get_by_label('Email').fill(email)
+    page.get_by_label('Password', exact=True).fill(password)
+    if enter:
+        page.get_by_label('Password', exact=True).press('Enter')
+    else:
+        page.locator('form').get_by_role('button', name='Sign in').click()
+
+
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    expect.set_options(timeout=20000)
+    errors = []
+
+    # ---- investigator, browser in India (UTC+05:30) so local time differs from UTC
+    ctx = b.new_context(viewport={'width': 1440, 'height': 900}, timezone_id='Asia/Kolkata')
+    page = ctx.new_page()
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.goto(BASE + '/login')
+    page.evaluate("c => { localStorage.setItem('dfip_active_case', c); localStorage.setItem('dfip_time_mode', 'utc'); }", SHOWCASE)
+    print('== keyboard and time display')
+    sign_in(page, 'investigator@dfip.local', enter=True)
+    expect(page.get_by_text('Investigation functions')).to_be_visible()
+    check('sign-in works from the keyboard (Enter)', page.url.endswith('/app'))
+    page.get_by_role('link', name='Timeline').first.click()
+    search = page.get_by_placeholder('Search event descriptions (Enter)')
+    search.fill('payroll-export.csv')
+    search.press('Enter')
+    expect(page.locator('tbody tr', has_text='09:41:02 UTC').first).to_be_visible()
+    rows = page.locator('tbody tr')
+    idx = next(i for i in range(rows.count()) if '2026-09-01 09:41:02 UTC' in rows.nth(i).inner_text())
+    row = rows.nth(idx)  # by position: its text changes with the time mode
+    check('timeline shows the payroll export event at 09:41:02 UTC', 'payroll-export.csv' in row.inner_text(), row.inner_text()[:120])
+    page.get_by_role('group', name='Time display').get_by_role('button', name='Local').click()
+    expect(row).to_contain_text('2026-09-01 15:11:02 local')
+    check('switching to local time shows 15:11:02 local (UTC+05:30)', 'payroll-export.csv' in row.inner_text(), row.inner_text()[:120])
+    page.get_by_role('group', name='Time display').get_by_role('button', name='UTC').click()
+    expect(row).to_contain_text('09:41:02 UTC')
+
+    print('== top-bar search')
+    page.get_by_label('Search this case').fill('payroll')
+    page.get_by_label('Search this case').press('Enter')
+    expect(page).to_have_url(BASE + '/app/search?q=payroll')
+    expect(page.get_by_text('/Users/alice/Documents/payroll-export.csv').first).to_be_visible()
+    expect(page.get_by_text('Payroll Portal').first).to_be_visible()
+    check('top-bar search opens results for the active case (file and browser hits)', True)
+
+    print('== case editing and switching')
+    page.get_by_role('link', name='Cases').first.click()
+    page.get_by_role('button', name='New case').first.click()
+    name = f'UI extra test {uuid.uuid4().hex[:5]}'
+    page.get_by_label('Case title').fill(name)
+    page.get_by_role('dialog').get_by_role('button', name='Create case').click()
+    expect(page.get_by_text('Investigation functions')).to_be_visible()
+    check('a new case becomes the active case', name in page.get_by_label('Active case').locator('option:checked').inner_text())
+    page.get_by_role('link', name='Cases').first.click()
+    page.locator('tr', has_text=name).get_by_role('button', name='Edit').click()
+    page.get_by_label('Case title').fill(name + ' (renamed)')
+    page.get_by_role('dialog').get_by_label('Status').select_option('ON_HOLD')
+    page.get_by_role('dialog').get_by_role('button', name='Save changes').click()
+    expect(page.locator('tr', has_text=name + ' (renamed)')).to_contain_text('ON')
+    check('case can be renamed and put on hold', True)
+    page.get_by_label('Active case').select_option(SHOWCASE)
+    page.get_by_role('link', name='Case desktop').first.click()
+    expect(page.get_by_role('heading', name=CASE_NAME)).to_be_visible()
+    check('case switcher changes the active case', True)
+
+    print('== bad session')
+    page.evaluate("() => { sessionStorage.setItem('dfip_token', 'garbage'); sessionStorage.setItem('dfip_refresh', 'garbage'); }")
+    page.goto(BASE + '/app/timeline')
+    expect(page).to_have_url(BASE + '/login')
+    check('an invalid session sends the user to sign-in', True)
+    ctx.close()
+
+    print('== user administration and password change')
+    ctx = b.new_context(viewport={'width': 1440, 'height': 900})
+    page = ctx.new_page()
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    sign_in(page, 'admin@dfip.local')
+    expect(page.get_by_text('Investigation functions').or_(page.get_by_text('No case selected'))).to_be_visible()
+    page.get_by_role('link', name='Users').first.click()
+    email = f'ui.user.{uuid.uuid4().hex[:6]}@corp.local'
+    page.get_by_role('button', name='Add user').click()
+    d = page.get_by_role('dialog')
+    d.get_by_label('Full name').fill('Priya Raman')
+    d.get_by_label('Email').fill(email)
+    d.get_by_label('Role').select_option('ANALYST')
+    d.get_by_label('Initial password').fill('Initial-Password-77')
+    d.get_by_role('button', name='Create user').click()
+    row = page.locator('tr', has_text=email)
+    expect(row).to_be_visible()
+    check('admin adds a user with an internal .local address', True)
+    page.get_by_label(f'Role of {email}').select_option('INVESTIGATOR')
+    expect(page.get_by_label(f'Role of {email}')).to_have_value('INVESTIGATOR')
+    page.reload()
+    expect(page.get_by_label(f'Role of {email}')).to_have_value('INVESTIGATOR')
+    check('role change is saved', True)
+    row.get_by_role('button', name='Suspend').click()
+    expect(row.get_by_role('button', name='Reactivate')).to_be_visible()
+    row.get_by_role('button', name='Reactivate').click()
+    expect(row.get_by_role('button', name='Suspend')).to_be_visible()
+    check('user can be suspended and reactivated', True)
+    page.locator('.topbar').get_by_role('button', name='Sign out').click()
+    expect(page.get_by_text('You have signed out.')).to_be_visible()
+
+    sign_in(page, email, 'Initial-Password-77')
+    expect(page.locator('.topbar')).to_be_visible()
+    page.locator('.topbar').get_by_role('button', name='Change password').click()
+    d = page.get_by_role('dialog', name='Change password')
+    d.get_by_label('Current password').fill('wrong-password-000')
+    d.get_by_label('New password', exact=True).fill('Changed-Password-88')
+    d.get_by_label('Confirm new password').fill('Changed-Password-8')
+    expect(d.get_by_text('The passwords do not match.')).to_be_visible()
+    check('change password: mismatch is flagged and saving is disabled', d.get_by_role('button', name='Change password').is_disabled())
+    d.get_by_label('Confirm new password').fill('Changed-Password-88')
+    d.get_by_role('button', name='Change password').click()
+    expect(d.get_by_text('Current password is incorrect')).to_be_visible()
+    check('change password: a wrong current password is reported', True)
+    d.get_by_label('Current password').fill('Initial-Password-77')
+    d.get_by_role('button', name='Change password').click()
+    expect(page.get_by_text('Password changed.')).to_be_visible()
+    check('change password succeeds', not d.is_visible())
+    page.screenshot(path=f'{OUT}/x1-password-changed.png')
+    page.locator('.topbar').get_by_role('button', name='Sign out').click()
+    sign_in(page, email, 'Initial-Password-77')
+    expect(page.get_by_text('Email or password is incorrect.')).to_be_visible()
+    check('old password no longer works', True)
+    sign_in(page, email, 'Changed-Password-88')
+    expect(page.locator('.topbar')).to_be_visible()
+    check('new password works', True)
+    ctx.close()
+
+    print('== narrower windows')
+    for w, h in ((1280, 800), (1024, 768)):
+        ctx = b.new_context(viewport={'width': w, 'height': h})
+        page = ctx.new_page()
+        page.goto(BASE + '/login')
+        page.evaluate("c => localStorage.setItem('dfip_active_case', c)", SHOWCASE)
+        sign_in(page, 'investigator@dfip.local')
+        expect(page.get_by_text('Investigation functions')).to_be_visible()
+        bad = []
+        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/usb', '/app/reports', '/app/custody'):
+            page.goto(BASE + path)
+            page.wait_for_load_state('networkidle')
+            sw = page.evaluate('document.documentElement.scrollWidth')
+            top = page.evaluate("(() => { const t = document.querySelector('.topbar'); return t.scrollWidth - t.clientWidth; })()")
+            # Wide tables may scroll sideways inside their card, but their action buttons must stay in view.
+            hidden_actions = page.evaluate("""[...document.querySelectorAll('.table-wrap')].flatMap(w => {
+                const box = w.getBoundingClientRect();
+                return [...w.querySelectorAll('td.right:last-child')].filter(td => {
+                    const r = td.getBoundingClientRect(); return r.right > box.right + 1 || r.left < box.left - 1; });
+            }).length""")
+            squeezed = page.evaluate("[...document.querySelectorAll('td.cell-path')].filter(td => td.getBoundingClientRect().width < 150).length")
+            if sw > w or top > 0 or hidden_actions or squeezed:
+                bad.append((path, f'page {sw}', f'topbar +{top}', f'hidden action cells {hidden_actions}', f'squeezed cells {squeezed}'))
+            if w == 1024:
+                page.screenshot(path=f"{OUT}/x3-{path.strip('/').replace('/', '-')}-1024.png")
+        page.goto(BASE + '/app/timeline')
+        page.wait_for_load_state('networkidle')
+        page.screenshot(path=f'{OUT}/x2-timeline-{w}.png')
+        check(f'{w}px: no page overflow, no squeezed columns, action buttons always visible', not bad, bad)
+        ctx.close()
+
+    check('no JavaScript errors', not errors, errors[:3])
+    b.close()
+
+print(f'ui_extra: {sum(results)} passed, {len(results) - sum(results)} failed')
+sys.exit(0 if all(results) else 1)
