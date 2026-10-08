@@ -24,6 +24,7 @@ Tool availability is exposed by `GET /api/forensics/tooling`.
 `POST /api/jobs/analysis/{evidence_id}` queues a `FORENSIC_ANALYSIS` Celery job (`app/tasks.py`) that runs `app/forensic/pipeline.py`:
 
 1. **Integrity**: re-hash the original image (SHA-256) and refuse to continue if it no longer matches the acquisition hash. The check is logged to the chain of custody.
+   - **E01/EX01 only** (`app/forensic/working_image.py`): the Sleuth Kit build in the image (4.12 with libewf 20140816) crashes on EWF images, so the E01 is checked with `ewfverify`, exported once with `ewfexport` to a raw working copy in `storage/analysis/working/<EVID>.raw`, trimmed to the media size and compared with the MD5 stored in the E01. A corrupt E01 or a mismatch stops the analysis. The copy (read-only) is recorded in the chain of custody as `WORKING_COPY_CREATED` with its SHA-256, and every later tool (`mmls`, `fls`, `icat`, `istat`, carving) reads it. The uploaded E01 is never modified and is still what integrity checks hash.
 2. **Partitions**: `mmls`; every non-meta, allocated, non-extended slot is examined. An image without a partition table is examined at offset 0.
 3. **Filesystem index**: per partition, `fsstat` (filesystem type) and `fls -r -m /` written to a bodyfile under `storage/analysis/pipeline/<EVID>/<JOB>/`. Every entry, allocated or deleted, goes into the `fs_entries` collection (`app/forensic/filesystem.py`).
 4. **Timeline**: one `FILE_MACB` event per distinct timestamp of each entry, labelled like `mactime` (`m.cb` etc.) (`app/forensic/timeline.py`). The bodyfile is kept so results can be re-checked with `mactime -b`.
@@ -50,6 +51,8 @@ Re-running the job replaces that evidence item's previous pipeline output. Every
 - Chromium cookie values are not decrypted (DPAPI); Firefox downloads before version 26 (`downloads.sqlite`) are not read.
 - The Celery hard time limit (`CELERY_TASK_TIME_LIMIT`, default 30 min) bounds analysis of very large images; raise it for multi-terabyte evidence.
 - Multi-segment E01 sets (`.E02`...) are not supported by upload yet.
+- An E01 needs free space for its raw working copy (the full media size) in `storage/analysis/working`. Partitions, file details and recovery for an E01 are available once its first analysis has prepared the copy.
+- AFF/AFF4 uploads are accepted but have not been tested with this Sleuth Kit build.
 
 ## Test image
 

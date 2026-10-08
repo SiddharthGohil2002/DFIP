@@ -117,7 +117,7 @@ export function TimelinePage() {
                     <td className="mono small nowrap">{time(e.timestamp)}</td>
                     <td><Badge tone={TYPE_TONE[e.type] || 'neutral'}>{TYPE_LABEL[e.type] || e.type}</Badge></td>
                     <td className="cell-path">{e.description}</td>
-                    <td className="tiny muted nowrap">{e.source}<div>{e.evidence_id}</div></td>
+                    <td className="tiny muted cell-source">{e.source}<div>{e.evidence_id}</div></td>
                   </tr>
                 ))}
               </tbody>

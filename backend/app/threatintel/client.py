@@ -128,16 +128,18 @@ def lookup_otx(indicator: str, indicator_type: str = 'IPv4', max_age_seconds: in
 
 
 def lookup_urlhaus(url_or_host: str, max_age_seconds: int = 3600) -> dict:
-    """URLhaus's public query API does not require an API key for lookups,
-    only for submissions — so this connector works without configuration,
-    unlike the other three."""
+    """URLhaus host lookup. abuse.ch requires an Auth-Key for API queries
+    (URLHAUS_API_KEY); without one nothing is sent."""
     provider = 'URLHAUS'
+    if not settings.urlhaus_api_key:
+        return _not_configured(provider, url_or_host)
     cached = _get_cached(provider, url_or_host, max_age_seconds)
     if cached:
         return cached
     try:
         resp = httpx.post(
             'https://urlhaus-api.abuse.ch/v1/host/', data={'host': url_or_host}, timeout=20,
+            headers={'Auth-Key': settings.urlhaus_api_key},
         )
         if resp.status_code == 200:
             data = resp.json()

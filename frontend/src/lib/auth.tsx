@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, deviceId, health, post, session } from './api';
+import { api, ApiError, deviceId, health, post, session } from './api';
 import { IS_DESKTOP, hasNativeRuntime, native } from './platform';
 import type { User } from './types';
 
@@ -62,7 +62,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     api<User>('/auth/me')
       .then(setUser)
-      .catch(() => session.clear())
+      // Only a rejected token ends the session; an unreachable or restarting server keeps it for the next try.
+      .catch((e) => {
+        if (!(e instanceof ApiError) || (e.status > 0 && e.status < 500)) session.clear();
+      })
       .finally(() => setReady(true));
   }, []);
 

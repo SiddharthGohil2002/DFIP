@@ -102,6 +102,8 @@ function refreshSession(): Promise<boolean> {
 }
 
 async function errorFrom(r: Response): Promise<ApiError> {
+  // nginx answers 502-504 while the API is down or restarting.
+  if (r.status >= 502 && r.status <= 504) return new ApiError(r.status, 'The DFIP server is not responding. It may be restarting; try again in a moment.');
   const body = await r.json().catch(() => null);
   const detail = body?.detail;
   const message = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: any) => d.msg).join('; ') : r.statusText;

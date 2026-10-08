@@ -5,6 +5,7 @@ from pathlib import Path
 import re,uuid
 from ..forensic.filesystem import INODE_RE
 from ..forensic.hashing import sha256_file
+from ..forensic.working_image import analysis_image,WorkingCopyUnavailable
 from ..repositories.cases import allowed_case_query
 from ..security import current_user, require_permission, require_write
 from ..database import get_db
@@ -24,6 +25,14 @@ def auth_evidence(eid,u):
     if not e or not get_case(e['case_id'],u): raise HTTPException(404,'Evidence not found or access denied')
     return e
 
+def tsk_image(e,create=False):
+    """The image the Sleuth Kit reads: the original, or for E01 its verified raw working copy (see forensic/working_image.py)."""
+    if not Path(e['storage_path']).exists(): raise HTTPException(409,'Original evidence object is unavailable')
+    try:
+        return analysis_image(e,create=create,db=get_db(),actor='DFIP')
+    except WorkingCopyUnavailable as exc:
+        raise HTTPException(409,str(exc))
+
 def serial(v):
     if hasattr(v,'isoformat'): return v.isoformat()
     if isinstance(v,dict): return {k:serial(x) for k,x in v.items()}
@@ -39,8 +48,7 @@ def tooling(u=Depends(current_user)):
 def analyze(eid,u=Depends(require_write('ANALYSIS_RUN'))):
     e=auth_evidence(eid,u)
     if e.get('demo'): return {'status':'DEMO','evidence_id':e['evidence_id'],'case_id':e['case_id'],'engine':'DFIP Demo Engine','limitations':['Synthetic demo evidence cannot be parsed as a real image.']}
-    path=Path(e['storage_path'])
-    if not path.exists(): raise HTTPException(409,'Original evidence object is unavailable')
+    path=tsk_image(e)
     manager.emit_sync('ANALYSIS_STARTED', {'evidence_id': e['evidence_id'], 'case_id': e['case_id']})
     result=ForensicEngine().analyze(path,e['format'])
     get_db()['forensic_artifacts'].insert_one({'case_id':e['case_id'],'evidence_id':e['evidence_id'],'type':'ANALYSIS_RUN','timestamp':datetime.now(timezone.utc),'data':result,'source':'DFIP_ENGINE'})
@@ -52,8 +60,7 @@ def analyze(eid,u=Depends(require_write('ANALYSIS_RUN'))):
 def examine(eid:str,offset:int=0,u=Depends(require_write('ANALYSIS_RUN'))):
     e=auth_evidence(eid,u)
     if e.get('demo'): raise HTTPException(400,'Demo evidence cannot be examined as a real image')
-    path=Path(e['storage_path'])
-    if not path.exists(): raise HTTPException(409,'Original evidence object is unavailable')
+    path=tsk_image(e)
     parts=parse_mmls(path); fs=parse_filesystem(path,e['format'],offset); stats=filesystem_stats(path,offset)
     now=datetime.now(timezone.utc)
     docs=[]
@@ -68,16 +75,14 @@ def examine(eid:str,offset:int=0,u=Depends(require_write('ANALYSIS_RUN'))):
 def partitions(eid,u=Depends(current_user)):
     e=auth_evidence(eid,u)
     if e.get('demo'): return {'data':[],'warning':'Synthetic demo evidence'}
-    p=Path(e['storage_path']);
-    if not p.exists(): raise HTTPException(409,'Original evidence object is unavailable')
-    return serial(parse_mmls(p))
+    return serial(parse_mmls(tsk_image(e)))
 
 @r.post('/evidence/{eid}/istat')
 def istat(eid:str,inode:str,offset:int=0,u=Depends(require_write('ANALYSIS_RUN'))):
     e=auth_evidence(eid,u)
     if e.get('demo'): raise HTTPException(400,'Demo evidence cannot be examined')
     if not INODE_RE.match(inode): raise HTTPException(400,'Invalid inode address')
-    return serial(inode_stat(Path(e['storage_path']),inode,offset))
+    return serial(inode_stat(tsk_image(e),inode,offset))
 
 @r.get('/evidence/{eid}/files')
 def files(eid:str,deleted:bool|None=None,q:str|None=None,offset:int|None=None,skip:int=0,limit:int=200,u=Depends(current_user)):
@@ -99,7 +104,7 @@ def recover(eid:str,inode:str,offset:int=0,u=Depends(require_write('ANALYSIS_RUN
     if e.get('demo'): raise HTTPException(400,'Demo evidence cannot be recovered')
     if not INODE_RE.match(inode): raise HTTPException(400,'Invalid inode address')
     entry=get_db()['fs_entries'].find_one({'evidence_id':e['evidence_id'],'inode':inode,'partition_offset':offset})
-    image=Path(e['storage_path']); aid=str(uuid.uuid4())
+    image=tsk_image(e); aid=str(uuid.uuid4())
     original=entry['path'] if entry else None
     # Keep the original file name (in a per-recovery folder) so viewers and parsers can use it.
     name=Path(original).name if original else f'inode-{inode}.bin'
@@ -275,8 +280,8 @@ def carve_evidence(eid:str,engine:str='photorec',u=Depends(require_write('ANALYS
     forensic artifact with a real SHA-256 hash."""
     e=auth_evidence(eid,u)
     if e.get('demo'): raise HTTPException(400,'Demo evidence cannot be carved')
-    image=Path(e['storage_path'])
-    if not image.exists(): raise HTTPException(409,'Original evidence object is unavailable')
+    if engine not in ('photorec','scalpel'): raise HTTPException(400,'Unknown carving engine; use photorec or scalpel')
+    image=tsk_image(e,create=True)
     from ..forensic.carving import carve
     # A fresh directory per run so earlier carving output is never re-registered.
     run_id=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')+f'-{engine}'

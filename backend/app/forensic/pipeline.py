@@ -1,6 +1,6 @@
 """Full analysis of one evidence image, run as a background (Celery) job.
 
-Stages: integrity re-verification -> partition table (mmls) -> per-filesystem
+Stages: integrity re-verification -> (E01 only) verified raw working copy -> partition table (mmls) -> per-filesystem
 listing (fls bodyfile) feeding the file index and MACB timeline -> extraction and
 parsing of browser history and USB artifacts -> YARA on extracted user scripts
 and executables -> case-level patterns and anomalies.
@@ -22,6 +22,7 @@ from .hashing import sha256_file
 from .timeline import browser_events, macb_events, usb_events
 from .tools import filesystem_stats, parse_mmls, recover_file, scan_yara
 from .usb import merge_usb_sources, parse_setupapi, parse_system_hive
+from .working_image import analysis_image, needs_working_copy
 
 BATCH = 5000
 RULES_FILE = Path(__file__).resolve().parents[2] / 'rules' / 'default.yar'
@@ -55,7 +56,8 @@ class AnalysisPipeline:
         self.job_id = job_id
         self.progress = progress or (lambda p, s: None)
         self.is_cancelled = is_cancelled or (lambda: False)
-        self.image = Path(evidence['storage_path'])
+        self.original = Path(evidence['storage_path'])
+        self.image = self.original  # what the Sleuth Kit reads; the raw working copy for E01 (set in run)
         self.work = Path(settings.storage_path).resolve() / 'analysis' / 'pipeline' / self.eid / job_id
         self.summary = {'evidence_id': self.eid, 'case_id': self.case_id, 'job_id': job_id, 'engine': 'DFIP Analysis Pipeline',
                         'partitions': [], 'filesystems': [], 'counts': {}, 'artifacts': [], 'warnings': []}
@@ -83,6 +85,9 @@ class AnalysisPipeline:
         self._verify_integrity()
         self._clear_previous()
         self.work.mkdir(parents=True, exist_ok=True)
+        if needs_working_copy(self.e):
+            self._checkpoint(8, 'preparing-e01-working-copy')
+        self.image = analysis_image(self.e, create=True, db=self.db, actor=f'DFIP analysis job {self.job_id}')
 
         self._checkpoint(10, 'reading-partition-table')
         mmls = parse_mmls(self.image)
@@ -111,9 +116,9 @@ class AnalysisPipeline:
         return self.summary
 
     def _verify_integrity(self):
-        if not self.image.exists():
+        if not self.original.exists():
             raise FileNotFoundError('Original evidence object is unavailable')
-        digest = sha256_file(self.image)
+        digest = sha256_file(self.original)
         ok = digest == self.e['sha256']
         now = datetime.now(timezone.utc)
         self.db['chain_of_custody'].insert_one({

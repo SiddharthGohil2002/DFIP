@@ -70,8 +70,13 @@ async def upload(
             out.write(chunk)
     
     digest_sha256 = sha256_file(target)
-    digest_sha512 = sha512 or sha512_file(target)
-    
+    digest_sha512 = sha512_file(target)
+    # A client-computed SHA-512 (e.g. from the acquisition workstation) is only used to
+    # confirm the transfer; the recorded hashes are always computed here from the stored file.
+    if sha512 and sha512.strip().lower() != digest_sha512:
+        target.unlink(missing_ok=True)
+        raise HTTPException(400, 'The SHA-512 supplied with the upload does not match the received file. The upload was discarded; please upload it again.')
+
     # Strictly preserve original: mark immutable & read-only on filesystem
     try:
         target.chmod(0o444)
@@ -173,6 +178,7 @@ def verify(eid, u=Depends(require_write('EVIDENCE_VERIFY'))):
         'case_id': x['case_id'],
         'timestamp': now,
         'user_id': str(u['_id']),
+        'user_name': u.get('name'),
         'action': 'EVIDENCE_VERIFIED',
         'sha256': digest,
         'status': status

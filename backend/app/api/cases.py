@@ -18,7 +18,7 @@ class CaseCreate(BaseModel):
     investigator_id: str | None = None
 
 class CaseUpdate(BaseModel):
-    name: str | None = None
+    name: str | None = Field(None, min_length=2, max_length=120)
     description: str | None = None
     priority: str | None = None
     status: str | None = None
@@ -66,6 +66,10 @@ async def update_case(case_id: str, x: CaseUpdate, u=Depends(require_write('CASE
     if not c:
         raise HTTPException(404, 'Case not found or access denied')
     updates = {k: v for k, v in x.model_dump().items() if v is not None}
+    if 'name' in updates:
+        updates['name'] = updates['name'].strip()
+        if len(updates['name']) < 2:
+            raise HTTPException(400, 'Case name must have at least 2 characters')
     if 'investigator_id' in updates:
         try:
             assignee = get_db()['users'].find_one({'_id': ObjectId(updates['investigator_id']), 'status': 'ACTIVE'})

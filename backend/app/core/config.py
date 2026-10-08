@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     virustotal_api_key:str=''
     abuseipdb_api_key:str=''
     otx_api_key:str=''
+    urlhaus_api_key:str=''
     model_config=SettingsConfigDict(env_file='.env',extra='ignore',case_sensitive=False)
 
     @model_validator(mode='after')

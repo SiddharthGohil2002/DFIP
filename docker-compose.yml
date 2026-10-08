@@ -51,6 +51,7 @@ services:
       VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
       ABUSEIPDB_API_KEY: ${ABUSEIPDB_API_KEY:-}
       OTX_API_KEY: ${OTX_API_KEY:-}
+      URLHAUS_API_KEY: ${URLHAUS_API_KEY:-}
     # Keep API internal; frontend nginx proxies /api and /ws.
     ports: ["8000:8000"]
     volumes: [./storage:/app/storage]

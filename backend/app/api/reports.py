@@ -66,7 +66,7 @@ def create_report(case_id: str, u=Depends(require_write('REPORT_CREATE'))):
     return serial(doc)
 
 @r.get('/{rid}/download')
-def download_report(rid, u=Depends(current_user)):
+def download_report(rid, u=Depends(require_permission('REPORT_READ'))):
     x = get_db()['reports'].find_one({'report_id': rid})
     if not x or not get_case(x['case_id'], u):
         raise HTTPException(404, 'Report not found')

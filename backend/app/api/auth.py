@@ -11,6 +11,13 @@ from ..services.notifications import create_sync as notify_sync
 from ..database import get_db
 from ..services.audit import log
 
+import email_validator
+
+# DFIP runs on premises, where internal mail domains such as corp.local are common;
+# email-validator rejects the "local" special-use name unless it is removed here.
+if 'local' in email_validator.SPECIAL_USE_DOMAIN_NAMES:
+    email_validator.SPECIAL_USE_DOMAIN_NAMES.remove('local')
+
 r = APIRouter(prefix='/auth', tags=['auth'])
 
 class Login(BaseModel):

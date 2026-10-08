@@ -63,7 +63,7 @@ export function ReportsPage() {
         subtitle="Each report is a new PDF version built from the case's current data. Its SHA-256 is recorded when generated, so any later change to the file can be detected."
         actions={can('REPORT_CREATE') && <Button variant="primary" icon={<FileText size={15} />} busy={busy} onClick={generate}>Generate report</Button>}
       />
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(260px, 1fr)' }}>
+      <div className="grid grid-side">
         <Card title="Report versions" flush>
           {list.loading && !list.data ? <Loading /> : !reports.length ? (
             <Empty icon={<FileText size={20} />} title="No reports for this case" text="Generate the first report when the analysis is complete and findings are recorded." />
@@ -74,11 +74,11 @@ export function ReportsPage() {
                 <tbody>
                   {reports.map((r) => (
                     <tr key={r._id}>
-                      <td className="mono strong">{r.report_id}</td>
+                      <td className="mono strong nowrap">{r.report_id}</td>
                       <td><Badge tone="accent">v{r.version}</Badge></td>
                       <td className="small nowrap">{time(r.created_at)}</td>
                       <td><Hash value={r.sha256} short={20} /></td>
-                      <td className="right"><Button size="sm" icon={<Download size={13} />} onClick={() => download(r)}>PDF</Button></td>
+                      <td className="nowrap right"><Button size="sm" icon={<Download size={13} />} onClick={() => download(r)}>PDF</Button></td>
                     </tr>
                   ))}
                 </tbody>

@@ -30,7 +30,7 @@ def providers(u=Depends(current_user)):
         'virustotal': bool(settings.virustotal_api_key),
         'abuseipdb': bool(settings.abuseipdb_api_key),
         'otx': bool(settings.otx_api_key),
-        'urlhaus': True,  # no key required for lookups
+        'urlhaus': bool(settings.urlhaus_api_key),
     }
 
 

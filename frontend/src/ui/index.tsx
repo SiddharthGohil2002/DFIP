@@ -211,7 +211,7 @@ export function Hash({ value, short }: { value?: string | null; short?: number }
     });
   };
   return (
-    <span className="hash" title={value}>
+    <span className={short ? 'hash short' : 'hash'} title={value}>
       {short ? `${value.slice(0, short)}…` : value}
       <button onClick={copy} aria-label="Copy hash" title="Copy">
         {copied ? <Check size={13} /> : <Copy size={13} />}

@@ -1,4 +1,5 @@
 from fastapi import APIRouter,Depends,HTTPException
+from bson import ObjectId
 from ..security import current_user,require_permission
 from ..database import get_db
 from ..repositories.cases import allowed_case_query,get_case
@@ -19,8 +20,13 @@ def chain(case_id:str|None=None,evidence_id:str|None=None,u=Depends(current_user
         q={'case_id':{'$in':[x['case_id'] for x in db['cases'].find(allowed_case_query(u),{'case_id':1})]}}
     if evidence_id: q['evidence_id']=evidence_id
     rows=[]
+    names={}  # older records carry only the user ID; show the name instead
     for x in db['chain_of_custody'].find(q).sort('timestamp',-1).limit(1000):
         x['_id']=str(x['_id'])
+        if not x.get('user_name') and ObjectId.is_valid(str(x.get('user_id'))):
+            uid=str(x['user_id'])
+            if uid not in names: names[uid]=(db['users'].find_one({'_id':ObjectId(uid)},{'name':1}) or {}).get('name')
+            x['user_name']=names[uid]
         if hasattr(x.get('timestamp'),'isoformat'): x['timestamp']=x['timestamp'].isoformat()
         rows.append(x)
     return {'data':rows,'audit_chain':verify_chain()}

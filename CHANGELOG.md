@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fixed — found by the full functional test
+- **E01 images were not analysed.** The Sleuth Kit build in the backend image crashes on every EWF file, so E01 analysis "completed" with nothing found. E01 evidence is now checked with `ewfverify`, exported once to a raw working copy (trimmed to the media size, compared with the MD5 stored in the E01, recorded in the chain of custody) and analysed from that copy; corrupt E01 files are refused.
+- **Offline sync bypassed access control.** `/desktop/sync/push` let any signed-in user, including a viewer, change any case (even add themselves to it), add chain-of-custody records and create findings in cases they could not open. Every record now needs case access and the matching permission, only safe fields are written, and workstation events are labelled as such.
+- **Live events reached other teams.** WebSocket events (case names, finding titles, evidence hashes) were broadcast to every connected user; they now go only to the case's members and administrators.
+- A SHA-512 sent with an upload was stored without being checked; the server now always computes it and refuses an upload whose client value does not match.
+- Investigators' audit log showed the whole platform; non-administrators now see their own actions and their cases' activity.
+- Report PDFs: custody actions are readable labels instead of codes that broke mid-word, and verifications show the person's name instead of a database ID (also on the Custody page).
+- Validation: `.local` email addresses are accepted (they were rejected at sign-up), admin-created users need a valid email, a case cannot be renamed to an empty name, a finding can only link evidence from its own case, and an unknown carving engine is refused with 400.
+- URLhaus now requires an API key (`URLHAUS_API_KEY`); without one nothing is sent and the lookup says it is not configured.
+- Report downloads require `REPORT_READ` (as documented).
+
+### Added — from testing
+- **Change password** in the top bar (users could not change the initial password an administrator set).
+- UI during a server outage: pages say the server is not responding instead of "Bad Gateway" or loading forever (nginx fails fast), and a reload no longer signs the user out.
+- Narrow windows: wide tables keep their action buttons (Recover, Open) in view, IDs and short hashes no longer wrap, the timeline source column wraps, and side cards move below on Reports.
+- Test suites in the repository: `tests/system` (isolated stack, ground-truth checks against Sleuth Kit and the known test image, all configuration modes, PDF text) and `tests/ui` (Playwright suites, outage check); see `tests/README.md`. Unit tests for E01 working copies.
+
 ### Changed — launch-ready website and UI polish
 - New public website: hero with a product screenshot, the tools DFIP is built on, key facts, one section per analysis feature with a real screenshot, the six-step workflow, evidence-integrity safeguards, platforms with the Windows download and its SHA-256, FAQ and a closing call to action. Works down to phone width with a menu button. "Get started" and "Create account" open the account form directly (`/login?mode=register`).
 - Page title, description, theme colour, favicon, Apple touch icon and link-preview (Open Graph / Twitter) image.

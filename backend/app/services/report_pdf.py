@@ -111,8 +111,11 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
         story.append(Spacer(1, 10))
 
     custody = list(db['chain_of_custody'].find({'case_id': cid}).sort('timestamp', 1))
+    # Readable action labels wrap at spaces; older records may only carry a user ID.
+    names = {str(x['_id']): x.get('name') for x in db['users'].find({}, {'name': 1})}
     _section(story, '2. Chain of custody', ['Time', 'Evidence', 'Action', 'By', 'SHA-256 / result'],
-             [[c.get('timestamp'), c.get('evidence_id'), c.get('action'), c.get('user_name') or c.get('user_id'),
+             [[c.get('timestamp'), c.get('evidence_id'), (c.get('action') or '').replace('_', ' ').capitalize(),
+               c.get('user_name') or names.get(str(c.get('user_id'))) or c.get('user_id'),
                f'{(c.get("sha256") or "")[:24]}… {c.get("status") or c.get("result") or ""}'.strip() if c.get('sha256') else c.get('status') or c.get('result')]
               for c in custody],
              [1.6, 0.9, 1.6, 1.6, 2.2], 'No custody events recorded.')

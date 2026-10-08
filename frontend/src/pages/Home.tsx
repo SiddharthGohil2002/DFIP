@@ -73,7 +73,7 @@ export function HomePage() {
 
       <GettingStarted counts={counts} />
 
-      <div className="grid" style={{ gridTemplateColumns: IS_DESKTOP ? 'minmax(0, 2fr) minmax(280px, 1fr)' : '1fr' }}>
+      <div className={IS_DESKTOP ? 'grid grid-side' : 'grid'}>
         <EvidenceCard evidence={evidence} jobs={jobs} onChange={reloadOverview} />
         {IS_DESKTOP && <WorkstationCard />}
       </div>

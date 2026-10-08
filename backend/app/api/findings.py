@@ -35,6 +35,11 @@ def create(x: FindingIn, u=Depends(require_write('FINDING_CREATE'))):
         raise HTTPException(404, 'Case not found or access denied')
     if x.severity not in {'INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'}:
         raise HTTPException(400, 'Invalid severity')
+    if x.evidence_ids:
+        known = {e['evidence_id'] for e in get_db()['evidence'].find({'case_id': x.case_id, 'evidence_id': {'$in': x.evidence_ids}}, {'evidence_id': 1})}
+        missing = sorted(set(x.evidence_ids) - known)
+        if missing:
+            raise HTTPException(400, f'Evidence not in this case: {", ".join(missing)}')
     
     now = datetime.now(timezone.utc)
     d = {

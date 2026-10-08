@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pathlib import Path
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 from typing import Optional, Any
-from ..security import current_user, require_permission
+from ..security import current_user, require_permission, require_desktop_workstation
+from ..repositories.cases import get_case
 from ..database import get_db
 from ..core.config import settings
 from ..repositories.devices import register_device, heartbeat as hb, get_device_for_user, list_devices_for_user, get_online_devices
@@ -201,57 +202,120 @@ async def fail_job(job_id: str, body: JobFail, u=Depends(current_user)):
     return serial(db['jobs'].find_one({'job_id': job_id}))
 
 @r.post('/sync/push')
-async def sync_push(body: SyncPush, u=Depends(current_user)):
+async def sync_push(body: SyncPush, request: Request, u=Depends(current_user)):
+    """Applies changes a workstation made offline. Each record goes through the same
+    case-access and permission checks as the online API, and only the fields a
+    client may set are written."""
+    if settings.require_desktop_for_writes:
+        require_desktop_workstation(request, u)
     db = get_db()
     results = []
     for rec in body.records:
         try:
             outcome = _apply_sync_record(db, rec, u)
             results.append({'record_id': rec.record_id, 'status': outcome})
+        except HTTPException as e:
+            results.append({'record_id': rec.record_id, 'status': 'SYNC_REJECTED', 'error': e.detail})
         except Exception as e:
             results.append({'record_id': rec.record_id, 'status': 'SYNC_FAILED', 'error': str(e)})
-    log(u, 'OFFLINE_CHANGES_SYNCED', 'device', body.device_id, {'count': len(body.records), 'device': body.device_id})
+    log(u, 'OFFLINE_CHANGES_SYNCED', 'device', body.device_id, {'count': len(body.records), 'device': body.device_id,
+                                                                'applied': sum(1 for x in results if x['status'] == 'SYNCED')})
     await manager.send(str(u['_id']), {'type': 'sync.push_completed', 'count': len(results)})
     return {'results': results}
 
+
+SYNC_FINDING_FIELDS = {'title', 'description', 'severity', 'evidence_ids', 'timeline_ids'}
+SYNC_CASE_FIELDS = {'name', 'description', 'priority', 'status'}
+
+
+def _has_permission(u, permission: str) -> bool:
+    if u.get('role') == 'ADMIN':
+        return True
+    role = get_db()['roles'].find_one({'name': u.get('role')}) or {}
+    return permission in role.get('permissions', [])
+
+
+def _sync_case(rec: SyncPushRecord, u, permission: str) -> dict:
+    data = rec.data if isinstance(rec.data, dict) else {}
+    case_id = rec.case_id or data.get('case_id')
+    if not case_id or not get_case(case_id, u):
+        raise HTTPException(404, 'Case not found or access denied')
+    if data.get('case_id') not in (None, case_id):
+        raise HTTPException(400, 'Record case does not match')
+    if not _has_permission(u, permission):
+        raise HTTPException(403, f'Missing permission: {permission}')
+    return {'case_id': case_id, 'data': data}
+
+
+def _aware(t: datetime) -> datetime:
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
 def _apply_sync_record(db, rec: SyncPushRecord, u) -> str:
+    now = datetime.now(timezone.utc)
     if rec.record_type == 'finding':
-        existing = db['findings'].find_one({'_id': {'$exists': True}, 'local_id': rec.record_id})
+        ctx = _sync_case(rec, u, 'FINDING_CREATE')
+        fields = {k: v for k, v in ctx['data'].items() if k in SYNC_FINDING_FIELDS}
+        if fields.get('severity', 'MEDIUM') not in {'INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'}:
+            raise HTTPException(400, 'Invalid severity')
+        if len(str(fields.get('title', '')).strip()) < 2:
+            raise HTTPException(400, 'Finding title is required')
+        existing = db['findings'].find_one({'local_id': rec.record_id, 'created_by': str(u['_id'])})
         if existing:
-            backend_modified = existing.get('updated_at')
-            local_modified = datetime.fromisoformat(rec.local_modified_at)
-            if backend_modified and backend_modified > local_modified:
+            if existing.get('case_id') != ctx['case_id']:
+                raise HTTPException(400, 'Record case does not match')
+            if existing.get('updated_at') and _aware(existing['updated_at']) > _aware(datetime.fromisoformat(rec.local_modified_at)):
                 return 'SYNC_CONFLICT'
-            db['findings'].update_one({'local_id': rec.record_id}, {'$set': {**rec.data, 'updated_at': datetime.now(timezone.utc), 'sync_status': 'SYNCED'}})
+            db['findings'].update_one({'_id': existing['_id']}, {'$set': {**fields, 'updated_at': now, 'sync_status': 'SYNCED'}})
         else:
-            db['findings'].insert_one({**rec.data, 'local_id': rec.record_id, 'created_by': str(u['_id']), 'created_at': datetime.now(timezone.utc), 'updated_at': datetime.now(timezone.utc), 'sync_status': 'SYNCED', 'source': 'DESKTOP_OFFLINE'})
+            db['findings'].insert_one({'severity': 'MEDIUM', 'evidence_ids': [], 'timeline_ids': [], 'description': '', **fields,
+                                       'case_id': ctx['case_id'], 'local_id': rec.record_id, 'created_by': str(u['_id']),
+                                       'created_at': now, 'updated_at': now, 'sync_status': 'SYNCED', 'source': 'DESKTOP_OFFLINE'})
+            log(u, 'FINDING_CREATED', 'finding', rec.record_id, {'case_id': ctx['case_id'], 'source': 'DESKTOP_OFFLINE'})
         return 'SYNCED'
-    elif rec.record_type == 'custody_event':
-        # Chain of custody events are append-only — no conflict possible
-        existing = db['chain_of_custody'].find_one({'local_id': rec.record_id})
-        if not existing:
-            db['chain_of_custody'].insert_one({**rec.data, 'local_id': rec.record_id, 'synced_at': datetime.now(timezone.utc), 'source': 'DESKTOP_OFFLINE'})
+    if rec.record_type == 'custody_event':
+        # Workstation-side events (e.g. a local hash check) are recorded as such and attributed
+        # to the user; they can never pose as server events like EVIDENCE_VERIFIED.
+        ctx = _sync_case(rec, u, 'EVIDENCE_VERIFY')
+        data = ctx['data']
+        evidence = db['evidence'].find_one({'evidence_id': data.get('evidence_id'), 'case_id': ctx['case_id']})
+        if not evidence:
+            raise HTTPException(404, 'Evidence not found in this case')
+        if not db['chain_of_custody'].find_one({'local_id': rec.record_id}):
+            db['chain_of_custody'].insert_one({
+                'evidence_id': evidence['evidence_id'], 'case_id': ctx['case_id'], 'timestamp': now,
+                'local_timestamp': rec.local_created_at, 'user_id': str(u['_id']), 'user_name': u.get('name'),
+                'action': 'DESKTOP_' + str(data.get('action', 'EVENT')).upper()[:60], 'sha256': data.get('sha256'),
+                'status': data.get('status'), 'local_id': rec.record_id, 'device_id': rec.device_id,
+                'synced_at': now, 'source': 'DESKTOP_OFFLINE'})
         return 'SYNCED'
-    elif rec.record_type == 'audit_event':
-        existing = db['audit_logs'].find_one({'local_id': rec.record_id})
-        if not existing:
-            # Appended through the hash chain so offline events keep it verifiable.
+    if rec.record_type == 'audit_event':
+        if not db['audit_logs'].find_one({'local_id': rec.record_id}):
+            # Appended through the hash chain under one fixed action name, so offline events
+            # cannot imitate server actions; the reported action is kept in the metadata.
             from ..services.audit import append
-            append({'timestamp': datetime.now(timezone.utc).isoformat(), 'user_id': str(u['_id']), 'user_name': u.get('name'),
-                    'user_role': u.get('role'), 'action': str(rec.data.get('action', 'DESKTOP_OFFLINE_EVENT')),
-                    'resource_type': str(rec.data.get('resource_type', 'desktop')), 'resource_id': str(rec.data.get('resource_id', '')),
-                    'metadata': rec.data, 'local_id': rec.record_id, 'source': 'DESKTOP_OFFLINE'})
+            data = rec.data if isinstance(rec.data, dict) else {'value': rec.data}
+            append({'timestamp': now.isoformat(), 'user_id': str(u['_id']), 'user_name': u.get('name'),
+                    'user_role': u.get('role'), 'action': 'DESKTOP_OFFLINE_EVENT',
+                    'resource_type': 'desktop', 'resource_id': rec.device_id,
+                    'metadata': {'reported_action': str(data.get('action', ''))[:80], 'data': data},
+                    'local_id': rec.record_id, 'source': 'DESKTOP_OFFLINE'})
         return 'SYNCED'
-    elif rec.record_type == 'case_update':
-        case_id = rec.case_id
-        if not case_id: return 'SYNC_FAILED'
-        existing = db['cases'].find_one({'case_id': case_id})
-        if existing:
-            backend_modified = existing.get('updated_at')
-            local_modified = datetime.fromisoformat(rec.local_modified_at)
-            if backend_modified and backend_modified > local_modified:
-                return 'SYNC_CONFLICT'
-            db['cases'].update_one({'case_id': case_id}, {'$set': {**rec.data, 'updated_at': datetime.now(timezone.utc), 'sync_status': 'SYNCED'}})
+    if rec.record_type == 'case_update':
+        ctx = _sync_case(rec, u, 'CASE_UPDATE')
+        fields = {k: v for k, v in ctx['data'].items() if k in SYNC_CASE_FIELDS}
+        if 'status' in fields and fields['status'] not in {'OPEN', 'IN_PROGRESS', 'ON_HOLD', 'COMPLETED', 'ARCHIVED'}:
+            raise HTTPException(400, 'Invalid status')
+        if 'priority' in fields and fields['priority'] not in {'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'}:
+            raise HTTPException(400, 'Invalid priority')
+        if 'name' in fields and not 2 <= len(str(fields['name']).strip()) <= 120:
+            raise HTTPException(400, 'Invalid case name')
+        existing = db['cases'].find_one({'case_id': ctx['case_id']})
+        if existing.get('updated_at') and _aware(existing['updated_at']) > _aware(datetime.fromisoformat(rec.local_modified_at)):
+            return 'SYNC_CONFLICT'
+        if fields:
+            db['cases'].update_one({'case_id': ctx['case_id']}, {'$set': {**fields, 'updated_at': now, 'sync_status': 'SYNCED'}})
+            log(u, 'CASE_UPDATED', 'case', existing['_id'], {**fields, 'source': 'DESKTOP_OFFLINE'})
         return 'SYNCED'
     return 'SYNC_FAILED'
 

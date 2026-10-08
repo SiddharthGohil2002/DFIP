@@ -1,6 +1,6 @@
 import { useContext, useState, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LogOut, Plus, Search, Server } from 'lucide-react';
+import { KeyRound, LogOut, Plus, Search, Server } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { TimeModeContext } from '../lib/format';
@@ -11,6 +11,7 @@ import { Button, StatusBadge } from '../ui';
 import { CaseFormModal } from '../pages/Cases';
 import { Logo } from './Logo';
 import { DesktopDownload } from './DesktopDownload';
+import { ChangePasswordModal } from './ChangePassword';
 import { NAV } from './nav';
 
 function initials(name: string) {
@@ -26,6 +27,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const counts = overview?.counts;
   const [signingOut, setSigningOut] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
   async function signOut() {
     setSigningOut(true);
     // Clearing the session sends every workspace route to the sign-in page.
@@ -118,6 +120,8 @@ export function Shell({ children }: { children: ReactNode }) {
               <b>{user?.name}</b>
               <span>{user?.role}</span>
             </div>
+            <Button size="sm" variant="ghost" icon={<KeyRound size={14} />} onClick={() => setChangingPassword(true)}
+              title="Change password" aria-label="Change password" />
             <Button size="sm" icon={<LogOut size={14} />} busy={signingOut} onClick={signOut} title="Sign out of DFIP">
               Sign out
             </Button>
@@ -128,6 +132,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </main>
       </div>
 
+      <ChangePasswordModal open={changingPassword} onClose={() => setChangingPassword(false)} />
       <CaseFormModal
         open={creating}
         onClose={() => setCreating(false)}

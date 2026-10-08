@@ -1,14 +1,15 @@
 from fastapi import APIRouter,Depends,HTTPException
-from pydantic import BaseModel,Field
+from pydantic import BaseModel,Field,EmailStr
 from datetime import datetime,timezone
 from bson import ObjectId
 from ..security import require_roles,hash_password,require_permission
 from ..repositories.users import list_users,get_by_email,serial as user_serial
+from ..repositories.cases import allowed_case_query
 from ..database import get_db
 from ..services.audit import log
 from ..services.notifications import create as notify
 r=APIRouter(prefix='/admin',tags=['admin'])
-class UserCreate(BaseModel):name:str=Field(min_length=2,max_length=120);email:str;role:str='INVESTIGATOR';password:str=Field(min_length=12,max_length=128)
+class UserCreate(BaseModel):name:str=Field(min_length=2,max_length=120);email:EmailStr;role:str='INVESTIGATOR';password:str=Field(min_length=12,max_length=128)
 class UserUpdate(BaseModel):name:str|None=None;role:str|None=None;status:str|None=None
 class RoleUpdate(BaseModel):permissions:list[str]
 ROLES={'ADMIN','INVESTIGATOR','ANALYST','VIEWER'}
@@ -17,8 +18,8 @@ def users(u=Depends(require_permission('USER_MANAGE'))):return {'data':[user_ser
 @r.post('/users')
 async def create_user(x:UserCreate,u=Depends(require_permission('USER_MANAGE'))):
     if x.role not in ROLES:raise HTTPException(400,'Invalid role')
-    if get_by_email(x.email):raise HTTPException(409,'Email already exists')
-    now=datetime.now(timezone.utc);d={'name':x.name,'email':x.email.lower(),'role':x.role,'status':'ACTIVE','password_hash':hash_password(x.password),'created_at':now,'updated_at':now};res=get_db()['users'].insert_one(d);d['_id']=res.inserted_id;log(u,'USER_CREATED','user',res.inserted_id,{'role':x.role});await notify(str(res.inserted_id),'Welcome to DFIP','Your account has been created.')
+    if get_by_email(str(x.email)):raise HTTPException(409,'Email already exists')
+    now=datetime.now(timezone.utc);d={'name':x.name.strip(),'email':str(x.email).lower(),'role':x.role,'status':'ACTIVE','password_hash':hash_password(x.password),'created_at':now,'updated_at':now};res=get_db()['users'].insert_one(d);d['_id']=res.inserted_id;log(u,'USER_CREATED','user',res.inserted_id,{'role':x.role});await notify(str(res.inserted_id),'Welcome to DFIP','Your account has been created.')
     return user_serial({k:v for k,v in d.items() if k!='password_hash'})
 @r.patch('/users/{uid}')
 async def update_user(uid:str,x:UserUpdate,u=Depends(require_permission('USER_MANAGE'))):
@@ -48,10 +49,20 @@ def security(u=Depends(require_roles('ADMIN'))):
         if hasattr(x.get('timestamp'),'isoformat'): x['timestamp']=x['timestamp'].isoformat()
         out.append(x)
     return {'data':out}
+def _audit_scope(u):
+    """Administrators see the whole log; everyone else sees their own actions and
+    actions on the cases they can open (matched by case, evidence and report IDs)."""
+    if u['role']=='ADMIN':return {}
+    db=get_db();cases=list(db['cases'].find(allowed_case_query(u),{'case_id':1}))
+    case_ids=[c['case_id'] for c in cases]
+    ev=list(db['evidence'].find({'case_id':{'$in':case_ids}},{'evidence_id':1}))
+    ids=case_ids+[str(c['_id']) for c in cases]+[e['evidence_id'] for e in ev]+[str(e['_id']) for e in ev]
+    ids+=[x['report_id'] for x in db['reports'].find({'case_id':{'$in':case_ids}},{'report_id':1})]
+    return {'$or':[{'user_id':str(u['_id'])},{'metadata.case_id':{'$in':case_ids}},{'resource_id':{'$in':ids}}]}
 @r.get('/audit')
 def audit(u=Depends(require_permission('AUDIT_READ'))):
     docs=[]
-    for x in get_db()['audit_logs'].find().sort('timestamp',-1).limit(300):
+    for x in get_db()['audit_logs'].find(_audit_scope(u)).sort('timestamp',-1).limit(300):
         x['_id']=str(x['_id'])
         if hasattr(x.get('timestamp'),'isoformat'): x['timestamp']=x['timestamp'].isoformat()
         docs.append(x)

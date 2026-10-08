@@ -97,6 +97,8 @@ python scripts/test-image/e2e_analysis.py        # uploads, analyzes, recovers, 
 
 See `docs/forensic-engine.md` for the pipeline stages and known limitations.
 
+Full functional testing (isolated API suite with ground-truth checks, browser suites for web and desktop UI, desktop app): see [tests/README.md](tests/README.md). In short: `sh tests/system/run.sh` and `sh tests/ui/run.sh`.
+
 UI (both targets; `tsc` runs with strict unused-code checks):
 
 ```bash

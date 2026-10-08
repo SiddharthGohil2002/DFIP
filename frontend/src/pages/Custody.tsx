@@ -5,6 +5,9 @@ import { useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { Banner, Card, Empty, Hash, Loading, PageHeader, StatusBadge } from '../ui';
 
+/** "ANALYSIS_INTEGRITY_CHECK" -> "Analysis integrity check" (the code stays in the tooltip). */
+const actionLabel = (action: string) => (action ? action.charAt(0) + action.slice(1).toLowerCase().replace(/_/g, ' ') : '');
+
 export function CustodyPage() {
   const { caseId, overview } = useCase();
   const time = useTime();
@@ -46,8 +49,8 @@ export function CustodyPage() {
                 {data.data.map((c) => (
                   <tr key={c._id}>
                     <td className="mono small nowrap">{time(c.timestamp)}</td>
-                    <td className="mono small">{c.evidence_id}</td>
-                    <td className="small strong">{c.action}</td>
+                    <td className="mono small nowrap">{c.evidence_id}</td>
+                    <td className="small strong" title={c.action}>{actionLabel(c.action)}</td>
                     <td className="small">{c.user_name || c.user_id}</td>
                     <td>{c.sha256 ? <Hash value={c.sha256} short={16} /> : <span className="muted">—</span>}</td>
                     <td className="small">
