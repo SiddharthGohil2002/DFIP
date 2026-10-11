@@ -5,9 +5,22 @@ polling behavior is unchanged. Execution itself is delegated to Celery workers
 (see app/tasks.py, app/celery_app.py) instead of the previous in-process
 threading loop, so jobs survive API restarts and can be scaled across workers.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from ..database import get_db
 from pymongo import ReturnDocument
+
+
+def active_analysis(evidence_id: str):
+    """The analysis job of this evidence that is queued or running, if any (one runs at a time per evidence).
+
+    A running job counts only while its worker sends heartbeats, and a queued one only while it could still be
+    waiting for a worker, so a crashed job never blocks the evidence.
+    """
+    from ..core.config import settings
+    now = datetime.now(timezone.utc)
+    return get_db()['jobs'].find_one({'type': 'FORENSIC_ANALYSIS', 'payload.evidence_id': evidence_id, '$or': [
+        {'status': 'QUEUED', 'created_at': {'$gte': now - timedelta(seconds=2 * settings.analysis_time_limit)}},
+        {'status': 'RUNNING', 'heartbeat_at': {'$gte': now - timedelta(minutes=10)}}]}, {'job_id': 1})
 
 
 class JobQueue:

@@ -186,11 +186,13 @@ class ArtifactsModule(Module):
             if bias is None:
                 bias = parsed.get('timezone_bias_minutes')
         entries = []
+        # setupapi.dev.log is in local time: convert with the computer's time zone (daylight saving included).
+        zone = ctx.fact('tz_probe', 'zone') if ctx.fact('tz_probe', 'source') in ('registry', 'override') else None
         for item, aid, local in setupapi_items:
             sources.append(aid)
-            parsed = parse_setupapi(local, bias)
+            parsed = parse_setupapi(local, bias, zone=zone)
             entries.extend(parsed['entries'])
-            if bias is None and parsed['entries']:
+            if zone is None and bias is None and parsed['entries']:
                 ctx.warn('setupapi.dev.log times are system local time (no SYSTEM hive time zone found)')
         merged = merge_usb_sources(devices, entries)
         now = datetime.now(timezone.utc)

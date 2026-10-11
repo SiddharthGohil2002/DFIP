@@ -49,7 +49,7 @@ export function SearchPage() {
 
   return (
     <div className="stack">
-      <PageHeader title="Keyword search" subtitle="Case-insensitive search across file paths (including deleted files), timeline events, browser history and downloads, USB devices, Windows activity and findings in the active case." />
+      <PageHeader title="Keyword search" subtitle="Case-insensitive search across file paths (including deleted files), timeline events, browser history and downloads, USB devices, Windows activity, findings and user accounts in the active case." />
       <Card>
         <form className="row" onSubmit={run}>
           <input className="input grow" style={{ maxWidth: 520 }} value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. payroll, SecureDelete, AA951D0000007252, .ps1" autoFocus aria-label="Keyword" />
@@ -104,6 +104,15 @@ export function SearchPage() {
                 <td className="small">{a.type === 'PROGRAM_RUN' ? 'Program run' : a.type === 'RECENT_FILE' ? 'File opened' : 'Recycle Bin'}</td>
                 <td className="mono small nowrap">{time(a.last_run || a.lnk_modified || a.deleted_time)}</td>
                 <td className="cell-path small mono" colSpan={2}>{a.executable_path || a.executable || a.target_path || a.original_path}</td>
+              </tr>
+            ))}
+          </Group>
+          <Group title="User accounts" total={res.totals.accounts ?? 0} shown={(res.results.accounts || []).length} link={{ to: '/app/computer', label: 'Open computer and users' }}>
+            {(res.results.accounts || []).map((a) => (
+              <tr key={a._id}>
+                <td className="small strong">{a.username}{a.full_name && <span className="muted"> ({a.full_name})</span>}</td>
+                <td className="mono small">{a.sid}</td>
+                <td className="small" colSpan={2}>{a.profile_path}</td>
               </tr>
             ))}
           </Group>

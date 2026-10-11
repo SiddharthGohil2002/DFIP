@@ -178,11 +178,17 @@ def parse_system_hive(path: Path) -> dict:
     return result
 
 
-def parse_setupapi(path: Path, bias_minutes: int | None = None) -> dict:
-    """Parses device-install sections of setupapi.dev.log (Vista+) for USB devices."""
-    result = {'status': 'COMPLETED', 'source_file': str(path), 'entries': [], 'errors': [],
-              'time_basis': 'UTC (converted with hive ActiveTimeBias)' if bias_minutes is not None
-                            else 'system local time (no time zone available; stored as-is)'}
+def parse_setupapi(path: Path, bias_minutes: int | None = None, zone: str | None = None) -> dict:
+    """Parses device-install sections of setupapi.dev.log (Vista+) for USB devices.
+
+    Its times are the computer's local time: `zone` (the computer's time zone, daylight saving included) converts
+    them to UTC; `bias_minutes` (a fixed UTC = local + bias) is the fallback when only an offset is known.
+    """
+    from .timezone import local_to_utc
+    basis = (f"UTC (converted from the computer's time zone {zone})" if zone else
+             'UTC (converted with hive ActiveTimeBias)' if bias_minutes is not None else
+             'system local time (no time zone available; stored as-is)')
+    result = {'status': 'COMPLETED', 'source_file': str(path), 'entries': [], 'errors': [], 'time_basis': basis}
     try:
         lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
     except OSError as exc:
@@ -202,7 +208,8 @@ def parse_setupapi(path: Path, bias_minutes: int | None = None) -> dict:
             if not (upper.startswith('USBSTOR\\') or upper.startswith('USB\\')):
                 continue
             local = datetime.strptime(s.group('ts'), '%Y/%m/%d %H:%M:%S')
-            ts = (local + timedelta(minutes=bias_minutes or 0)).replace(tzinfo=timezone.utc)
+            ts = (local_to_utc(local, zone) if zone else
+                  (local + timedelta(minutes=bias_minutes or 0)).replace(tzinfo=timezone.utc))
             parts = dev.split('\\')
             entry = {'device_id': dev, 'bus': parts[0].upper(), 'install_time': ts.isoformat(), 'local_time': s.group('ts')}
             if len(parts) >= 3:

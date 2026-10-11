@@ -2,7 +2,8 @@
 
 Collections: users, roles, cases, evidence, fs_entries, forensic_artifacts, timeline_events, usb_artifacts, patterns, anomalies, findings, tags, reports, chain_of_custody, audit_logs, notifications, jobs, job_sequences, desktop_devices, refresh_tokens, analysis_facts, pipeline_warnings.
 
-- `forensic_artifacts` also holds the Windows activity records (`PROGRAM_RUN`, `RECENT_FILE`, `RECYCLE_BIN_ITEM`).
+- `forensic_artifacts` also holds the Windows activity records (`PROGRAM_RUN`, `RECENT_FILE`, `RECYCLE_BIN_ITEM`), one `COMPUTER_INFO` per evidence (computer name, OS, interfaces, last shutdown, time zone, hives with SHA-256) and the `USER_ACCOUNT` records (SID, RID, user name, full name, logon statistics, profile path, source `SAM` or `PROFILE_LIST`).
+- `evidence.time_zone_override`: `{zone, reason, set_by(_name), set_at}` when an investigator set the computer's time zone; `fs_entries` on FAT volumes carry `time_zone` and `atime_date_only`.
 - Pipeline output (`fs_entries`, `timeline_events`, `forensic_artifacts`, `usb_artifacts`, `pipeline_warnings`) carries `pipeline: true`, `pipeline_module` (the analysis module that wrote it), `module_run_id` and `analysis_job_id`; each module replaces only its own documents (index on `evidence_id, pipeline_module`).
 - `fs_entries` and `FILE_MACB` events carry `volume_id` (`p<start sector>`) next to `partition_offset`. Other timeline events carry `nk`, a stable natural key used to re-link tags.
 - `evidence.modules.<name>`: `{status, job_id, run_id, version, counts, warnings, warnings_total, error, started_at, finished_at}` for each analysis module's latest run; `evidence.analysis_summary` merges the counts.

@@ -77,7 +77,7 @@ with sync_playwright() as p:
 
     step['v'] = 'analysis modules'
     modules_card = page.locator('.card', has=page.get_by_role('heading', name='Analysis modules'))
-    expect(modules_card.get_by_role('row')).to_have_count(4)  # header + 3 modules
+    expect(modules_card.get_by_role('row')).to_have_count(1 + len(api_get(page, '/jobs/analysis/modules')['modules']))
     eid = page.url.rstrip('/').rsplit('/', 1)[-1]
     before = api_get(page, f'/evidence/{eid}')['modules']['yara']['run_id']
     page.get_by_role('button', name='Analysis options').click()
@@ -101,6 +101,23 @@ with sync_playwright() as p:
     n = counts['yara_matches']
     expect(yara_row.get_by_text(f"{n} YARA match{'' if n == 1 else 'es'}")).to_be_visible()
     shot(page, '06c-analysis-modules')
+
+    step['v'] = 'time zone'
+    expect(page.get_by_text('America/New_York (Eastern Standard Time, from the SYSTEM hive)')).to_be_visible()
+    page.get_by_role('button', name='Change time zone').click()
+    dialog = page.get_by_role('dialog')
+    expect(dialog.get_by_text('The SYSTEM hive says')).to_be_visible()
+    expect(dialog.get_by_role('button', name='Save and re-index')).to_be_disabled()  # a reason is required
+    dialog.get_by_role('button', name='Cancel').click()
+    expect(dialog).to_have_count(0)
+
+    step['v'] = 'computer and users'
+    page.get_by_role('link', name='Computer and users').first.click()
+    expect(page.get_by_role('heading', name='LAPTOP-07')).to_be_visible()
+    expect(page.get_by_text('Windows 10 Pro 22H2')).to_be_visible()
+    expect(page.get_by_text('Alice Example')).to_be_visible()
+    expect(page.get_by_text('192.168.1.57')).to_be_visible()
+    shot(page, '06d-computer-and-users')
 
     step['v'] = 'deleted files'
     page.get_by_role('link', name='Deleted files').first.click()
@@ -188,6 +205,7 @@ with sync_playwright() as p:
     expect(page.get_by_text('Removable drive')).to_be_visible()
     if mismatches('Recycle Bin', 0, 'deleted', 'C:\\Users\\alice\\Documents\\payroll-export.csv'):
         problems.append('[windows activity] the Recently opened files rows were shown under the Recycle Bin columns')
+    expect(page.locator('main table tbody tr').first.get_by_text('alice', exact=True)).to_be_visible()  # SID resolved to the user
     shot(page, '11c-recycle-bin')
 
     step['v'] = 'indicators'

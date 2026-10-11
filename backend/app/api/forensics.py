@@ -270,12 +270,44 @@ def activity(case_id:str,kind:str='PROGRAM_RUN',evidence_id:str|None=None,search
     if search: q['$or']=_activity_text({'$regex':re.escape(search),'$options':'i'})
     col=get_db()['forensic_artifacts']
     rows=[serial(dict(x,_id=str(x['_id']))) for x in col.find(q).sort(ACTIVITY_SORT[kind],-1).skip(max(0,skip)).limit(max(1,min(limit,1000)))]
+    names=account_names(get_db(),{r['evidence_id'] for r in rows})
+    for row in rows:
+        if row.get('sid'): row['user_name']=names.get((row['evidence_id'],row['sid']))
     return {'data':rows,'total':col.count_documents(q)}
+
+
+def account_names(db,evidence_ids)->dict:
+    """User names of the accounts found on these evidence items, by (evidence_id, SID)."""
+    out={}
+    for a in db['forensic_artifacts'].find({'evidence_id':{'$in':list(evidence_ids)},'type':'USER_ACCOUNT','sid':{'$ne':None}},
+                                           {'evidence_id':1,'sid':1,'username':1}):
+        out[(a['evidence_id'],a['sid'])]=a.get('username')
+    return out
+
+
+@r.get('/computer')
+def computer(case_id:str,evidence_id:str|None=None,u=Depends(current_user)):
+    """Per evidence item: the computer (name, Windows version, network, last shutdown, time zone) and its user accounts."""
+    if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
+    db=get_db(); out=[]
+    q={'case_id':case_id}
+    if evidence_id: q['evidence_id']=evidence_id
+    for e in db['evidence'].find(q,{'evidence_id':1,'filename':1}).sort('created_at',1):
+        eid=e['evidence_id']
+        info=db['forensic_artifacts'].find_one({'evidence_id':eid,'type':'COMPUTER_INFO'})
+        users=list(db['forensic_artifacts'].find({'evidence_id':eid,'type':'USER_ACCOUNT'}).sort([('source',-1),('rid',1),('username',1)]))
+        facts=(db['analysis_facts'].find_one({'evidence_id':eid},{'tz_probe':1}) or {}).get('tz_probe') or {}
+        if not info and not users and not facts: continue
+        out.append(serial({'evidence_id':eid,'filename':e.get('filename'),
+                           'computer':info and dict(info,_id=str(info['_id'])),
+                           'accounts':[dict(x,_id=str(x['_id'])) for x in users],
+                           'time_zone':{k:facts.get(k) for k in ('zone','source','detected','override')} if facts else None}))
+    return {'data':out}
 
 @r.get('/search')
 def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
     """Keyword search across a case: file paths, timeline events, browser
-    records, USB devices, Windows activity and findings (case-insensitive substring match)."""
+    records, USB devices, Windows activity, findings and user accounts (case-insensitive substring match)."""
     if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
     term=q.strip()
     if len(term)<2: raise HTTPException(400,'Search term must be at least 2 characters')
@@ -289,6 +321,8 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
         'usb':('usb_artifacts',{'case_id':case_id,'$or':[{'friendly_name':rx},{'vendor':rx},{'product':rx},{'serial':rx}]},[('serial',1)]),
         'activity':('forensic_artifacts',{'case_id':case_id,'type':{'$in':list(ACTIVITY_SORT)},'$or':_activity_text(rx)},[('timestamp',-1)]),
         'findings':('findings',{'case_id':case_id,'$or':[{'title':rx},{'description':rx}]},[('created_at',-1)]),
+        'accounts':('forensic_artifacts',{'case_id':case_id,'type':'USER_ACCOUNT','$or':[{'username':rx},{'full_name':rx},{'sid':rx},
+                    {'profile_path':rx}]},[('rid',1)]),
     }
     results,totals={},{}
     for key,(col,query,sort) in queries.items():

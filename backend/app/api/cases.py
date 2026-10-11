@@ -136,6 +136,7 @@ def overview(case_id: str, u=Depends(current_user)):
         'programs_run': art.count_documents({'case_id': case_id, 'type': 'PROGRAM_RUN'}),
         'recent_files': art.count_documents({'case_id': case_id, 'type': 'RECENT_FILE'}),
         'recycle_bin_items': art.count_documents({'case_id': case_id, 'type': 'RECYCLE_BIN_ITEM'}),
+        'user_accounts': art.count_documents({'case_id': case_id, 'type': 'USER_ACCOUNT'}),
         'malware_indicators': art.count_documents({'case_id': case_id, 'type': 'MALWARE_INDICATOR'}),
         'patterns': db['patterns'].count_documents({'case_id': case_id}),
         'anomalies_flagged': db['anomalies'].count_documents({'case_id': case_id, 'is_anomaly': True}),

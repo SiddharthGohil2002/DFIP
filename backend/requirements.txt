@@ -20,3 +20,5 @@ regipy==5.2.0
 libscca-python==20260527
 liblnk-python==20260525
 pytsk3==20260715
+# Independent registry reader (libyal), used by the system tests as ground truth next to regipy
+libregf-python==20260526

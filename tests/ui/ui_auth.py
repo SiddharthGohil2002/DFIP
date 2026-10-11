@@ -45,7 +45,7 @@ with sync_playwright() as p:
     expect(page.get_by_text('Investigation functions').or_(page.get_by_text('Welcome,'))).to_be_visible()
     badge = page.get_by_title('Accounts waiting for approval')
     expect(badge).to_be_visible()
-    page.get_by_role('link', name='Users').click()
+    page.locator('a.nav-link[href$="/admin/users"]').click()  # not "Computer and users"
     row = page.locator('tr', has_text=EMAIL)
     expect(row.get_by_role('button', name='Approve')).to_be_visible()
     page.screenshot(path='/out/a3-approvals.png', full_page=True)

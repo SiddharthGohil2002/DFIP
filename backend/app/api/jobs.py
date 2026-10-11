@@ -64,14 +64,8 @@ def enqueue_analysis(evidence_id: str, req: AnalysisRequest | None = None, u=Dep
     e = get_evidence(evidence_id)
     if not e or not get_case(e['case_id'], u):
         raise HTTPException(404, 'Evidence not found or access denied')
-    # One analysis per evidence at a time. A running job counts only while its worker sends heartbeats, and a
-    # queued one only while it could still be waiting for a worker, so a crashed job never blocks the evidence.
-    from datetime import timedelta
-    from ..core.config import settings
-    now = datetime.now(timezone.utc)
-    busy = get_db()['jobs'].find_one({'type': 'FORENSIC_ANALYSIS', 'payload.evidence_id': evidence_id, '$or': [
-        {'status': 'QUEUED', 'created_at': {'$gte': now - timedelta(seconds=2 * settings.analysis_time_limit)}},
-        {'status': 'RUNNING', 'heartbeat_at': {'$gte': now - timedelta(minutes=10)}}]}, {'job_id': 1})
+    from ..services.jobs import active_analysis
+    busy = active_analysis(evidence_id)
     if busy:
         raise HTTPException(409, f'An analysis of this evidence is already queued or running ({busy["job_id"]})')
     req = req or AnalysisRequest()

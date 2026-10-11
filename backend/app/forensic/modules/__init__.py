@@ -13,17 +13,19 @@ from __future__ import annotations
 
 from .artifacts import ArtifactsModule
 from .base import Cancelled, Module, ModuleContext, run_tool
+from .computer import ComputerModule
 from .fs_index import FsIndexModule
+from .tz_probe import TzProbeModule
 from .yara_scan import YaraModule
 
-MODULES: list[Module] = [FsIndexModule(), ArtifactsModule(), YaraModule()]
+MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), YaraModule()]
 REGISTRY: dict[str, Module] = {m.name: m for m in MODULES}
 ORDER = [m.name for m in MODULES]
 
 PROFILES = {
-    'quick': ['fs_index', 'artifacts'],
-    'standard': ['fs_index', 'artifacts', 'yara'],
-    'full': ['fs_index', 'artifacts', 'yara'],
+    'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts'],
+    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'yara'],
+    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'yara'],
 }
 DEFAULT_PROFILE = 'standard'
 PROFILE_LABELS = {

@@ -9,6 +9,8 @@ Recent additions:
 | Route | Purpose |
 |---|---|
 | `POST /api/jobs/analysis/{id}` (optional body `{profile: quick\|standard\|full}` or `{modules: [...]}`) | Queue an analysis; no body = standard. 400 for an unknown profile or module, 409 while another analysis of the evidence is queued or running |
+| `PUT /api/evidence/{id}/time-zone` (body `{zone: IANA name\|UTC\|null, reason}`) | Set the computer's time zone by hand (null: back to the SYSTEM hive's) and re-index; audited |
+| `GET /api/forensics/computer?case_id&evidence_id` | Per evidence: computer name, Windows version, network, last shutdown, time zone and user accounts |
 | `GET /api/jobs/analysis/modules` | The analysis modules (name, label, description, requirements, version) and profiles |
 | `GET /api/evidence/{id}` → `modules` | Each module's latest run: status, version, run ID, counts, warnings |
 | `volume_id` (e.g. `p2048`) on `/forensics/evidence/{id}/files`, `/recover`, `/content`, `/preview`, `/raw` | Names the volume; the older `offset=` still works |

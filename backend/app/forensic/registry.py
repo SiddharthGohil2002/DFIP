@@ -52,8 +52,11 @@ def signed_dword(value):
 
 
 def values(key) -> dict:
-    """A key's values by name ('(default)' or '' for the default value, depending on the hive)."""
-    return {v.name: v.value for v in key.iter_values()}
+    """A key's values by name ('(default)' or '' for the default value, depending on the hive).
+
+    regipy cuts binary values to 128 bytes unless asked not to; evidence values are always read in full.
+    """
+    return {v.name: v.value for v in key.iter_values(trim_values=False)}
 
 
 def subkey(key, name):

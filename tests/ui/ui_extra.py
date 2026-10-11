@@ -132,7 +132,7 @@ with sync_playwright() as p:
     page.on('pageerror', lambda e: errors.append(str(e)))
     sign_in(page, 'admin@dfip.local')
     expect(page.get_by_text('Investigation functions').or_(page.get_by_text('No case selected'))).to_be_visible()
-    page.get_by_role('link', name='Users').first.click()
+    page.locator('a.nav-link[href$="/admin/users"]').click()  # not "Computer and users"
     email = f'ui.user.{uuid.uuid4().hex[:6]}@corp.local'
     page.get_by_role('button', name='Add user').click()
     d = page.get_by_role('dialog')

@@ -1,10 +1,8 @@
 """Builds the synthetic user artifacts placed inside the DFIP test disk image.
 
-Everything here is fabricated test data for exercising the parsers, except the
-SYSTEM registry hive, which is a real Windows 7 hive from the regipy test suite
-(MIT licensed): https://github.com/mkorman90/regipy/tree/master/regipy_tests/data
+Everything here is fabricated test data for exercising the parsers. The registry hives are written
+separately by make_hives.py (with hivex).
 """
-import lzma
 import sqlite3
 import struct
 import sys
@@ -17,7 +15,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend' / 'tests'
 import winfmt  # noqa: E402
 
 OUT = Path(sys.argv[1])
-HIVE_XZ = Path(sys.argv[2])
 
 CHROME_EPOCH_OFFSET = 11_644_473_600  # seconds between 1601-01-01 and 1970-01-01
 
@@ -184,11 +181,13 @@ def pdf(text='Offer letter - Alice Example - Senior Analyst') -> bytes:
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    write('Windows/System32/config/SYSTEM', lzma.open(HIVE_XZ).read())
     write('Windows/INF/setupapi.dev.log', SETUPAPI.replace('\n', '\r\n'))
     chrome_history(OUT / 'Users/alice/AppData/Local/Google/Chrome/User Data/Default/History')
     firefox_places(OUT / 'Users/alice/AppData/Roaming/Mozilla/Firefox/Profiles/k2x8.default-release/places.sqlite')
     write('Users/alice/Documents/project-notes.txt', 'Q3 project notes. Nothing sensitive here.\n' * 40)
+    # Stamped in standard time (EST) by make-test-image.sh, to prove daylight saving is handled per date.
+    write('Users/alice/Documents/q1-forecast.txt', 'Q1 2026 forecast draft. Figures to be confirmed.\n')
+    write('Users/alice/Documents/year-end-checklist.txt', 'Year-end checklist: archive mail, renew licences.\n')
     # Deleted by make-test-image.sh after being copied into the image.
     write('Users/alice/Documents/payroll-export.csv', PAYROLL)
     write('Users/alice/Downloads/cleanup.ps1',

@@ -1,5 +1,10 @@
 """File system index: partition table (mmls), then each file system's full listing (fls bodyfile), including
-deleted entries, feeding the file index (fs_entries) and the MACB file timeline."""
+deleted entries, feeding the file index (fs_entries) and the MACB file timeline.
+
+File systems that store local time (FAT, exFAT) are listed with the computer's time zone (`fls -z`, from the
+tz_probe module), so every stored time is UTC. FAT keeps only the date of the last access, so access times on
+FAT are flagged as date-only.
+"""
 from __future__ import annotations
 import re
 import shutil
@@ -12,6 +17,7 @@ from .base import Module
 
 BATCH = 5000
 FLS_TIMEOUT = 6 * 3600
+LOCAL_TIME_FS = ('FAT', 'EXFAT')  # fsstat "File System Type" values that store local time
 
 
 def filesystem_type(stats_stdout: str):
@@ -30,10 +36,14 @@ class FsIndexModule(Module):
     name = 'fs_index'
     label = 'File system index'
     description = 'Partition table, every file and folder including deleted entries, and the file timeline (MACB).'
+    version = '2'  # 2: local-time file systems converted with the computer's time zone
+    requires = ('tz_probe',)
     weight = 45
     collections = ('fs_entries', 'timeline_events')
 
     def run(self, ctx):
+        self.zone = ctx.fact('tz_probe', 'zone') or 'UTC'
+        self.zone_source = ctx.fact('tz_probe', 'source') or 'default'
         mmls = parse_mmls(ctx.image)
         offsets = select_offsets(mmls)
         ctx.set_fact('partitions', mmls.get('partitions', []))
@@ -50,14 +60,20 @@ class FsIndexModule(Module):
         stats = filesystem_stats(ctx.image, offset)
         fs_type = filesystem_type(stats.get('stdout', ''))
         vid = volume_id(offset)
-        info = {'partition_offset': offset, 'volume_id': vid, 'filesystem_type': fs_type, 'fsstat_status': stats.get('status')}
+        local_time = any((fs_type or '').upper().startswith(t) for t in LOCAL_TIME_FS)
+        info = {'partition_offset': offset, 'volume_id': vid, 'filesystem_type': fs_type, 'fsstat_status': stats.get('status'),
+                'local_time': local_time, 'time_zone': self.zone if local_time else 'UTC'}
         if stats.get('status') != 'COMPLETED':
             info['error'] = (stats.get('stderr') or '').strip()[:500]
             ctx.warn(f'No readable filesystem at sector offset {offset}')
             return info
         bodyfile = ctx.work / f'fls-offset-{offset}.body'
         fls = shutil.which(TOOLS['sleuthkit_fls']) or TOOLS['sleuthkit_fls']
-        argv = [fls, '-r', '-m', '/'] + (['-o', str(offset)] if offset else []) + [str(ctx.image)]
+        if local_time and self.zone_source == 'default':
+            ctx.warn(f"{fs_type} at sector offset {offset} stores local time, but the computer's time zone is unknown: "
+                     'its times are shown as if they were UTC. Set the time zone on the evidence if you know it.')
+        # -z only affects file systems that store local time; NTFS and ext times are UTC already.
+        argv = [fls, '-z', self.zone, '-r', '-m', '/'] + (['-o', str(offset)] if offset else []) + [str(ctx.image)]
         r = ctx.run_tool(argv, timeout=FLS_TIMEOUT, stdout_path=bodyfile)
         info.update(bodyfile=str(bodyfile), fls_status=r.get('status'))
         if r.get('status') != 'COMPLETED':
@@ -74,9 +90,16 @@ class FsIndexModule(Module):
             if not entry['is_virtual']:
                 files += 1
                 deleted += entry['deleted']
-            entries.append(dict(entry, case_id=ctx.case_id, evidence_id=ctx.eid, partition_offset=offset,
-                                volume_id=vid, filesystem_type=fs_type))
-            events.extend(macb_events(entry, ctx.case_id, ctx.eid, offset))
+            doc = dict(entry, case_id=ctx.case_id, evidence_id=ctx.eid, partition_offset=offset, volume_id=vid,
+                       filesystem_type=fs_type, time_zone=info['time_zone'])
+            new_events = macb_events(entry, ctx.case_id, ctx.eid, offset)
+            if local_time:
+                doc['atime_date_only'] = True
+                for ev in new_events:
+                    if 'a' in ev['macb']:
+                        ev['access_date_only'] = True
+            entries.append(doc)
+            events.extend(new_events)
             if len(entries) >= BATCH:
                 ctx.insert('fs_entries', entries)
                 entries = []

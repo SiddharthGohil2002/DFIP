@@ -68,7 +68,7 @@ def test_order_respects_requirements():
 
 def test_profiles_and_requests():
     assert resolve_request() == PROFILES['standard']
-    assert resolve_request('quick') == ['fs_index', 'artifacts']
+    assert resolve_request('quick') == ['tz_probe', 'fs_index', 'computer', 'artifacts']
     assert resolve_request(modules=['yara', 'yara']) == ['yara']
     with pytest.raises(ValueError):
         resolve_request('everything')
@@ -81,19 +81,22 @@ def _done(*names):
 
 
 def test_plan_adds_missing_prerequisites():
-    assert plan(['yara'], {}) == ['fs_index', 'yara']
-    assert plan(['artifacts'], {}) == ['fs_index', 'artifacts']
+    assert plan(['yara'], {}) == ['tz_probe', 'fs_index', 'yara']
+    assert plan(['artifacts'], {}) == ['tz_probe', 'fs_index', 'artifacts']
+    assert plan(['computer'], {}) == ['computer']  # reads its hives directly
 
 
 def test_plan_reruns_only_what_is_needed():
-    status = _done('fs_index', 'artifacts', 'yara')
+    status = _done('tz_probe', 'fs_index', 'computer', 'artifacts', 'yara')
     assert plan(['yara'], status) == ['yara']                       # nothing depends on yara
     assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'yara']  # dependents are refreshed
-    assert plan(['fs_index'], _done('fs_index')) == ['fs_index']     # dependents that never ran are not added
+    # A new time zone re-indexes the file system (FAT times) and refreshes what was built on the index.
+    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'yara']
+    assert plan(['fs_index'], _done('tz_probe', 'fs_index')) == ['fs_index']  # dependents that never ran are not added
 
 
 def test_plan_treats_older_module_versions_as_missing():
-    status = _done('fs_index', 'artifacts')
+    status = _done('tz_probe', 'fs_index', 'artifacts')
     status['fs_index']['version'] = 'old'
     assert plan(['artifacts'], status) == ['fs_index', 'artifacts']
 
@@ -230,9 +233,9 @@ def test_directory_source_ignores_symlinks(tmp_path):
         src.open(BlobRef('EVID-1', 'pkg', path='/link'))
 
 
-def test_every_module_owns_what_it_writes():
+def test_every_module_is_described():
     for m in MODULES:
-        assert isinstance(m, Module) and m.name and m.label and m.collections
+        assert isinstance(m, Module) and m.name and m.label and m.description and isinstance(m.collections, tuple)
 
 
 def test_artifact_prefilter_selects_every_known_artifact_path():

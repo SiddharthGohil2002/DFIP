@@ -71,6 +71,51 @@ export interface Evidence {
   demo?: boolean;
   /** Each analysis module's latest run on this evidence. */
   modules?: Record<string, ModuleStatus>;
+  /** The time zone the last analysis read local times in (FAT file times, setupapi.dev.log). */
+  time_zone?: EvidenceTimeZone | null;
+}
+
+export interface EvidenceTimeZone {
+  zone: string;
+  source: 'registry' | 'override' | 'default';
+  detected?: { key_name?: string | null; iana?: string | null; posix?: string; zone?: string; bias?: number } | null;
+  override?: { zone: string; reason: string; set_by_name?: string; set_at?: string } | null;
+}
+
+export interface UserAccount {
+  _id: string;
+  sid?: string | null;
+  rid?: number;
+  username?: string | null;
+  full_name?: string | null;
+  comment?: string | null;
+  last_logon?: string | null;
+  logon_count?: number;
+  password_last_set?: string | null;
+  disabled?: boolean;
+  profile_path?: string | null;
+  profile_last_loaded?: string | null;
+  source: 'SAM' | 'PROFILE_LIST';
+}
+
+export interface ComputerEntry {
+  evidence_id: string;
+  filename?: string;
+  computer?: {
+    computer_name?: string | null;
+    hostname?: string | null;
+    domain?: string | null;
+    last_shutdown?: string | null;
+    machine_sid?: string | null;
+    last_logged_on_user?: string | null;
+    os?: { product_name?: string; edition?: string; display_version?: string; build?: string; ubr?: number; install_date?: string;
+      registered_owner?: string; registered_organization?: string | null };
+    interfaces?: { guid: string; dhcp: boolean; ip: string; subnet_mask?: string; gateway?: string; dhcp_server?: string; domain?: string; lease_obtained?: string }[];
+    time_zone?: EvidenceTimeZone['detected'];
+    hives?: { hive: string; path: string; sha256: string; size: number }[];
+  } | null;
+  accounts: UserAccount[];
+  time_zone?: EvidenceTimeZone | null;
 }
 
 export interface ModuleStatus {
@@ -120,6 +165,7 @@ export interface CaseCounts {
   programs_run: number;
   recent_files: number;
   recycle_bin_items: number;
+  user_accounts?: number;
   malware_indicators: number;
   patterns: number;
   anomalies_flagged: number;

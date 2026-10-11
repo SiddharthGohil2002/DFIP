@@ -11,6 +11,7 @@ import type { Evidence, Job } from '../lib/types';
 import { Banner, Button, Card, Empty, ErrorBanner, Field, Hash, Loading, PageHeader, ProgressBar, Stat, StatusBadge, useToast } from '../ui';
 import { DeleteEvidenceModal } from './DeleteEvidence';
 import { AnalysisModulesCard, AnalysisOptionsModal } from './AnalysisModules';
+import { TimeZoneBanner } from './TimeZone';
 
 const RUNNING = new Set(['QUEUED', 'RUNNING']);
 
@@ -135,6 +136,7 @@ export function EvidenceDetailPage() {
         }}
       />
       {e.demo && <Banner tone="warn">This is a synthetic demo record, not a real disk image; it cannot be verified or analyzed.</Banner>}
+      {!e.demo && <TimeZoneBanner evidence={e} canEdit={can('ANALYSIS_RUN')} running={running} onQueued={queuedJob} />}
 
       <div className="grid cols-2">
         <Card title="Evidence manifest">

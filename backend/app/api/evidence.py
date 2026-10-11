@@ -45,7 +45,63 @@ def get_one(eid, u=Depends(current_user)):
     for k, v in list(x.items()):
         if hasattr(v, 'isoformat'):
             x[k] = v.isoformat()
+    x['time_zone'] = _time_zone_info(x['evidence_id'])
     return x
+
+
+def _time_zone_info(eid: str):
+    """The time zone the last analysis used for local times, where it came from, and what the registry says."""
+    f = (get_db()['analysis_facts'].find_one({'evidence_id': eid}, {'tz_probe': 1}) or {}).get('tz_probe')
+    if not f:
+        return None
+    return {k: f.get(k) for k in ('zone', 'source', 'detected', 'override', 'hive')}
+
+
+class TimeZoneIn(BaseModel):
+    """The computer's time zone, set by the investigator (an IANA name such as America/New_York, or UTC);
+    null returns to the time zone in the SYSTEM hive."""
+    zone: Optional[str] = Field(default=None, max_length=64)
+    reason: str = Field(min_length=5, max_length=500)
+
+    @field_validator('reason')
+    @classmethod
+    def _reason(cls, v):
+        v = v.strip()
+        if len(v) < 5:
+            raise ValueError('Give a reason of at least 5 characters')
+        return v
+
+
+@r.put('/{eid}/time-zone')
+def set_time_zone(eid: str, body: TimeZoneIn, u=Depends(require_write('ANALYSIS_RUN'))):
+    """Sets (or clears) the time zone local times are read in, then re-runs the analysis modules that depend on it."""
+    from ..forensic.timezone import valid_zone
+    from ..services.jobs import active_analysis, queue
+    x = get_evidence(eid)
+    if not x or not get_case(x['case_id'], u):
+        raise HTTPException(404, 'Evidence not found or access denied')
+    if x.get('demo'):
+        raise HTTPException(400, 'Demo evidence cannot be analysed')
+    if body.zone is not None and not valid_zone(body.zone):
+        raise HTTPException(400, f'Unknown time zone {body.zone!r}: use an IANA name such as America/New_York, or UTC')
+    busy = active_analysis(eid)
+    if busy:
+        raise HTTPException(409, f'An analysis of this evidence is already queued or running ({busy["job_id"]})')
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    if body.zone is not None:
+        override = {'zone': body.zone, 'reason': body.reason, 'set_by': str(u['_id']), 'set_by_name': u.get('name'),
+                    'set_at': now}
+        db['evidence'].update_one({'evidence_id': eid}, {'$set': {'time_zone_override': override}})
+    else:
+        override = None
+        db['evidence'].update_one({'evidence_id': eid}, {'$unset': {'time_zone_override': ''}})
+    log(u, 'TIME_ZONE_SET' if body.zone is not None else 'TIME_ZONE_CLEARED', 'evidence', x['_id'],
+        {'evidence_id': eid, 'zone': body.zone, 'reason': body.reason})
+    job_id = queue.enqueue('FORENSIC_ANALYSIS', {'evidence_id': eid, 'profile': None, 'modules': ['tz_probe']}, u['_id'])
+    manager.emit_sync('JOB_CREATED', {'job_id': job_id, 'type': 'FORENSIC_ANALYSIS', 'evidence_id': eid, 'status': 'QUEUED'})
+    return {'job_id': job_id, 'time_zone_override': override and dict(override, set_at=now.isoformat())}
+
 
 @r.post('/upload')
 async def upload(

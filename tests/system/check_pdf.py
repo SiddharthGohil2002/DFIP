@@ -12,11 +12,17 @@ def check(name, cond):
 a = text('report-A.pdf')
 flat = ' '.join(a.split())
 check('title and case', 'Digital Forensics Investigation Report' in a and exp['case'] in a and 'Payroll exfiltration test' in a)
-sections = ['1. Evidence register', '2. Chain of custody', '3. Analysis summary', '4. Deleted files', '5. Recovered files', '6. USB device history',
-            '7. Browser history', '8. Browser downloads', '9. Windows activity', '9.1 Programs run', '9.2 Recently opened files', '9.3 Recycle Bin',
-            '10. Malware indicators', '11. Investigator findings', '12. Tagged evidence', '13. Timeline of notable events', '14. Audit trail integrity']
-missing = [s for s in sections if s not in a]
-check(f'all {len(sections)} sections present {missing or ""}', not missing)
+import re
+# Section titles in order; the numbers are checked to run 1, 2, 3, ... rather than listed, so adding a section
+# does not need every later number edited here.
+titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer and users', 'Deleted files', 'Recovered files',
+          'USB device history', 'Browser history', 'Browser downloads', 'Windows activity', 'Malware indicators',
+          'Investigator findings', 'Tagged evidence', 'Timeline of notable events', 'Audit trail integrity']
+found = [(int(m.group(1)), m.group(2)) for m in re.finditer(r'^\s*(\d+)\. (' + '|'.join(map(re.escape, titles)) + r')', a, re.M)]
+check(f'all {len(titles)} sections present, in order and numbered 1 to {len(titles)} {[t for t in titles if t not in [f[1] for f in found]] or ""}',
+      found == list(zip(range(1, len(titles) + 1), titles)))
+subs = [m.group(0).strip() for m in re.finditer(r'^\s*\d+\.\d+ (Programs run|Recently opened files|Recycle Bin)', a, re.M)]
+check('Windows activity has its three subsections', len(subs) == 3)
 check('evidence ID and full SHA-256', exp['evidence'] in a and exp['sha256'] in flat.replace(' ', '') )
 import re
 custody = ' '.join(a[a.index('2. Chain of custody'):a.index('3. Analysis summary')].split())
@@ -32,6 +38,9 @@ check('finding listed', 'Payroll export deleted after USB activity' in flat)
 # Table cells wrap, so long notes are checked in fragments.
 check('tagged evidence listed with labels and notes', all(x in flat for x in ('Shortcut proves the file was', 'opened from E:', 'Check who uploaded what', 'Follow')))
 check('legal hold status in the header', 'Legal hold' in a and 'Not under legal hold' in flat)
+check("time basis in the header: the computer's time zone from the SYSTEM hive", 'America/New_York' in flat and 'Eastern Standard Time' in flat)
+check('computer and users listed: LAPTOP-07, Windows 10 Pro, alice with her SID',
+      all(x in flat for x in ('LAPTOP-07', 'Windows 10 Pro', 'alice', 'Alice Example')) and '30300820-1001' in flat.replace(' ', ''))
 check('audit chain reported valid', 'valid' in flat.lower() and 'INVALID' not in flat)
 m = text('report-markup.pdf')
 check('markup in case text is printed literally', '<b>Bold</b> & "quoted" <script>alert(1)</script>' in ' '.join(m.split()))

@@ -18,6 +18,7 @@ import { TimelinePage } from '../pages/Timeline';
 import { BrowserPage } from '../pages/Browser';
 import { UsbPage } from '../pages/Usb';
 import { ActivityPage } from '../pages/Activity';
+import { ComputerPage } from '../pages/Computer';
 import { TaggedPage } from '../pages/Tagged';
 import { DashboardPage } from '../pages/Dashboard';
 import { IndicatorsPage } from '../pages/Indicators';
@@ -126,6 +127,7 @@ function Workspace() {
         <Route path="browser" element={c(<BrowserPage />)} />
         <Route path="usb" element={c(<UsbPage />)} />
         <Route path="activity" element={c(<ActivityPage />)} />
+        <Route path="computer" element={c(<ComputerPage />)} />
         <Route path="tagged" element={c(<TaggedPage />)} />
         <Route path="dashboard" element={c(<DashboardPage />)} />
         <Route path="indicators" element={c(<IndicatorsPage />)} />

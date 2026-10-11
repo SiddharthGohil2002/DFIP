@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 BASE = 'http://127.0.0.1:8000'
 IMG = Path('/testdata/dfip-test-disk.dd')
@@ -172,9 +174,13 @@ CHROME_VISITS = {
 }
 
 
+# The scenario computer is in the US Eastern time zone; FAT stores its local time, which the Sleuth Kit converts with -z.
+COMPUTER_TZ = 'America/New_York'
+
+
 def bodyfile_truth():
     """Parses `fls -r -m / -o 2048` directly: the filesystem as Sleuth Kit sees it."""
-    out = sh('fls', '-r', '-m', '/', '-o', '2048', str(IMG)).stdout.decode('utf-8', 'replace')
+    out = sh('fls', '-z', COMPUTER_TZ, '-r', '-m', '/', '-o', '2048', str(IMG)).stdout.decode('utf-8', 'replace')
     entries = []
     for line in out.splitlines():
         p = line.split('|')
@@ -217,7 +223,7 @@ def sample(source, name):
 
 def mongo():
     import pymongo
-    return pymongo.MongoClient(os.environ['MONGODB_URI'])['dfip']
+    return pymongo.MongoClient(os.environ['MONGODB_URI'], tz_aware=True)['dfip']
 
 
 def file_sha256(path):
@@ -495,6 +501,9 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'yara']
+
+
 def _ids(db, col, q):
     return sorted(str(x['_id']) for x in db[col].find(q, {'_id': 1}))
 
@@ -515,11 +524,11 @@ def t_modules():
     db = mongo()
     mods = get(f'/api/evidence/{E}', inv).json.get('modules') or {}
     check('each module of the standard profile completed, with its counts and version',
-          set(mods) == {'fs_index', 'artifacts', 'yara'} and all(m.get('status') == 'COMPLETED' and isinstance(m.get('counts'), dict)
+          set(mods) == set(ALL_MODULES) and all(m.get('status') == 'COMPLETED' and isinstance(m.get('counts'), dict)
                                                                and m.get('version') for m in mods.values()),
           {k: v.get('status') for k, v in mods.items()})
     d = get('/api/jobs/analysis/modules', inv).json or {}
-    check('the modules and the three profiles are listed', {m['name'] for m in d.get('modules', [])} == {'fs_index', 'artifacts', 'yara'}
+    check('the modules and the three profiles are listed', [m['name'] for m in d.get('modules', [])] == ALL_MODULES
           and {p['name'] for p in d.get('profiles', [])} == {'quick', 'standard', 'full'} and d.get('default_profile') == 'standard', d)
     check('an unknown profile or module is refused (400)', post(f'/api/jobs/analysis/{E}', inv, {'profile': 'everything'}).status == 400
           and post(f'/api/jobs/analysis/{E}', inv, {'modules': ['nope']}).status == 400)
@@ -554,6 +563,10 @@ def t_modules():
     s = j['result']['summary']
     check('re-running the file system index also refreshes the modules built on it',
           j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
+    j = _analyse(inv, E, {'modules': ['tz_probe']})
+    s = j['result']['summary']
+    check('re-reading the time zone re-indexes the file system and refreshes what is built on it (not the computer module)',
+          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'yara'] and s['counts'] == C['COUNTS'], s.get('plan'))
 
     # A broker redelivery of a finished job must not run it again.
     sys.path.insert(0, '/app')
@@ -568,7 +581,7 @@ def t_modules():
     j = _analyse(inv, E, {'modules': ['yara']})
     s = j['result']['summary']
     check('output from before analysis modules existed is replaced as a whole',
-          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'yara'] and s['counts'] == C['COUNTS']
+          j['status'] == 'COMPLETED' and s['plan'] == ALL_MODULES and s['counts'] == C['COUNTS']
           and db.fs_entries.count_documents({'evidence_id': E, 'pipeline_module': {'$exists': False}}) == 0, s.get('plan'))
 
     # The quick profile, and adding a module to it later.
@@ -578,7 +591,8 @@ def t_modules():
     s = j['result']['summary']
     same = lambda counts: all(counts.get(k) == C['COUNTS'][k] for k in ('files', 'deleted_files', 'browser_history', 'usb_devices', 'programs_run'))
     check('the quick profile runs the file system index and artifacts only',
-          s['plan'] == ['fs_index', 'artifacts'] and 'yara_matches' not in s['counts'] and same(s['counts']), (s.get('plan'), s.get('counts')))
+          s['plan'] == ['tz_probe', 'fs_index', 'computer', 'artifacts'] and 'yara_matches' not in s['counts'] and same(s['counts']),
+          (s.get('plan'), s.get('counts')))
     j = _analyse(inv, qe, {'modules': ['yara']})
     s = j['result']['summary']
     check('a module can be added later without re-running the others',
@@ -772,7 +786,7 @@ def t_timeline():
     expected_fs = sum(len(e['times']) for e in truth)
     # mactime itself, as an independent count
     with tempfile.NamedTemporaryFile('w', suffix='.body', delete=False) as fh:
-        fh.write(sh('fls', '-r', '-m', '/', '-o', '2048', str(IMG)).stdout.decode('utf-8', 'replace'))
+        fh.write(sh('fls', '-z', COMPUTER_TZ, '-r', '-m', '/', '-o', '2048', str(IMG)).stdout.decode('utf-8', 'replace'))
     mt = sh('mactime', '-b', fh.name, '-d', '-y', '-z', 'UTC').stdout.decode('utf-8', 'replace').splitlines()[1:]
     mt_real = [l for l in mt if l.split(',')[3][:1] not in ('v', 'V') and not l.startswith('0000') and not l.startswith('1970-01-01T00:00:00')]
     fs = get(f'/api/forensics/timeline?case_id={A}&type=FILE_MACB&limit=1', inv).json['total']
@@ -883,14 +897,14 @@ def t_usb():
     log = sh('icat', '-o', '2048', str(IMG), files['/Windows/INF/setupapi.dev.log']['inode']).stdout.decode('utf-8', 'replace')
     first = {}
     for m in re.finditer(r'USBSTOR\\[^\]]*\\([^\\\]&]+)(?:&\d+)?\]\s*\r?\n>>>\s+Section start (\d{4}/\d\d/\d\d \d\d:\d\d:\d\d)', log):
-        local = datetime.strptime(m.group(2), '%Y/%m/%d %H:%M:%S').replace(tzinfo=timezone.utc)
-        first.setdefault(m.group(1).upper(), local + timedelta(minutes=bias))
+        local = datetime.strptime(m.group(2), '%Y/%m/%d %H:%M:%S').replace(tzinfo=ZoneInfo(COMPUTER_TZ))
+        first.setdefault(m.group(1).upper(), local.astimezone(timezone.utc))
     by = {d['serial'].upper(): d for d in devs}
     check('every USBSTOR device in the registry is reported', serials <= set(by), (serials, set(by)))
     check('the device only in setupapi.dev.log (SanDisk) is reported', '4C530001230518109141' in by, set(by))
     for serial, when in first.items():
         d = by.get(serial, {})
-        check(f'setupapi first install for {serial} is {when:%Y-%m-%d %H:%M:%S} UTC (log time + ActiveTimeBias)',
+        check(f"setupapi first install for {serial} is {when:%Y-%m-%d %H:%M:%S} UTC (log time in the computer's time zone)",
               iso(d.get('setupapi_first_install')) == when, d.get('setupapi_first_install'))
     hp = by.get('AA951D0000007252', {})
     check('HP v100w: vendor/product, VID 03F0, PID 3207', 'HP' in (hp.get('vendor') or '') and 'v100w' in (hp.get('product') or '')
@@ -965,6 +979,133 @@ def t_activity():
           act('PROGRAM_RUN', '&search=securedelete').json['total'] == 1 and act('PROGRAM_RUN', '&search=nosuchprogram').json['total'] == 0)
     check('an invalid kind is 400', act('BROWSER_HISTORY').status == 400)
     check('another investigator gets 404', get(f'/api/forensics/activity?case_id={A}', C['INV2']).status == 404)
+
+
+ALICE_SID = 'S-1-5-21-3623811015-3361044348-30300820-1001'
+FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
+
+
+def _fat_time(iso_utc):
+    """FAT keeps modification times to 2 seconds: the time as stored on the disk."""
+    t = datetime.fromisoformat(iso_utc)
+    return t - timedelta(seconds=t.second % 2, microseconds=t.microsecond)
+
+
+def _hive(path):
+    """A hive from the image (icat) opened with libregf, independent of DFIP's regipy-based parsers."""
+    import pyregf
+    files = {e['path']: e for e in C['TRUTH']}
+    local = Path(tempfile.mkdtemp()) / path.rsplit('/', 1)[-1]
+    data = sh('icat', '-o', '2048', str(IMG), files[path]['inode']).stdout
+    local.write_bytes(data)
+    f = pyregf.file()
+    f.open(str(local))
+    return f, hashlib.sha256(data).hexdigest()
+
+
+def _regval(f, key, name):
+    v = f.get_key_by_path(key).get_value_by_name(name)
+    t = v.get_type()
+    if t in (1, 2):
+        return v.get_data_as_string()
+    if t == 4:
+        return v.get_data_as_integer()
+    return v.get_data()
+
+
+@section('12c Computer, users and time zone (vs the hives read with libregf and the generator manifest)')
+def t_computer():
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    db = mongo()
+    tz = get(f'/api/evidence/{E}', inv).json.get('time_zone') or {}
+    check("the computer's time zone is read from the SYSTEM hive (Eastern Standard Time -> America/New_York)",
+          tz.get('source') == 'registry' and tz.get('zone') == COMPUTER_TZ and (tz.get('detected') or {}).get('key_name') == 'Eastern Standard Time', tz)
+
+    # Every file time equals the UTC time the generator stamped, in daylight and in standard time alike.
+    manifest = json.loads(IMG.with_suffix('.manifest.json').read_text())
+    stored = {x['path']: x for x in db.fs_entries.find({'evidence_id': E}, {'path': 1, 'mtime': 1, 'time_zone': 1, 'atime_date_only': 1})}
+    wrong = [(f['path'], str((stored.get(f['path']) or {}).get('mtime')), f['mtime']) for f in manifest['files']
+             if f['path'] not in stored or stored[f['path']]['mtime'] != _fat_time(f['mtime'])]
+    check(f"every file time on the FAT volume equals the true UTC time ({len(manifest['files'])} files)", not wrong, wrong[:5])
+    for path, when in (('/Users/alice/Documents/q1-forecast.txt', utc(2026, 1, 15, 15, 30)),
+                       ('/Users/alice/Documents/year-end-checklist.txt', utc(2025, 11, 2, 14, 0)),
+                       ('/Users/alice/Documents/payroll-export.csv', utc(2026, 9, 1, 9, 41, 2))):
+        check(f"{path.rsplit('/', 1)[-1]}: {when:%Y-%m-%d %H:%M} UTC ({'EST, UTC-5' if when.month in (1, 11) else 'EDT, UTC-4'})",
+              (stored.get(path) or {}).get('mtime') == when, (stored.get(path) or {}).get('mtime'))
+    fat = [x for x in stored.values()]
+    check('FAT entries carry the time zone used and flag access times as date-only',
+          fat and all(x.get('time_zone') == COMPUTER_TZ and x.get('atime_date_only') for x in fat), fat[:1])
+
+    # The computer, against the hives read independently.
+    system, system_sha = _hive('/Windows/System32/config/SYSTEM')
+    software, software_sha = _hive('/Windows/System32/config/SOFTWARE')
+    sam, sam_sha = _hive('/Windows/System32/config/SAM')
+    entry = next((x for x in get(f'/api/forensics/computer?case_id={A}', inv).json['data'] if x['evidence_id'] == E), {})
+    comp = entry.get('computer') or {}
+    shutdown = FILETIME_EPOCH + timedelta(microseconds=struct.unpack('<Q', _regval(system, r'\ControlSet001\Control\Windows', 'ShutdownTime'))[0] // 10)
+    install = datetime.fromtimestamp(_regval(software, r'\Microsoft\Windows NT\CurrentVersion', 'InstallDate'), timezone.utc)
+    check('computer name, last shutdown and network interface equal the SYSTEM hive',
+          comp.get('computer_name') == _regval(system, r'\ControlSet001\Control\ComputerName\ComputerName', 'ComputerName') == 'LAPTOP-07'
+          and iso(comp.get('last_shutdown')) == shutdown == utc(2026, 9, 1, 18, 42, 10)
+          and [i['ip'] for i in comp.get('interfaces', [])] == ['192.168.1.57'], {k: comp.get(k) for k in ('computer_name', 'last_shutdown', 'interfaces')})
+    os_ = comp.get('os') or {}
+    check('Windows edition, version, build, install date and owner equal the SOFTWARE hive',
+          os_.get('product_name') == _regval(software, r'\Microsoft\Windows NT\CurrentVersion', 'ProductName') == 'Windows 10 Pro'
+          and os_.get('display_version') == '22H2' and os_.get('build') == '19045' and iso(os_.get('install_date')) == install
+          and os_.get('registered_owner') == 'alice', os_)
+    check('the hives the results come from are listed with their SHA-256',
+          {h['hive']: h['sha256'] for h in comp.get('hives', [])} == {'SYSTEM': system_sha, 'SOFTWARE': software_sha, 'SAM': sam_sha},
+          comp.get('hives'))
+    names = sorted(k.get_name() for k in sam.get_key_by_path(r'\SAM\Domains\Account\Users\Names').sub_keys)
+    accounts = {a['username']: a for a in entry.get('accounts', [])}
+    check('every SAM user is listed', sorted(accounts) == names, (sorted(accounts), names))
+    alice = accounts.get('alice', {})
+    check("alice: SID, full name, last logon, logon count and profile folder",
+          alice.get('sid') == ALICE_SID and alice.get('full_name') == 'Alice Example' and iso(alice.get('last_logon')) == utc(2026, 9, 1, 13, 28, 40)
+          and alice.get('logon_count') == 214 and alice.get('profile_path') == 'C:\\Users\\alice' and alice.get('disabled') is False, alice)
+    check('built-in accounts are reported disabled', all(accounts[n]['disabled'] for n in ('Administrator', 'Guest', 'DefaultAccount')),
+          {n: accounts.get(n, {}).get('disabled') for n in ('Administrator', 'Guest', 'DefaultAccount')})
+    rb = get(f'/api/forensics/activity?case_id={A}&kind=RECYCLE_BIN_ITEM', inv).json['data']
+    check('the Recycle Bin item names its user (SID resolved to alice)', rb and rb[0].get('user_name') == 'alice' and rb[0].get('sid') == ALICE_SID, rb[:1])
+    check('keyword search finds the account', (get(f'/api/forensics/search?case_id={A}&q=Alice+Example', inv).json or {}).get('totals', {}).get('accounts') == 1)
+    check('the overview counts the user accounts', get(f'/api/cases/{A}/overview', inv).json['counts'].get('user_accounts') == len(names))
+    check('a viewer of the case can read it; another investigator gets 404',
+          get(f'/api/forensics/computer?case_id={C["V_CASE"]}', C['VIEWER']).status == 200
+          and get(f'/api/forensics/computer?case_id={A}', C['INV2']).status == 404)
+
+    # Setting the time zone by hand (and going back to the registry's).
+    path = f'/api/evidence/{E}/time-zone'
+    check('viewer and analyst cannot set the time zone (403); another investigator gets 404',
+          req('PUT', path, C['VIEWER'], {'zone': 'UTC', 'reason': 'not allowed'}).status == 403
+          and req('PUT', path, C['INV2'], {'zone': 'UTC', 'reason': 'not my case'}).status == 404)
+    check('an unknown zone is refused (400) and a reason is required (422)',
+          req('PUT', path, inv, {'zone': 'Mars/Olympus', 'reason': 'a test zone'}).status == 400
+          and req('PUT', path, inv, {'zone': 'UTC'}).status == 422)
+    pay = next(x for x in get(f'/api/forensics/evidence/{E}/files?deleted=true&q=payroll-export.csv', inv).json['data'])
+    macb = next(x for x in get(f'/api/forensics/timeline?case_id={A}&limit=500&q=payroll-export.csv', inv).json['data']
+                if x['type'] == 'FILE_MACB' and 'm' in x.get('macb', ''))
+    tags = [post('/api/tags', inv, {'case_id': A, 'item_type': t, 'item_id': i, 'label': 'NOTABLE', 'note': 'time zone check'}).json
+            for t, i in (('FILE', pay['_id']), ('TIMELINE_EVENT', macb['_id']))]
+    r = req('PUT', path, inv, {'zone': 'UTC', 'reason': 'Read the FAT times as recorded'})
+    j = wait_job(inv, r.json['job_id']) if r.status == 200 else {}
+    after = db.fs_entries.find_one({'evidence_id': E, 'path': '/Users/alice/Documents/payroll-export.csv'})
+    tz = get(f'/api/evidence/{E}', inv).json.get('time_zone') or {}
+    check('setting the time zone re-indexes with it (FAT times as recorded: 05:41:02 = local time read as UTC)',
+          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'yara']
+          and after['mtime'] == utc(2026, 9, 1, 5, 41, 2) and tz.get('source') == 'override' and tz.get('zone') == 'UTC', (j.get('status'), after.get('mtime'), tz.get('source')))
+    check('...and tags still follow their items after the times changed', j.get('result', {}).get('summary', {}).get('tags') == {'relinked': 2, 'unresolved': 0},
+          j.get('result', {}).get('summary', {}).get('tags'))
+    r = req('PUT', path, inv, {'zone': None, 'reason': 'Back to the time zone in the SYSTEM hive'})
+    j = wait_job(inv, r.json['job_id']) if r.status == 200 else {}
+    after = db.fs_entries.find_one({'evidence_id': E, 'path': '/Users/alice/Documents/payroll-export.csv'})
+    check('clearing it goes back to the registry time zone', j.get('status') == 'COMPLETED' and after['mtime'] == utc(2026, 9, 1, 9, 41, 2)
+          and (get(f'/api/evidence/{E}', inv).json.get('time_zone') or {}).get('source') == 'registry', after.get('mtime'))
+    audit = [a['action'] for a in db.audit_logs.find({'action': {'$in': ['TIME_ZONE_SET', 'TIME_ZONE_CLEARED']}})]
+    check('both changes are in the audit log', audit.count('TIME_ZONE_SET') >= 1 and audit.count('TIME_ZONE_CLEARED') >= 1, audit)
+    for t in tags:
+        req('DELETE', f"/api/tags/{t['tag_id']}", inv)
+    # Later sections use the payroll entry's database ID: the re-analysis replaced it.
+    C['PAY'] = next(x for x in get(f'/api/forensics/evidence/{E}/files?deleted=true&q=payroll-export.csv', inv).json['data'])
 
 
 @section('13 Indicators, patterns and anomalies')
@@ -1050,7 +1191,9 @@ def t_tags():
     inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
     tag = lambda body, tok=inv: post('/api/tags', tok, dict({'case_id': A, 'label': 'EVIDENCE'}, **body))
     usb_ev = get(f'/api/forensics/timeline?case_id={A}&type=USB_ACTIVITY&q=SanDisk&limit=5', inv).json['data'][0]
-    visit = next(r for r in get(f'/api/forensics/browser?case_id={A}&kind=BROWSER_HISTORY', inv).json['data'] if 'filetransfer' in r['url'])
+    # The analysis's own record (section 11 also saved rows parsed by hand, which a re-analysis never replaces).
+    visit = next(r for r in get(f'/api/forensics/browser?case_id={A}&kind=BROWSER_HISTORY', inv).json['data']
+                 if 'filetransfer' in r['url'] and r.get('pipeline'))
     sandisk = next(d for d in get(f'/api/forensics/usb?case_id={A}', inv).json['data'] if d['serial'] == '4C530001230518109141')
     lnk = get(f'/api/forensics/activity?case_id={A}&kind=RECENT_FILE', inv).json['data'][0]
     items = {'FILE': C['PAY']['_id'], 'TIMELINE_EVENT': usb_ev['_id'], 'BROWSER': visit['_id'], 'USB': sandisk['_id'],
@@ -1717,7 +1860,7 @@ def t_reg_disabled():
 PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
-             t_browser, t_usb, t_activity, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_browser, t_usb, t_activity, t_computer, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

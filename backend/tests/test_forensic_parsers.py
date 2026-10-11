@@ -137,6 +137,10 @@ def test_setupapi_and_merge(tmp_path, system_hive):
     parsed = parse_setupapi(log, bias_minutes=-60)  # UTC = local - 60 min
     assert [e['instance_id'] for e in parsed['entries']] == ['AA951D0000007252&0', '4C530001230518109141&0']
     assert parsed['entries'][0]['install_time'] == '2011-04-03T20:15:05+00:00'
+    # With the computer's time zone, daylight saving is applied per date (April 2011 was EDT, UTC-4).
+    zoned = parse_setupapi(log, zone='America/New_York')
+    assert [e['install_time'] for e in zoned['entries']] == ['2011-04-04T01:15:05+00:00', '2026-09-01T14:12:44+00:00']
+    assert 'America/New_York' in zoned['time_basis']
 
     devices = merge_usb_sources(parse_system_hive(system_hive)['devices'], parsed['entries'])
     by_serial = {d['serial']: d for d in devices}

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added — time zone, computer and users
+- **The computer's time zone is read from the SYSTEM hive** before the file system is indexed (Windows zone name mapped to IANA with Unicode CLDR; a custom zone is used exactly as the hive's own daylight-saving rules). FAT file times, which Windows stores in local time, are now converted to true UTC (`fls -z`), daylight saving applied per date; access times on FAT are flagged as date-only. `setupapi.dev.log` uses the same rule (it used one fixed offset before). Fixes the documented limitation that FAT times were local time shown as UTC.
+- **Set the time zone by hand** on the evidence page (with a reason, audited): the file system index and what is built on it are re-run; tags follow their items. `PUT /api/evidence/{id}/time-zone`.
+- **Computer and users** page and report section: computer name, Windows edition/version/build, install date, owner, last shutdown, network interfaces, last signed-in user, and the user accounts from SAM (SID, full name, last logon, logon count, password last set, disabled) joined with user profiles. Recycle Bin items show their user's name; accounts are searchable. `GET /api/forensics/computer`.
+- New analysis modules `tz_probe` (Computer time zone) and `computer` (Computer and users); the report header states the time basis.
+- Test disk: SYSTEM, SOFTWARE and SAM hives for the scenario computer written with hivex (the HP USB keys copied from the real Windows 7 hive), FAT times written in US Eastern local time as Windows would, and two files in standard time (January, November).
+
+### Fixed — registry
+- Binary registry values longer than 128 bytes were read cut short (regipy trims them by default); they are now read in full.
+
 ### Changed — analysis modules (foundation for the next features)
 - **Analysis modules and profiles.** An analysis is now a plan of modules (file system index; browser, USB and Windows activity; YARA scan), each owning its own output. Choose a profile (Quick triage, Standard, Full) or individual modules in the new **Analysis options** dialog, and re-run a single module from the evidence page's **Analysis modules** card; only its records are replaced, and the modules built on it are refreshed. `POST /api/jobs/analysis/{id}` accepts `{profile}` or `{modules}`; `GET /api/jobs/analysis/modules` lists them.
 - **One analysis per evidence at a time** (409 while one is queued or running).

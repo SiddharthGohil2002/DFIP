@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Bookmark, Clock, FileText, FileX, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen,
+  Activity, BarChart3, Monitor, Bookmark, Clock, FileText, FileX, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen,
   Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
@@ -76,6 +76,11 @@ export const NAV: NavGroup[] = [
         description: 'Programs run (Prefetch), files opened (Recent shortcuts) and the Recycle Bin.',
         count: (c) => c.programs_run + c.recent_files + c.recycle_bin_items,
         countLabel: (c) => `${n(c.programs_run)} programs · ${n(c.recent_files)} opened · ${n(c.recycle_bin_items)} recycled`,
+      },
+      {
+        to: '/app/computer', label: 'Computer and users', icon: Monitor, tone: 'teal',
+        description: 'Computer name, Windows version, network, time zone and user accounts from the registry.',
+        count: (c) => c.user_accounts ?? 0, countLabel: () => 'user accounts',
       },
       {
         to: '/app/indicators', label: 'Indicators', icon: ShieldAlert, tone: 'red',

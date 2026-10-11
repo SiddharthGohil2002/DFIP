@@ -61,11 +61,28 @@ class EvidenceSource:
     def open(self, ref: BlobRef) -> Blob:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def find(self, vid: str, path: str) -> str | None:  # pragma: no cover - interface
+        """The inode (images) or path (folders) of a file by its path, or None."""
+        raise NotImplementedError
+
     def read_range(self, ref: BlobRef, start: int, length: int) -> bytes:
         blob = self.open(ref)
         if start >= blob.size:
             return b''
         return blob.read(start, min(length, blob.size - start))
+
+    def copy_to(self, ref: BlobRef, dest: Path, chunk: int = 1 << 20) -> tuple[int, str]:
+        """Copies a file out (for parsers that need a path), returning its size and SHA-256."""
+        import hashlib
+        blob = self.open(ref)
+        h = hashlib.sha256()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with dest.open('wb') as out:
+            for start in range(0, blob.size, chunk):
+                data = blob.read(start, min(chunk, blob.size - start))
+                h.update(data)
+                out.write(data)
+        return blob.size, h.hexdigest()
 
 
 # ---------------------------------------------------------------------------------------------- disk images
@@ -120,6 +137,14 @@ class TskImageSource(EvidenceSource):
         if off not in self._fs:
             self._fs[off] = self._tsk.FS_Info(self._img, offset=off * SECTOR)
         return self._fs[off]
+
+    def find(self, vid: str, path: str) -> str | None:
+        """Sleuth Kit's path lookup (case-insensitive on FAT and NTFS); allocated files only."""
+        try:
+            f = self._filesystem(vid).open(path)
+        except OSError:
+            return None
+        return str(f.info.meta.addr) if f.info.meta else None
 
     def open(self, ref: BlobRef) -> Blob:
         m = _INODE_RE.match(ref.inode or '')
@@ -187,6 +212,22 @@ class DirectorySource(EvidenceSource):
         if local != self.root and self.root not in local.parents:
             raise ValueError('Path is outside the package')
         return local
+
+    def find(self, vid: str, path: str) -> str | None:
+        try:
+            local = self._local(path)
+        except ValueError:
+            return None
+        if local.is_file() and not local.is_symlink():
+            return path
+        # Windows paths are case-insensitive: match each part regardless of case.
+        cur = self.root
+        for part in path.strip('/').split('/'):
+            match = next((c for c in cur.iterdir() if c.name.lower() == part.lower()), None) if cur.is_dir() else None
+            if match is None or match.is_symlink():
+                return None
+            cur = match
+        return '/' + cur.relative_to(self.root).as_posix() if cur.is_file() else None
 
     def open(self, ref: BlobRef) -> Blob:
         local = self._local(ref.path or '')

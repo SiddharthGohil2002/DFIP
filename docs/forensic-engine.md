@@ -47,17 +47,25 @@ Everything written carries `analysis_job_id`, `pipeline_module` and `module_run_
 
 | Module | Needs | Writes |
 |---|---|---|
-| `fs_index` File system index | - | `fs_entries`, `FILE_MACB` events, facts `partitions`, `offsets`, `filesystems` |
+| `tz_probe` Computer time zone | - | facts `zone`, `source`, `detected`, `hive`, `override` |
+| `fs_index` File system index | `tz_probe` | `fs_entries`, `FILE_MACB` events, facts `partitions`, `offsets`, `filesystems` |
+| `computer` Computer and users | - | `COMPUTER_INFO`, `USER_ACCOUNT`, fact `accounts` |
 | `artifacts` Browser, USB and Windows activity | `fs_index` | `EXTRACTED_FILE`, browser, USB and activity records and events |
 | `yara` YARA scan | `fs_index` | `MALWARE_INDICATOR` |
 
-- **Profiles:** `quick` (`fs_index`, `artifacts`), `standard` (all three; the default when the request has no body) and `full` (everything, including the slower content modules as they are added). A request may instead name `modules`.
+- **Profiles:** `quick` (everything except `yara`), `standard` (all modules; the default when the request has no body) and `full` (everything, including the slower content modules as they are added). A request may instead name `modules`.
 - **Run plan:** the requested modules, plus any prerequisite that has not completed (or was written by an older module version), plus every module that depends on something being re-run and had completed before. Re-running `yara` runs only `yara`; re-running `fs_index` also refreshes `artifacts` and `yara`.
 - **Own output only:** a module first deletes its previous documents (`pipeline_module=<name>`) and its facts; nothing else is touched, so the other modules' records keep their IDs. Output written before modules existed (no `pipeline_module`) is replaced as a whole by a standard run.
 - **Status:** each module's status, version, run ID, counts and first warnings are kept on the evidence (`modules.<name>`); `analysis_summary` and the job summary merge the counts of every module's latest completed run, so a partial re-run still reports the whole evidence. All warnings go to `pipeline_warnings`; the job summary keeps the first 200 (`warnings_total` has the number).
 - **Jobs:** one analysis per evidence at a time (another request returns 409). A worker claims a queued job atomically and sends heartbeats; a redelivered message for a job another worker owns, or that already finished, is ignored (`DUPLICATE_IGNORED`). If a worker dies, the job is taken over once its heartbeat is 10 minutes old and continues after the modules it had completed. The Celery visibility timeout is longer than the longest allowed analysis, so a long job is not redelivered while it runs.
 - **External tools** run through `run_tool` (`app/forensic/modules/base.py`): no shell, an own process group, a 4 GiB address-space limit, a timeout, and a cancellation check every 2 seconds that kills the whole process group.
 - **Work folders** (`storage/analysis/pipeline/<EVID>/<JOB>/`) of earlier jobs are removed once no module's current output refers to them.
+
+### Time zone, computer and users
+
+- **Time zone** (`tz_probe`, `app/forensic/timezone.py`): before the file system is indexed, the SYSTEM hive is read in-process (pytsk3) and `ControlSet\Control\TimeZoneInformation` gives the Windows zone (`TimeZoneKeyName`), the offsets and the daylight-saving rules. The zone is mapped to IANA with Unicode CLDR's `windowsZones.xml` (`app/forensic/windows_zones.py`, release 48-2; e.g. Eastern Standard Time -> America/New_York); a zone without a mapping is turned into an exact POSIX TZ string from the hive's own rules (`STD5DST4,M3.2.0/2:00:00,M11.1.0/2:00:00`). An investigator can set the zone on the evidence (`PUT /api/evidence/{id}/time-zone` with a reason, audited); that re-runs `tz_probe` and everything built on it. Without a SYSTEM hive the zone is UTC and FAT volumes are flagged.
+- **Conversion:** `fls -z <zone>` lists FAT and exFAT (which store local time) in that zone, so `fs_entries` and `FILE_MACB` events hold true UTC; each FAT entry records the zone used (`time_zone`) and `atime_date_only` (FAT keeps only the date of the last access; access events carry `access_date_only`). `setupapi.dev.log` is converted with the same zone, daylight saving applied per date. Local times in the repeated hour when clocks go back are read as the first (daylight) occurrence. The backend image includes `tzdata` and `tzdata-legacy` for the zone names.
+- **Computer** (`computer`, `app/forensic/system_info.py`): SYSTEM (computer name, last shutdown, network interfaces with an address), SOFTWARE (edition, display version, build and UBR, install date, registered owner, user profiles with their last load, last signed-in user) and SAM (machine SID; per user the V record's name, full name and comment, and the F record's last logon, password last set, logon and failed-logon counts and account flags). Accounts are joined with profiles by SID; profiles without a local account (domain or Azure AD users) are listed too. Each result lists the hives it came from with their SHA-256. Recycle Bin items show the user name for their SID.
 
 ### Evidence sources
 
@@ -73,7 +81,7 @@ Everything written carries `analysis_job_id`, `pipeline_module` and `module_run_
 
 ### Known limitations
 
-- FAT timestamps are stored by Windows in local time; Sleuth Kit reports them as UTC unless told the zone, so FAT `FILE_MACB` times are local time. NTFS times are true UTC.
+- FAT times are converted with the computer's time zone from the SYSTEM hive (or the one the investigator sets); without either they are shown as recorded and flagged. FAT keeps only the date of the last access.
 - Only allocated artifact files are parsed automatically; deleted browser databases or hives must be recovered and parsed manually (`/artifacts/{id}/browser-parse?kind=`).
 - Chromium cookie values are not decrypted (DPAPI); Firefox downloads before version 26 (`downloads.sqlite`) are not read.
 - The Celery hard time limit (`CELERY_TASK_TIME_LIMIT`, default 30 min) bounds analysis of very large images; raise it for multi-terabyte evidence.
@@ -85,7 +93,7 @@ Everything written carries `analysis_job_id`, `pipeline_module` and `module_run_
 
 ## Test image
 
-`scripts/test-image/make-test-image.sh` builds a 64 MiB MBR/FAT32 image with a Windows-like layout: a real Windows 7 SYSTEM hive (regipy test data, MIT) with a USB device, a synthetic `setupapi.dev.log`, Chrome and Firefox history, a deleted CSV and a PowerShell script that triggers the YARA rule, plus Windows activity (a Prefetch file for SecureDelete.exe, a Recent shortcut to `E:payroll-export.csv` on the SanDisk drive and a Recycle Bin `$I`/`$R` pair for the payroll export, written by `backend/tests/fixtures/winfmt.py`), a PNG and a PDF for the file viewer. `scripts/test-image/write_manifest.py` writes `dfip-test-disk.manifest.json` next to it: every generated file with its size, SHA-256, stamped time and whether it was deleted, used by the tests as ground truth. `scripts/test-image/e2e_analysis.py` uploads it to a running stack, runs Full Analysis and prints the results.
+`scripts/test-image/make-test-image.sh` builds a 64 MiB MBR/FAT32 image with a Windows-like layout: SYSTEM, SOFTWARE and SAM hives for the scenario computer (LAPTOP-07, Windows 10 Pro, US Eastern time zone, user alice), written with hivex by `make_hives.py` from an empty base hive (`regf_base.py`), with the HP USB stick's keys copied from a real Windows 7 SYSTEM hive (regipy test data, MIT); FAT times written in US Eastern local time, as Windows would; a synthetic `setupapi.dev.log`, Chrome and Firefox history, a deleted CSV and a PowerShell script that triggers the YARA rule, plus Windows activity (a Prefetch file for SecureDelete.exe, a Recent shortcut to `E:payroll-export.csv` on the SanDisk drive and a Recycle Bin `$I`/`$R` pair for the payroll export, written by `backend/tests/fixtures/winfmt.py`), a PNG and a PDF for the file viewer. `scripts/test-image/write_manifest.py` writes `dfip-test-disk.manifest.json` next to it: every generated file with its size, SHA-256, stamped time and whether it was deleted, used by the tests as ground truth. `scripts/test-image/e2e_analysis.py` uploads it to a running stack, runs Full Analysis and prints the results.
 
 Features that can't be built synthetically on Linux (Shadow Copies, BitLocker, virtual disks, split images, SRUM, Windows Search, `$MFT`/`$UsnJrnl`, PST, APFS) are tested on public samples from dfVFS, Plaso and python-evtx (Apache-2.0): `sh scripts/test-image/fetch-samples.sh` downloads them into `storage/test-images/samples/`, pinned by commit and SHA-256 in `scripts/test-image/samples.json`, with a NOTICE file. They are never committed.
 

@@ -175,7 +175,7 @@ function RecycleBin({ rows }: { rows: Artifact[] }) {
             return (
               <tr key={r._id}>
                 <td className="mono small nowrap">{time(r.deleted_time)}</td>
-                <td className="cell-path"><div className="mono small strong">{r.original_path}</div><div className="tiny muted">user SID {r.sid}</div></td>
+                <td className="cell-path"><div className="mono small strong">{r.original_path}</div><div className="tiny muted">{r.user_name ? <>user <span className="strong">{r.user_name}</span> ({r.sid})</> : <>user SID {r.sid}</>}</div></td>
                 <td className="small nowrap">{r.original_size != null ? formatBytes(r.original_size) : '—'}</td>
                 <td className="small">{r.data_present ? <Badge tone="ok">{r.data_is_dir ? 'Folder present' : 'Present'}</Badge> : <Badge>Not present</Badge>}</td>
                 <td className="cell-path tiny muted">{r.source_path}<div>{r.evidence_id} · format v{r.format_version}</div></td>
