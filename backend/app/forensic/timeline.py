@@ -88,3 +88,40 @@ def usb_events(devices: list[dict], case_id: str, evidence_id: str) -> list[dict
                                'description': f'USB device {words}: {label} (serial {d.get("serial")})',
                                'serial': d.get('serial'), 'source': d.get('source_detail', {}).get(field, d.get('source'))})
     return events
+
+
+# Windows activity. LNK header times describe the target file, not when it was opened, so they are kept
+# on the record but do not become events; the LNK file's own times do (Windows writes the shortcut when
+# the file is opened: created = first opened, modified = last opened).
+ACTIVITY_EVENT_TYPES = ('PROGRAM_RUN', 'RECENT_FILE_OPENED', 'FILE_DELETED_TO_RECYCLE_BIN')
+
+
+def activity_events(rows: list[dict]) -> list[dict]:
+    events = []
+
+    def add(r, ts, kind, description, path):
+        dt = _parse_iso(ts)
+        if dt:
+            events.append({'case_id': r['case_id'], 'evidence_id': r['evidence_id'], 'timestamp': dt, 'type': kind,
+                           'description': description, 'path': path, 'source': r.get('source'),
+                           'source_file': r.get('source_path')})
+
+    for r in rows:
+        if r.get('type') == 'PROGRAM_RUN':
+            program = r.get('executable_path') or r.get('executable')
+            for i, ts in enumerate(r.get('last_run_times') or []):
+                when = 'last run' if i == 0 else 'earlier run'
+                add(r, ts, 'PROGRAM_RUN', f'Program run ({when}): {program} (run count {r.get("run_count")})', program)
+        elif r.get('type') == 'RECENT_FILE':
+            target = r.get('target_path')
+            where = f' on {r["drive_type"].lower()} drive' if r.get('drive_type') else ''
+            label = f' "{r["volume_label"]}"' if r.get('volume_label') else ''
+            add(r, r.get('lnk_modified'), 'RECENT_FILE_OPENED', f'File opened: {target}{where}{label} (Recent shortcut)', target)
+            first, last = _parse_iso(r.get('lnk_created')), _parse_iso(r.get('lnk_modified'))
+            if first and (not last or abs((last - first).total_seconds()) > 2):
+                add(r, r.get('lnk_created'), 'RECENT_FILE_OPENED', f'File first opened: {target}{where}{label} (Recent shortcut)', target)
+        elif r.get('type') == 'RECYCLE_BIN_ITEM':
+            size = f' ({r["original_size"]:,} bytes)' if isinstance(r.get('original_size'), int) else ''
+            add(r, r.get('deleted_time'), 'FILE_DELETED_TO_RECYCLE_BIN',
+                f'Deleted to Recycle Bin: {r.get("original_path")}{size}', r.get('original_path'))
+    return events

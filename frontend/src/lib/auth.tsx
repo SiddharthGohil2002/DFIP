@@ -19,7 +19,7 @@ const AuthContext = createContext<AuthState | null>(null);
 // Permissions that change data. When the server runs with REQUIRE_DESKTOP_FOR_WRITES,
 // the web portal is read-only and hides these actions.
 const WRITE_PERMISSIONS = new Set([
-  'CASE_CREATE', 'CASE_UPDATE', 'EVIDENCE_UPLOAD', 'EVIDENCE_VERIFY', 'ANALYSIS_RUN', 'FINDING_CREATE', 'REPORT_CREATE', 'JOB_CANCEL',
+  'CASE_CREATE', 'CASE_UPDATE', 'LEGAL_HOLD_MANAGE', 'EVIDENCE_UPLOAD', 'EVIDENCE_VERIFY', 'EVIDENCE_DELETE', 'ANALYSIS_RUN', 'FINDING_CREATE', 'REPORT_CREATE', 'JOB_CANCEL',
 ]);
 
 /** Desktop only: registers this workstation so the server can attribute (and, if configured, require) desktop writes. */

@@ -81,6 +81,8 @@ button { font: inherit; }
 .btn.lg { height: 44px; padding: 0 20px; font-size: 15px; }
 .btn.block { width: 100%; }
 .icon-btn { width: 32px; height: 32px; padding: 0; }
+.tag-btn { width: 28px; height: 28px; vertical-align: middle; }
+.tag-btn:disabled { opacity: 1; cursor: default; }
 
 /* ---------- surfaces ---------- */
 .card {
@@ -351,12 +353,14 @@ button { font: inherit; }
 .topbar-user .who span { font-size: 11px; color: var(--muted); }
 .topbar .case-switch .select { width: 320px; max-width: 30vw; }
 @media (max-width: 1320px) { .hide-narrow { display: none !important; } }
+@media (max-width: 1600px) { .hide-medium { display: none !important; } }
 .topbar .row, .topbar .case-switch { flex-wrap: nowrap; }
 .topbar .case-switch { min-width: 0; flex-shrink: 1; }
 .topbar .case-switch .select { min-width: 180px; }
 
 /* quick search in the top bar */
-.topbar-search { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 11px; margin-left: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--faint); width: 240px; transition: border-color .12s, background .12s; }
+.topbar-search { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 11px; margin-left: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--faint); flex: 0 1 240px; min-width: 150px; transition: border-color .12s, background .12s; }
+.topbar .case-switch .btn { flex-shrink: 0; }
 .topbar-search:focus-within { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px var(--accent-soft); }
 .topbar-search input { border: none; outline: none; background: transparent; font: inherit; font-size: 13px; color: var(--ink); width: 100%; }
 
@@ -392,3 +396,11 @@ button { font: inherit; }
 .card-head h3 { font-size: 14.5px; }
 .table th { font-size: 11px; }
 .btn { letter-spacing: -0.005em; }
+
+/* File viewer (preview and hex) */
+.viewer-text { max-height: 60vh; white-space: pre-wrap; word-break: break-word; }
+.hex-dump { max-height: 60vh; font-size: 12px; line-height: 1.5; white-space: pre; }
+.viewer-media { display: flex; justify-content: center; background: var(--surface-3); border-radius: var(--radius-sm); padding: 12px; }
+.viewer-media img { max-width: 100%; max-height: 60vh; image-rendering: auto; }
+.viewer-pdf { width: 100%; height: 60vh; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
+.heat-cell { cursor: default; }

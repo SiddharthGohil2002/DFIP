@@ -2,6 +2,7 @@ import { Usb } from 'lucide-react';
 import { useCase } from '../lib/caseContext';
 import { useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
+import { TagButton } from '../lib/tags';
 import type { TimelineEvent, UsbDevice } from '../lib/types';
 import { Badge, Banner, Card, Empty, ErrorBanner, Loading, PageHeader } from '../ui';
 
@@ -47,7 +48,10 @@ export function UsbPage() {
                       <div className="small muted">{[d.vendor, d.product, d.revision && `rev ${d.revision}`].filter(Boolean).join(' · ')}</div>
                     </div>
                   </div>
-                  <Badge tone={d.source === 'SYSTEM_HIVE' ? 'accent' : 'warn'}>{d.source === 'SYSTEM_HIVE' ? 'Registry' : 'setupapi.dev.log only'}</Badge>
+                  <div className="row" style={{ gap: 4 }}>
+                    <Badge tone={d.source === 'SYSTEM_HIVE' ? 'accent' : 'warn'}>{d.source === 'SYSTEM_HIVE' ? 'Registry' : 'setupapi.dev.log only'}</Badge>
+                    <TagButton type="USB" id={d._id} title={d.friendly_name || `${d.vendor || ''} ${d.product || ''}`.trim()} />
+                  </div>
                 </div>
                 <dl className="kv" style={{ gridTemplateColumns: '130px 1fr' }}>
                   <dt>Serial number</dt>

@@ -1,21 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, HardDriveDownload, Play, ShieldCheck, XCircle } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, CheckCircle2, HardDriveDownload, Play, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { post } from '../lib/api';
-import { formatBytes, formatNumber, useTime } from '../lib/format';
+import { actionLabel, formatBytes, formatNumber, useTime } from '../lib/format';
 import { IS_DESKTOP, hasNativeRuntime, native, type LocalHash } from '../lib/platform';
 import { useApi } from '../lib/useApi';
 import type { Evidence, Job } from '../lib/types';
 import { Banner, Button, Card, Empty, ErrorBanner, Field, Hash, Loading, PageHeader, ProgressBar, Stat, StatusBadge, useToast } from '../ui';
+import { DeleteEvidenceModal } from './DeleteEvidence';
 
 const RUNNING = new Set(['QUEUED', 'RUNNING']);
 
 export function EvidenceDetailPage() {
   const { id = '' } = useParams();
   const { can } = useAuth();
-  const { reloadOverview } = useCase();
+  const { reloadOverview, activeCase, overview } = useCase();
+  const held = !!(overview?.case.legal_hold?.active || activeCase?.legal_hold?.active);
+  const navigate = useNavigate();
   const toast = useToast();
   const time = useTime();
   const ev = useApi<Evidence>(`/evidence/${encodeURIComponent(id)}`);
@@ -26,6 +29,7 @@ export function EvidenceDetailPage() {
   const job = useApi<Job>(queued ? `/jobs/${queued}` : jobPath, { pollMs: polling ? 1500 : undefined });
   const custody = useApi<{ data: any[] }>(e ? `/chain?evidence_id=${encodeURIComponent(e.evidence_id)}` : null);
   const [busy, setBusy] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const j = job.data;
   const running = !!j && RUNNING.has(j.status);
@@ -86,17 +90,30 @@ export function EvidenceDetailPage() {
         title={`${e.evidence_id} · ${e.filename}`}
         subtitle={`${e.format} image · ${formatBytes(e.size)} · acquired ${time(e.created_at)}`}
         actions={
-          !e.demo && (
-            <>
-              {can('EVIDENCE_VERIFY') && <Button icon={<ShieldCheck size={15} />} busy={busy === 'verify'} onClick={verify}>Verify integrity</Button>}
-              {can('ANALYSIS_RUN') && (
-                <Button variant="primary" icon={<Play size={15} />} busy={busy === 'analyze'} disabled={running} onClick={analyze}>
-                  {running ? 'Analysis running' : e.analysis_status === 'COMPLETED' ? 'Re-run analysis' : 'Run full analysis'}
-                </Button>
-              )}
-            </>
-          )
+          <>
+            {!e.demo && can('EVIDENCE_VERIFY') && <Button icon={<ShieldCheck size={15} />} busy={busy === 'verify'} onClick={verify}>Verify integrity</Button>}
+            {!e.demo && can('ANALYSIS_RUN') && (
+              <Button variant="primary" icon={<Play size={15} />} busy={busy === 'analyze'} disabled={running} onClick={analyze}>
+                {running ? 'Analysis running' : e.analysis_status === 'COMPLETED' ? 'Re-run analysis' : 'Run full analysis'}
+              </Button>
+            )}
+            {can('EVIDENCE_DELETE') && (
+              <Button variant="danger" icon={<Trash2 size={15} />} disabled={running || held}
+                title={held ? 'The case is under legal hold: evidence cannot be deleted' : running ? 'An analysis is running for this evidence' : undefined}
+                onClick={() => setDeleting(true)}>
+                Delete
+              </Button>
+            )}
+          </>
         }
+      />
+      <DeleteEvidenceModal
+        evidence={deleting ? e : null}
+        onClose={() => setDeleting(false)}
+        onDeleted={() => {
+          reloadOverview();
+          navigate('/app/evidence', { replace: true });
+        }}
       />
       {e.demo && <Banner tone="warn">This is a synthetic demo record, not a real disk image; it cannot be verified or analyzed.</Banner>}
 
@@ -124,7 +141,7 @@ export function EvidenceDetailPage() {
                   {custody.data.data.map((c) => (
                     <tr key={c._id}>
                       <td className="small nowrap">{time(c.timestamp)}</td>
-                      <td className="small strong">{c.action}</td>
+                      <td className="small strong" title={c.action}>{actionLabel(c.action)}</td>
                       <td className="small">{c.user_name || c.user_id}</td>
                       <td className="small">{c.status || c.result || ''}{c.original_path && <div className="muted break">{c.original_path}</div>}</td>
                     </tr>
@@ -151,17 +168,21 @@ export function EvidenceDetailPage() {
             {j.status === 'FAILED' && <Banner tone="danger">{j.error}</Banner>}
             {j.status === 'COMPLETED' && counts && (
               <>
-                <div className="grid cols-4">
+                <div className="grid cols-3">
                   <Stat label="Files indexed" value={formatNumber(counts.files)} hint={`${formatNumber(counts.deleted_files)} deleted`} />
                   <Stat label="Timeline events" value={formatNumber(counts.timeline_events)} hint={`analyzed ${time(e.analyzed_at)}`} />
                   <Stat label="Browser records" value={formatNumber((counts.browser_history ?? 0) + (counts.browser_downloads ?? 0))} hint={`${formatNumber(counts.browser_downloads)} downloads`} />
-                  <Stat label="USB devices" value={formatNumber(counts.usb_devices)} hint={`${formatNumber(counts.yara_matches)} YARA matches`} />
+                  <Stat label="USB devices" value={formatNumber(counts.usb_devices)} hint="from the SYSTEM hive and setupapi.dev.log" />
+                  <Stat label="Windows activity" value={formatNumber((counts.programs_run ?? 0) + (counts.recent_files ?? 0) + (counts.recycle_bin_items ?? 0))}
+                    hint={`${formatNumber(counts.programs_run ?? 0)} programs · ${formatNumber(counts.recent_files ?? 0)} opened · ${formatNumber(counts.recycle_bin_items ?? 0)} recycled`} />
+                  <Stat label="YARA matches" value={formatNumber(counts.yara_matches)} hint={`${formatNumber(counts.files_scanned)} files scanned`} />
                 </div>
                 <div className="row">
                   <Link className="btn sm" to={`/app/files?evidence=${e.evidence_id}`}>Deleted files</Link>
                   <Link className="btn sm" to="/app/timeline">Timeline</Link>
                   <Link className="btn sm" to="/app/browser">Browser history</Link>
                   <Link className="btn sm" to="/app/usb">USB devices</Link>
+                  <Link className="btn sm" to="/app/activity">Windows activity</Link>
                   <Link className="btn sm" to="/app/indicators">Indicators</Link>
                 </div>
               </>

@@ -6,9 +6,15 @@ SYSTEM registry hive, which is a real Windows 7 hive from the regipy test suite
 """
 import lzma
 import sqlite3
+import struct
 import sys
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Writers for the Windows artifact formats (shared with the backend unit tests).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend' / 'tests' / 'fixtures'))
+import winfmt  # noqa: E402
 
 OUT = Path(sys.argv[1])
 HIVE_XZ = Path(sys.argv[2])
@@ -120,6 +126,62 @@ SETUPAPI = """[Device Install Log]
 """
 
 
+PAYROLL = 'employee,iban,salary\n' + ''.join(f'emp{i:03d},DE89370400440532013{i:03d},{50000 + i * 1000}\n' for i in range(60))
+
+# Windows activity on 2026-09-01 (all times UTC): SecureDelete.exe runs, the payroll export is opened from
+# the SanDisk drive (E:, connected 14:12:44), moved to the Recycle Bin, and SecureDelete runs again.
+# FAT keeps modification times to 2 seconds, so the times stamped on files are even seconds.
+RECYCLE_SID = 'S-1-5-21-3623811015-3361044348-30300820-1001'
+VOLUME = r'\VOLUME{01dc1f2a3b4c5d6e-5e1f22c4}'
+SECUREDELETE = VOLUME + r'\USERS\ALICE\DOWNLOADS\SECUREDELETE.EXE'
+PREFETCH_NAME = f'SECUREDELETE.EXE-{winfmt.prefetch_hash(SECUREDELETE):08X}.pf'
+
+
+def windows_activity():
+    write(f'$Recycle.Bin/{RECYCLE_SID}/$I3K9D2A.csv',
+          winfmt.recycle_bin_index(r'C:\Users\alice\Documents\payroll-export.csv', len(PAYROLL), utc(2026, 9, 1, 14, 15, 20)))
+    write(f'$Recycle.Bin/{RECYCLE_SID}/$R3K9D2A.csv', PAYROLL)
+    write('Users/alice/AppData/Roaming/Microsoft/Windows/Recent/payroll-export.csv.lnk', winfmt.shell_link(
+        r'E:\payroll-export.csv', size=len(PAYROLL), created=utc(2026, 9, 1, 14, 13, 10), modified=utc(2026, 9, 1, 9, 41, 2),
+        accessed=utc(2026, 9, 1, 14, 14, 6), drive_type=winfmt.DRIVE_REMOVABLE, drive_serial=0x6A3C91F2,
+        volume_label='CRUZER', working_dir='E:\\', machine_id='laptop-07'))
+    write(f'Windows/Prefetch/{PREFETCH_NAME}', winfmt.prefetch_v30(
+        'SECUREDELETE.EXE', run_times=[utc(2026, 9, 1, 14, 18, 30), utc(2026, 9, 1, 10, 6, 2)], run_count=2,
+        files=[VOLUME + r'\WINDOWS\SYSTEM32\NTDLL.DLL', VOLUME + r'\WINDOWS\SYSTEM32\KERNEL32.DLL', SECUREDELETE,
+               VOLUME + r'\USERS\ALICE\DOCUMENTS\PAYROLL-EXPORT.CSV'],
+        volume_path=VOLUME, volume_serial=0x5E1F22C4, volume_created=utc(2025, 11, 3, 8, 0, 0)))
+
+
+def png(width=96, height=64) -> bytes:
+    """A small grey 'whiteboard' with blue lines, for the file preview."""
+    rows = b''
+    for y in range(height):
+        row = b'\0'
+        for x in range(width):
+            line = y % 12 == 6 and 8 < x < width - 8
+            row += bytes((29, 78, 216)) if line else bytes((235, 238, 242))
+        rows += row
+    chunk = lambda kind, data: struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+
+
+def pdf(text='Offer letter - Alice Example - Senior Analyst') -> bytes:
+    """A one-page PDF with one line of text, for the file preview."""
+    stream = f'BT /F1 18 Tf 72 720 Td ({text}) Tj ET'.encode()
+    objects = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+               b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+               b'<< /Length %d >>\nstream\n' % len(stream) + stream + b'\nendstream',
+               b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>']
+    out, offsets = b'%PDF-1.4\n', []
+    for i, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b'%d 0 obj\n' % i + body + b'\nendobj\n'
+    xref = len(out)
+    out += b'xref\n0 %d\n0000000000 65535 f \n' % (len(objects) + 1) + b''.join(b'%010d 00000 n \n' % o for o in offsets)
+    return out + b'trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n' % (len(objects) + 1, xref)
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     write('Windows/System32/config/SYSTEM', lzma.open(HIVE_XZ).read())
@@ -128,10 +190,13 @@ def main():
     firefox_places(OUT / 'Users/alice/AppData/Roaming/Mozilla/Firefox/Profiles/k2x8.default-release/places.sqlite')
     write('Users/alice/Documents/project-notes.txt', 'Q3 project notes. Nothing sensitive here.\n' * 40)
     # Deleted by make-test-image.sh after being copied into the image.
-    write('Users/alice/Documents/payroll-export.csv',
-          'employee,iban,salary\n' + ''.join(f'emp{i:03d},DE89370400440532013{i:03d},{50000 + i * 1000}\n' for i in range(60)))
+    write('Users/alice/Documents/payroll-export.csv', PAYROLL)
     write('Users/alice/Downloads/cleanup.ps1',
           'powershell.exe -NoProfile -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAKQA=\n')
+    windows_activity()
+    write('Users/alice/Pictures/whiteboard.png', png())
+    write('Users/alice/Documents/offer-letter.pdf', pdf())
+    print(PREFETCH_NAME)
 
 
 if __name__ == '__main__':

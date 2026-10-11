@@ -5,6 +5,8 @@ import { useCase } from '../lib/caseContext';
 import { downloadFile, post } from '../lib/api';
 import { formatBytes } from '../lib/format';
 import { useApi } from '../lib/useApi';
+import { TagButton } from '../lib/tags';
+import { ViewButton } from '../ui/FileViewer';
 import type { Artifact } from '../lib/types';
 import { Banner, Button, Card, Empty, Field, Hash, Loading, PageHeader, Pager, useToast } from '../ui';
 
@@ -106,7 +108,9 @@ export function CarvingPage() {
                     <td><Hash value={a.sha256} short={16} /></td>
                     <td className="small">{(a.source || '').replace('FILE_CARVING_', '')}</td>
                     <td className="mono small">{a.evidence_id}</td>
-                    <td className="right">
+                    <td className="nowrap right">
+                      <TagButton type="ARTIFACT" id={a.artifact_id} title={a.filename} />{' '}
+                      {a.artifact_id && <ViewButton source={{ kind: 'artifact', artifactId: a.artifact_id, name: a.filename || 'Carved file' }} />}{' '}
                       {a.artifact_id && (
                         <Button size="sm" icon={<Download size={13} />} onClick={() => downloadFile(`/forensics/artifacts/${a.artifact_id}/download`, a.filename || 'carved.bin').catch((e) => toast(e.message, 'danger'))}>
                           Download

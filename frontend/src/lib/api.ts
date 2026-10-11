@@ -137,6 +137,7 @@ export async function api<T = any>(path: string, init: RequestInit & { json?: un
 
 export const post = <T = any>(path: string, json?: unknown) => api<T>(path, { method: 'POST', json });
 export const patch = <T = any>(path: string, json?: unknown) => api<T>(path, { method: 'PATCH', json });
+export const del = <T = any>(path: string, json?: unknown) => api<T>(path, { method: 'DELETE', json });
 
 /** Uploads an evidence image with progress (XHR: fetch has no upload progress). */
 export function uploadEvidence(caseId: string, file: File, onProgress: (fraction: number) => void): Promise<any> {
@@ -166,6 +167,13 @@ export function uploadEvidence(caseId: string, file: File, onProgress: (fraction
     if (res.status < 200 || res.status >= 300) throw new ApiError(res.status, res.body?.detail || `Upload failed (${res.status})`);
     return res.body;
   });
+}
+
+/** Fetches an authenticated binary response (for example an image shown in the file preview). */
+export async function fetchBlob(path: string): Promise<Blob> {
+  const r = await authedFetch(path);
+  if (!r.ok) throw await errorFrom(r);
+  return r.blob();
 }
 
 /** Downloads an authenticated file and saves it under `filename`. Returns the server-recorded SHA-256, if sent. */

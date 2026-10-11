@@ -44,6 +44,10 @@ export const formatNumber = (n: number | null | undefined) => (n === null || n =
 
 export const shortHash = (h?: string | null, n = 16) => (h ? `${h.slice(0, n)}…` : '—');
 
+/** Custody action codes as readable labels: "ANALYSIS_INTEGRITY_CHECK" -> "Analysis integrity check". */
+export const actionLabel = (action?: string | null) =>
+  action ? action.charAt(0) + action.slice(1).toLowerCase().replace(/_/g, ' ') : '';
+
 export const humanize = (s?: string | null) =>
   (s || '').toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 

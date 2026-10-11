@@ -3,6 +3,7 @@ import { BrowserRouter, HashRouter, Navigate, Route, Routes } from 'react-router
 import { FolderOpen } from 'lucide-react';
 import { AuthProvider, useAuth } from '../lib/auth';
 import { CaseProvider, useCase } from '../lib/caseContext';
+import { TagsProvider } from '../lib/tags';
 import { TimeModeContext, type TimeMode } from '../lib/format';
 import { IS_DESKTOP } from '../lib/platform';
 import { Empty, Loading, ToastProvider } from '../ui';
@@ -16,6 +17,9 @@ import { FilesPage } from '../pages/Files';
 import { TimelinePage } from '../pages/Timeline';
 import { BrowserPage } from '../pages/Browser';
 import { UsbPage } from '../pages/Usb';
+import { ActivityPage } from '../pages/Activity';
+import { TaggedPage } from '../pages/Tagged';
+import { DashboardPage } from '../pages/Dashboard';
 import { IndicatorsPage } from '../pages/Indicators';
 import { CarvingPage } from '../pages/Carving';
 import { SearchPage } from '../pages/Search';
@@ -78,7 +82,9 @@ function AppRoutes() {
         element={
           user ? (
             <CaseProvider>
-              <Workspace />
+              <TagsProvider>
+                <Workspace />
+              </TagsProvider>
             </CaseProvider>
           ) : (
             <Navigate to="/login" replace />
@@ -119,6 +125,9 @@ function Workspace() {
         <Route path="timeline" element={c(<TimelinePage />)} />
         <Route path="browser" element={c(<BrowserPage />)} />
         <Route path="usb" element={c(<UsbPage />)} />
+        <Route path="activity" element={c(<ActivityPage />)} />
+        <Route path="tagged" element={c(<TaggedPage />)} />
+        <Route path="dashboard" element={c(<DashboardPage />)} />
         <Route path="indicators" element={c(<IndicatorsPage />)} />
         <Route path="carving" element={c(<CarvingPage />)} />
         <Route path="search" element={c(<SearchPage />)} />

@@ -33,16 +33,23 @@ Tool availability is exposed by `GET /api/forensics/tooling`.
    - Firefox `.../Profiles/<profile>/places.sqlite`
    - `Windows/System32/config/SYSTEM`
    - `Windows/INF/setupapi.dev*.log`
+   - `$Recycle.Bin/<SID>/$I*` (paired with the matching `$R*` content), `Users/<user>/AppData/Roaming/Microsoft/{Windows,Office}/Recent/*.lnk`, `Windows/Prefetch/*.pf`
 6. **Browser history** (`app/forensic/browser_artifacts.py`): visits and downloads (Chromium `urls`/`downloads`; Firefox `moz_places` and `moz_annos` download annotations), stored as `BROWSER_HISTORY` / `BROWSER_DOWNLOAD` artifacts and timeline events.
 7. **USB history** (`app/forensic/usb.py`, using `regipy`): `Enum\USBSTOR` (vendor, product, revision, serial, friendly name), `Enum\USB` (VID/PID), `MountedDevices` (drive letter, volume GUID), and the device-property timestamps `0064` first install, `0065` last install, `0066` last arrival, `0067` last removal (Windows 7 and 8+ layouts). `setupapi.dev.log` first-install times are converted to UTC with the hive's `ActiveTimeBias`. Results go to `usb_artifacts` and `USB_ACTIVITY` timeline events.
-8. **YARA**: user-profile scripts and executables (bounded: 200 files, 20 MB each) are extracted and scanned with `backend/rules/default.yar`; matches become `MALWARE_INDICATOR` artifacts.
-9. **Case analytics**: patterns and anomalies are recomputed for the case.
+8. **Windows activity** (`app/forensic/windows_activity.py`): Prefetch files (libscca, including Windows 10/11 compressed files) give the programs that ran, their run count, up to eight last-run times and the files they loaded; shortcuts in the Recent folders (liblnk) give the files the user opened, the drive they were on (type, serial, label) and the target's own times; Recycle Bin `$I` records (v1 and v2) give the original path, size and deletion time. Stored as `PROGRAM_RUN`, `RECENT_FILE` and `RECYCLE_BIN_ITEM` artifacts, with `PROGRAM_RUN`, `RECENT_FILE_OPENED` (the shortcut's own times: created = first opened, modified = last opened) and `FILE_DELETED_TO_RECYCLE_BIN` timeline events. At most 2,048 Prefetch and 5,000 shortcut and `$I` files are parsed per analysis.
+9. **YARA**: user-profile scripts and executables (bounded: 200 files, 20 MB each) are extracted and scanned with `backend/rules/default.yar`; matches become `MALWARE_INDICATOR` artifacts.
+10. **Tags**: tags on this evidence's items are re-linked to the new records by their natural key (see `app/services/tags.py`).
+11. **Case analytics**: patterns and anomalies are recomputed for the case.
 
 Re-running the job replaces that evidence item's previous pipeline output. Everything written carries `analysis_job_id` for provenance.
 
 ### Deleted file recovery
 
 `GET /api/forensics/evidence/{id}/files?deleted=true` lists deleted entries from the index; `POST /api/forensics/evidence/{id}/recover?inode=&offset=` recovers one with `icat` (NTFS `64-128-2` addresses are accepted), hashes it, records it in the chain of custody and keeps the original filename. `GET /api/forensics/artifacts/{artifact_id}/download` returns the recovered copy with its SHA-256 in `X-DFIP-SHA256`. Signature carving of unallocated space (`/carve`) uses PhotoRec (all signatures except the noisy `dovecot` one) or Scalpel with `backend/rules/scalpel.conf`.
+
+### File viewer
+
+`GET /api/forensics/evidence/{id}/content|preview|raw?inode=&offset=` reads a file inside the image without writing a copy: `icat` is streamed and only the requested bytes are kept (hex pages of up to 64 KiB, up to 256 MiB into the file; recover the file to go further). The same three endpoints exist under `/api/forensics/artifacts/{artifact_id}/` for recovered, carved and extracted files. The type shown is decided from the first bytes (PNG, JPEG, GIF, WebP, BMP, PDF, text), never from the name; HTML and SVG are shown as text, and images and PDFs (up to 20 MB) are served with `nosniff`, `Content-Disposition: attachment` and a sandbox Content-Security-Policy. Each view is recorded in the audit log (`FILE_CONTENT_VIEWED`).
 
 ### Known limitations
 
@@ -53,10 +60,12 @@ Re-running the job replaces that evidence item's previous pipeline output. Every
 - Multi-segment E01 sets (`.E02`...) are not supported by upload yet.
 - An E01 needs free space for its raw working copy (the full media size) in `storage/analysis/working`. Partitions, file details and recovery for an E01 are available once its first analysis has prepared the copy.
 - AFF/AFF4 uploads are accepted but have not been tested with this Sleuth Kit build.
+- Jump Lists (`AutomaticDestinations-ms`) and shell-item (IDList) details of shortcuts are not parsed. Shortcut header times describe the target file, not when it was opened.
+- Prefetch format version 31 (Windows 11 24H2) is read by libscca but has not been verified with DFIP; an unexpected version is reported as a warning.
 
 ## Test image
 
-`scripts/test-image/make-test-image.sh` builds a 64 MiB MBR/FAT32 image with a Windows-like layout: a real Windows 7 SYSTEM hive (regipy test data, MIT) with a USB device, a synthetic `setupapi.dev.log`, Chrome and Firefox history, a deleted CSV and a PowerShell script that triggers the YARA rule. `scripts/test-image/e2e_analysis.py` uploads it to a running stack, runs Full Analysis and prints the results.
+`scripts/test-image/make-test-image.sh` builds a 64 MiB MBR/FAT32 image with a Windows-like layout: a real Windows 7 SYSTEM hive (regipy test data, MIT) with a USB device, a synthetic `setupapi.dev.log`, Chrome and Firefox history, a deleted CSV and a PowerShell script that triggers the YARA rule, plus Windows activity (a Prefetch file for SecureDelete.exe, a Recent shortcut to `E:payroll-export.csv` on the SanDisk drive and a Recycle Bin `$I`/`$R` pair for the payroll export, written by `backend/tests/fixtures/winfmt.py`), a PNG and a PDF for the file viewer. `scripts/test-image/e2e_analysis.py` uploads it to a running stack, runs Full Analysis and prints the results.
 
 ## High-volume operation
 

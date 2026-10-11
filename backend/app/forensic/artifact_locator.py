@@ -20,7 +20,13 @@ TARGETS = [
     ('FIREFOX_PLACES', re.compile(_USERS + r'/AppData/Roaming/Mozilla/Firefox/Profiles/[^/]+/places\.sqlite$', re.I)),
     ('SYSTEM_HIVE', re.compile(r'^/Windows/System32/config/SYSTEM$', re.I)),
     ('SETUPAPI_LOG', re.compile(r'^/Windows/INF/setupapi\.dev(?:\.\d{8}_\d{6})?\.log$', re.I)),
+    # Windows activity: files moved to the Recycle Bin, files opened (Recent shortcuts), programs run.
+    ('RECYCLE_BIN_INFO', re.compile(r'^/\$Recycle\.Bin/(?P<sid>[^/]+)/\$I(?P<suffix>[^/]+)$', re.I)),
+    ('LNK_RECENT', re.compile(_USERS + r'/AppData/Roaming/Microsoft/(?:Windows|Office)/Recent/[^/]+\.lnk$', re.I)),
+    ('PREFETCH', re.compile(r'^/Windows/Prefetch/[^/]+\.pf$', re.I)),
 ]
+# The content of a recycled item: $R<suffix> next to its $I<suffix> (a file, or a folder for a recycled folder).
+RECYCLE_DATA = re.compile(r'^/\$Recycle\.Bin/(?P<sid>[^/]+)/\$R(?P<suffix>[^/]+)$', re.I)
 SQLITE_SIDECARS = ('-journal', '-wal')
 BROWSER_NAMES = {
     'google/chrome': 'Chrome', 'microsoft/edge': 'Edge',
@@ -38,6 +44,8 @@ def classify(path: str) -> tuple[str, dict] | None:
                 details['browser'] = BROWSER_NAMES.get(m.group('browser').lower(), 'Chromium')
             elif kind == 'FIREFOX_PLACES':
                 details['browser'] = 'Firefox'
+            elif kind == 'RECYCLE_BIN_INFO':
+                details.update(sid=m.group('sid'), suffix=m.group('suffix'))
             return kind, details
     return None
 
@@ -48,16 +56,26 @@ class ArtifactCollector:
     def __init__(self):
         self.matches: list[dict] = []
         self._by_path: dict[str, dict] = {}
+        self._recycle_data: dict[tuple, dict] = {}
 
     def observe(self, entry: dict, partition_offset: int):
-        if entry.get('deleted') or entry.get('is_dir') or entry.get('is_virtual'):
+        if entry.get('deleted') or entry.get('is_virtual'):
             return
         path = entry['path']
+        data = RECYCLE_DATA.search(path)
+        if data:
+            self._recycle_data[(partition_offset, data.group('sid').lower(), data.group('suffix').lower())] = {
+                'path': path, 'inode': entry['inode'], 'size': entry.get('size'), 'is_dir': bool(entry.get('is_dir'))}
+            return
+        if entry.get('is_dir'):
+            return
         hit = classify(path)
         if hit:
             kind, details = hit
+            # The file's own times matter for some kinds: a Recent shortcut is written when its target is opened.
             item = {'kind': kind, 'path': path, 'inode': entry['inode'], 'size': entry.get('size'),
-                    'partition_offset': partition_offset, 'sidecars': [], **details}
+                    'partition_offset': partition_offset, 'sidecars': [],
+                    'fs_mtime': entry.get('mtime'), 'fs_crtime': entry.get('crtime'), **details}
             self.matches.append(item)
             self._by_path[path.lower()] = item
             return
@@ -68,6 +86,10 @@ class ArtifactCollector:
                                          {'path': path, 'inode': entry['inode'], 'partition_offset': partition_offset})
 
     def resolved(self) -> list[dict]:
+        for item in self.matches:
+            if item['kind'] == 'RECYCLE_BIN_INFO':
+                item['recycle_data'] = self._recycle_data.get(
+                    (item['partition_offset'], item['sid'].lower(), item['suffix'].lower()))
         for key, side in list(self._by_path.items()):
             if not key.startswith('#sidecar#'):
                 continue

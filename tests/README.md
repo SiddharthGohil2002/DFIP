@@ -4,7 +4,7 @@ Four layers, from fastest to most complete. Everything runs in Docker; no local 
 
 | Layer | What it proves | Command (from the repository root) | Time |
 |---|---|---|---|
-| Unit | Parsers (fls bodyfile, mmls, setupapi, SYSTEM hive, browser databases), hashing, E01 working copies | `docker run --rm -v "$PWD/backend:/src" -w /src dfip-backend python -m pytest -q` | seconds |
+| Unit | Parsers (fls bodyfile, mmls, setupapi, SYSTEM hive, browser databases, Prefetch, LNK, Recycle Bin), file viewer reads and type detection, tag keys, dashboard helpers, hashing, E01 working copies | `docker run --rm -v "$PWD/backend:/src" -w /src dfip-backend python -m pytest -q` | seconds |
 | System (API) | Every API area against ground truth, on a throwaway stack | `sh tests/system/run.sh` | ~2 min |
 | UI | The web portal and the desktop UI build in a real browser | `sh tests/ui/run.sh` | ~5 min |
 | Desktop app | The installed Windows app (native hashing, workstation, sign-in) | see below | manual |
@@ -23,7 +23,7 @@ Results are checked against ground truth that does not come from DFIP: the known
 
 | Phase | Covers |
 |---|---|
-| `main` (backend in its default configuration) | health, authentication (tokens, refresh rotation, logout, password change), approval-mode sign-up, cases and case isolation, roles, evidence upload and preservation, the analysis job, file index, deleted-file recovery, timeline, browser history, USB history, indicators, carving, search, findings, analyst assignment, reports, chain of custody, audit log, notifications, administration, the desktop workstation API (including offline sync), live events, threat intelligence, E01 support, bad images, cancelling, overview counts, evidence tampering and audit-log tampering |
+| `main` (backend in its default configuration) | health, authentication (tokens, refresh rotation, logout, password change), approval-mode sign-up, cases and case isolation, roles, evidence upload and preservation (one registration per image per case), the analysis job, file index, deleted-file recovery, timeline, browser history, USB history, indicators, carving, search, findings, analyst assignment, reports, chain of custody, audit log, notifications, administration, the desktop workstation API (including offline sync), live events, threat intelligence, E01 support, bad images, cancelling, overview counts, evidence tampering, audit-log tampering, deleting evidence, Windows activity (vs ExifTool and the test disk), the file viewer (vs icat), tags (including re-linking after a re-analysis), the activity dashboard (heatmap in several time zones vs the timeline) and legal hold |
 | `desktop_writes` | `REQUIRE_DESKTOP_FOR_WRITES=true`: the web is read-only, a registered workstation can write |
 | `reg_open`, `reg_disabled` | `REGISTRATION_MODE=open` and `disabled` |
 | PDF (`check_pdf.py`) | the text of generated reports: all 12 sections, hashes, custody, findings, literal markup, a tampered-evidence report |
@@ -36,7 +36,7 @@ Logs and JSON results are in `tests/system/out/`.
 
 | Suite | Covers |
 |---|---|
-| `ui_e2e` | website, sign-in, new case, upload, analysis, evidence detail, deleted files and recovery, timeline (zoom), browser, USB, indicators, search, findings, reports, custody, carving, audit and system pages, sign-out |
+| `ui_e2e` | website, sign-in, new case, upload, analysis, file viewer (preview, hex, image, PDF), tagging, Windows activity, activity dashboard, tagged items, legal hold, duplicate upload refused, deleting evidence, evidence detail, deleted files and recovery, timeline (zoom), browser, USB, indicators, search, findings, reports, custody, carving, audit and system pages, sign-out |
 | `ui_desktop` | the desktop build (`frontend/dist-desktop`): opens on sign-in, server address, workstation registration |
 | `ui_roles` | what each role sees and can do |
 | `ui_download` | installer links on the website, sign-in page and workspace; downloaded file matches its SHA-256 (needs a published installer) |

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime, timezone
 from ..security import current_user, require_permission, require_write
 from bson import ObjectId
@@ -133,10 +133,14 @@ def overview(case_id: str, u=Depends(current_user)):
         'browser_history': art.count_documents({'case_id': case_id, 'type': 'BROWSER_HISTORY'}),
         'browser_downloads': art.count_documents({'case_id': case_id, 'type': 'BROWSER_DOWNLOAD'}),
         'usb_devices': db['usb_artifacts'].count_documents({'case_id': case_id}),
+        'programs_run': art.count_documents({'case_id': case_id, 'type': 'PROGRAM_RUN'}),
+        'recent_files': art.count_documents({'case_id': case_id, 'type': 'RECENT_FILE'}),
+        'recycle_bin_items': art.count_documents({'case_id': case_id, 'type': 'RECYCLE_BIN_ITEM'}),
         'malware_indicators': art.count_documents({'case_id': case_id, 'type': 'MALWARE_INDICATOR'}),
         'patterns': db['patterns'].count_documents({'case_id': case_id}),
         'anomalies_flagged': db['anomalies'].count_documents({'case_id': case_id, 'is_anomaly': True}),
         'findings': db['findings'].count_documents({'case_id': case_id}),
+        'tags': db['tags'].count_documents({'case_id': case_id}),
         'reports': db['reports'].count_documents({'case_id': case_id}),
         'custody_events': db['chain_of_custody'].count_documents({'case_id': case_id}),
     }
@@ -144,3 +148,66 @@ def overview(case_id: str, u=Depends(current_user)):
         'job_id': 1, 'type': 1, 'status': 1, 'progress': 1, 'stage': 1, 'error': 1, 'payload': 1,
         'created_at': 1, 'finished_at': 1}).sort('created_at', -1).limit(8))
     return {'case': c, 'evidence': _plain(evidence), 'counts': counts, 'jobs': _plain(jobs)}
+
+
+@r.get('/{case_id}/dashboard')
+def dashboard(case_id: str, tz: str = 'UTC', scope: str = 'activity', evidence_id: str | None = None, u=Depends(current_user)):
+    """Activity charts for the case: day-of-week x hour heatmap, events per day, top websites, file types and
+    USB connection spans. scope=activity counts user activity only; scope=all adds filesystem (MACB) times."""
+    from pymongo.errors import OperationFailure
+    from ..analysis import dashboard as dash
+    if not get_case(case_id, u):
+        raise HTTPException(404, 'Case not found or access denied')
+    if scope not in ('activity', 'all'):
+        raise HTTPException(400, 'scope must be activity or all')
+    if not dash.valid_tz(tz):
+        raise HTTPException(400, 'tz must be UTC, an offset such as +05:30, or a time zone name such as Asia/Kolkata')
+    db = get_db()
+    types = dash.ACTIVITY_TYPES if scope == 'activity' else None
+    q = dash.event_query(case_id, types, evidence_id)
+    eids = [evidence_id] if evidence_id else [e['evidence_id'] for e in db['evidence'].find({'case_id': case_id}, {'evidence_id': 1})]
+    try:
+        heat, days = dash.heatmap(db, q, tz), dash.per_day(db, q, tz)
+    except OperationFailure:
+        raise HTTPException(400, f'Unknown time zone: {tz}')
+    return {'tz': tz, 'scope': scope, 'types': types, 'heatmap': heat, 'per_day': days,
+            'top_domains': dash.top_domains(db, case_id, evidence_id), 'file_types': dash.file_types(db, eids),
+            'usb_spans': _plain(dash.usb_spans(db, case_id, evidence_id))}
+
+
+class LegalHoldIn(BaseModel):
+    active: bool
+    reason: str = Field(min_length=5, max_length=500)
+
+    @field_validator('reason', mode='before')
+    @classmethod
+    def strip_reason(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+
+@r.post('/{case_id}/legal-hold')
+def legal_hold(case_id: str, body: LegalHoldIn, u=Depends(require_write('LEGAL_HOLD_MANAGE'))):
+    """Places or releases a legal hold. While a case is held, its evidence cannot be deleted.
+    (Separate from the case status ON_HOLD, which only describes the work.)"""
+    c = get_case(case_id, u)
+    if not c:
+        raise HTTPException(404, 'Case not found or access denied')
+    current = c.get('legal_hold') or {}
+    if bool(current.get('active')) == body.active:
+        raise HTTPException(409, f'{case_id} is {"already" if body.active else "not"} under legal hold')
+    now = datetime.now(timezone.utc)
+    who = {'user_id': str(u['_id']), 'name': u.get('name')}
+    if body.active:
+        hold = {'active': True, 'reason': body.reason, 'set_by': who['user_id'], 'set_by_name': who['name'], 'set_at': now}
+    else:
+        hold = {**current, 'active': False, 'released_by': who['user_id'], 'released_by_name': who['name'],
+                'released_at': now, 'release_reason': body.reason}
+    event = {'action': 'PLACED' if body.active else 'RELEASED', 'reason': body.reason, 'by': who['name'], 'at': now}
+    get_db()['cases'].update_one({'case_id': case_id}, {'$set': {'legal_hold': hold, 'updated_at': now}, '$push': {'legal_hold_history': event}})
+    fresh = get_case(case_id)
+    log(u, 'LEGAL_HOLD_PLACED' if body.active else 'LEGAL_HOLD_RELEASED', 'case', fresh['_id'], {'case_id': case_id, 'reason': body.reason})
+    manager.emit_sync('CASE_UPDATED', {'case_id': case_id, 'legal_hold': body.active})
+    if fresh.get('investigator_id') and fresh['investigator_id'] != str(u['_id']):
+        notify_sync(fresh['investigator_id'], 'Legal hold placed' if body.active else 'Legal hold released',
+                    f'{case_id} {"is now under" if body.active else "is no longer under"} legal hold ({u.get("name")}): {body.reason}')
+    return _plain(fresh)

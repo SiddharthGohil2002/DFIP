@@ -3,19 +3,28 @@ import { RotateCcw, Search, ZoomOut } from 'lucide-react';
 import { useCase } from '../lib/caseContext';
 import { TimeModeContext, formatNumber, isoToLocalInput, localInputToIso, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
+import { TagButton } from '../lib/tags';
 import type { TimelineEvent } from '../lib/types';
 import { Badge, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, type Tone } from '../ui';
+import { niceMax } from '../ui/charts';
 
 const LIMIT = 100;
 const TYPE_FILTERS: Record<string, { label: string; types: string }> = {
   all: { label: 'All event types', types: '' },
-  notable: { label: 'Browser + USB', types: 'BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY' },
+  notable: { label: 'User activity', types: 'BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY,PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN' },
   files: { label: 'Filesystem (MACB)', types: 'FILE_MACB' },
   browser: { label: 'Browser activity', types: 'BROWSER_VISIT,BROWSER_DOWNLOAD' },
   usb: { label: 'USB activity', types: 'USB_ACTIVITY' },
+  activity: { label: 'Windows activity', types: 'PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN' },
 };
-const TYPE_TONE: Record<string, Tone> = { FILE_MACB: 'neutral', BROWSER_VISIT: 'info', BROWSER_DOWNLOAD: 'accent', USB_ACTIVITY: 'warn' };
-const TYPE_LABEL: Record<string, string> = { FILE_MACB: 'File MACB', BROWSER_VISIT: 'Browser visit', BROWSER_DOWNLOAD: 'Download', USB_ACTIVITY: 'USB' };
+const TYPE_TONE: Record<string, Tone> = {
+  FILE_MACB: 'neutral', BROWSER_VISIT: 'info', BROWSER_DOWNLOAD: 'accent', USB_ACTIVITY: 'warn',
+  PROGRAM_RUN: 'ok', RECENT_FILE_OPENED: 'info', FILE_DELETED_TO_RECYCLE_BIN: 'danger',
+};
+const TYPE_LABEL: Record<string, string> = {
+  FILE_MACB: 'File MACB', BROWSER_VISIT: 'Browser visit', BROWSER_DOWNLOAD: 'Download', USB_ACTIVITY: 'USB',
+  PROGRAM_RUN: 'Program run', RECENT_FILE_OPENED: 'File opened', FILE_DELETED_TO_RECYCLE_BIN: 'Recycled',
+};
 
 export function TimelinePage() {
   const { caseId, overview } = useCase();
@@ -58,7 +67,7 @@ export function TimelinePage() {
     <div className="stack">
       <PageHeader
         title="Timeline"
-        subtitle="One chronology of filesystem MACB times (m = modified, a = accessed, c = changed, b = born/created), browser visits and downloads, and USB device events."
+        subtitle="One chronology of filesystem MACB times (m = modified, a = accessed, c = changed, b = born/created), browser visits and downloads, USB device events, and Windows activity (programs run, files opened, files recycled)."
       />
 
       <Card>
@@ -110,7 +119,7 @@ export function TimelinePage() {
         ) : (
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>Time</th><th>Type</th><th>Event</th><th>Source</th></tr></thead>
+              <thead><tr><th>Time</th><th>Type</th><th>Event</th><th>Source</th><th /></tr></thead>
               <tbody>
                 {events.data.data.map((e) => (
                   <tr key={e._id} className={e.deleted ? 'is-deleted' : ''}>
@@ -118,6 +127,7 @@ export function TimelinePage() {
                     <td><Badge tone={TYPE_TONE[e.type] || 'neutral'}>{TYPE_LABEL[e.type] || e.type}</Badge></td>
                     <td className="cell-path">{e.description}</td>
                     <td className="tiny muted cell-source">{e.source}<div>{e.evidence_id}</div></td>
+                    <td className="nowrap right"><TagButton type="TIMELINE_EVENT" id={e._id} title={e.description} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -150,12 +160,6 @@ function bucketLabel(t: Date, unit: Histogram['unit']): string {
   if (unit === 'month') return iso.slice(0, 7);
   if (unit === 'day') return iso.slice(0, 10);
   return `${iso.slice(0, 10)} ${iso.slice(11, 13)}:00`;
-}
-
-function niceMax(v: number): number {
-  if (v <= 5) return 5;
-  const p = 10 ** Math.floor(Math.log10(v));
-  return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map((m) => m * p).find((m) => m >= v)!;
 }
 
 /** Event counts per time bucket on a true time axis (gaps in activity stay visible). */

@@ -16,6 +16,7 @@ MSYS_NO_PATHCONV=1 docker run --rm --add-host=host.docker.internal:host-gateway 
     pip install -q playwright==1.48.0 >/dev/null 2>&1
     status=0
     for t in ui_e2e ui_desktop ui_roles ui_download ui_auth ui_signout ui_extra; do
-      if python /w/$t.py > /out/$t.log 2>&1; then echo "$t: passed"; else echo "$t: FAILED (see tests/ui/out/$t.log)"; status=1; fi
+      # A suite fails when it exits non-zero or reports problems or failed checks in its log.
+      if python /w/$t.py > /out/$t.log 2>&1 && ! grep -qE "^Problems:|^[1-9][0-9]* problems$|, [1-9][0-9]* failed$" /out/$t.log; then echo "$t: passed"; else echo "$t: FAILED (see tests/ui/out/$t.log)"; status=1; fi
     done
     exit $status'

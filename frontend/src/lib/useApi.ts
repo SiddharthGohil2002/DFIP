@@ -3,6 +3,8 @@ import { api } from './api';
 
 export interface ApiState<T> {
   data: T | null;
+  /** The path `data` was loaded from; while a new path loads, `data` still holds the previous response. */
+  dataPath: string | null;
   error: string;
   loading: boolean;
   reload: () => void;
@@ -14,6 +16,7 @@ export interface ApiState<T> {
  */
 export function useApi<T = any>(path: string | null, options: { pollMs?: number } = {}): ApiState<T> {
   const [data, setData] = useState<T | null>(null);
+  const [dataPath, setDataPath] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(path !== null);
   const seq = useRef(0);
@@ -22,6 +25,7 @@ export function useApi<T = any>(path: string | null, options: { pollMs?: number 
     (quiet = false) => {
       if (path === null) {
         setData(null);
+        setDataPath(null);
         setLoading(false);
         return;
       }
@@ -31,6 +35,7 @@ export function useApi<T = any>(path: string | null, options: { pollMs?: number 
         .then((d) => {
           if (id !== seq.current) return;
           setData(d);
+          setDataPath(path);
           setError('');
         })
         .catch((e) => id === seq.current && setError(e.message))
@@ -49,5 +54,5 @@ export function useApi<T = any>(path: string | null, options: { pollMs?: number 
     return () => clearInterval(t);
   }, [options.pollMs, load, path]);
 
-  return { data, error, loading, reload: () => load(true) };
+  return { data, dataPath, error, loading, reload: () => load(true) };
 }

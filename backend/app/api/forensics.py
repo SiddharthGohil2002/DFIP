@@ -1,8 +1,10 @@
 from fastapi import APIRouter,Depends,HTTPException
+from fastapi.responses import Response
 from fastapi.responses import FileResponse
 from datetime import datetime,timezone
 from pathlib import Path
-import re,uuid
+import base64,re,uuid
+from ..forensic import content
 from ..forensic.filesystem import INODE_RE
 from ..forensic.hashing import sha256_file
 from ..forensic.working_image import analysis_image,WorkingCopyUnavailable
@@ -132,6 +134,109 @@ def download_artifact(artifact_id:str,u=Depends(require_permission('EVIDENCE_REA
     log(u,'ARTIFACT_DOWNLOADED','artifact',artifact_id,{'sha256':a.get('sha256')})
     return FileResponse(str(p),filename=a.get('filename') or p.name,media_type='application/octet-stream',headers={'X-DFIP-SHA256':a.get('sha256','')})
 
+# ---------------------------------------------------------------- file content: hex viewer and preview
+def _image_file(eid, inode, offset, u):
+    """An indexed file inside an evidence image, and the command that streams its content."""
+    e = auth_evidence(eid, u)
+    if e.get('demo'): raise HTTPException(400, 'Demo evidence has no file content')
+    if not INODE_RE.match(inode or ''): raise HTTPException(400, 'Invalid inode address')
+    entry = get_db()['fs_entries'].find_one({'evidence_id': e['evidence_id'], 'inode': inode, 'partition_offset': offset})
+    if not entry: raise HTTPException(404, 'File not found in the file index')
+    if entry.get('is_dir') or entry.get('is_virtual'): raise HTTPException(400, 'Folders and filesystem metadata entries cannot be viewed')
+    image = tsk_image(e)
+    cmd = ['icat', '-o', str(offset), str(image), inode]
+
+    def read(start, length):
+        if start > content.STREAM_SKIP_MAX:
+            raise HTTPException(416, 'Recover the file to view it beyond 256 MiB')
+        try:
+            return content.read_stream_range(cmd, start, length)
+        except content.Busy:
+            raise HTTPException(503, 'Too many files are being read at once; try again in a moment')
+        except TimeoutError:
+            raise HTTPException(504, 'Reading the file from the image took too long')
+    return e, entry.get('path'), entry.get('size') or 0, read, {'evidence_id': e['evidence_id'], 'inode': inode, 'offset': offset, 'path': entry.get('path')}
+
+
+def _artifact_file(artifact_id, u):
+    """A recovered, carved or extracted file stored by DFIP."""
+    a = get_db()['forensic_artifacts'].find_one({'artifact_id': artifact_id})
+    if not a or not get_case(a['case_id'], u) or not a.get('path'): raise HTTPException(404, 'Artifact not found or access denied')
+    p = Path(a['path']); root = Path(settings.storage_path).resolve() / 'analysis'
+    if not p.is_file() or root not in p.resolve().parents: raise HTTPException(410, 'Artifact file unavailable')
+    return a, a.get('original_path') or a.get('filename') or p.name, p.stat().st_size, \
+        (lambda start, length: content.read_file_range(p, start, length)), {'artifact_id': artifact_id, 'path': a.get('original_path')}
+
+
+def _page(target, start, length, u, resource):
+    e, path, size, read, meta = target
+    if start < 0 or length < 1: raise HTTPException(400, 'start must be 0 or more and length at least 1')
+    data = read(start, min(length, content.PAGE_MAX))
+    if start == 0:
+        log(u, 'FILE_CONTENT_VIEWED', resource, meta.get('artifact_id') or e['_id'], {**meta, 'view': 'hex'})
+    return {'path': path, 'start': start, 'length': len(data), 'size': size, 'eof': start + len(data) >= size,
+            'data_b64': base64.b64encode(data).decode()}
+
+
+def _preview(target, u, resource):
+    e, path, size, read, meta = target
+    head = read(0, content.TEXT_MAX + 1)
+    kind, mime = content.sniff(head)
+    out = {'path': path, 'size': size, 'kind': kind, 'mime': mime}
+    if kind == 'text':
+        out['text'], out['encoding'] = content.decode_text(head[:content.TEXT_MAX])
+        out['truncated'] = size > content.TEXT_MAX
+    elif kind in ('image', 'pdf'):
+        out['renderable'] = size <= content.RAW_MAX
+    log(u, 'FILE_CONTENT_VIEWED', resource, meta.get('artifact_id') or e['_id'], {**meta, 'view': 'preview', 'kind': kind})
+    return out
+
+
+def _raw(target, u, resource):
+    e, path, size, read, meta = target
+    if size > content.RAW_MAX: raise HTTPException(413, 'File is too large to preview; download it instead')
+    data = read(0, size)
+    kind, mime = content.sniff(data[:8192])
+    if kind not in ('image', 'pdf'): raise HTTPException(415, 'Only images and PDF files are rendered; other files are shown as text or hex')
+    log(u, 'FILE_CONTENT_VIEWED', resource, meta.get('artifact_id') or e['_id'], {**meta, 'view': 'render', 'kind': kind})
+    return Response(content=data, media_type=mime, headers={
+        'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'attachment',
+        'Content-Security-Policy': "sandbox; default-src 'none'", 'Cache-Control': 'no-store'})
+
+
+@r.get('/evidence/{eid}/content')
+def evidence_content(eid: str, inode: str, offset: int = 0, start: int = 0, length: int = 4096, u=Depends(require_permission('EVIDENCE_READ'))):
+    """One page of a file inside the image (base64), for the hex viewer."""
+    return _page(_image_file(eid, inode, offset, u), start, length, u, 'evidence')
+
+
+@r.get('/evidence/{eid}/preview')
+def evidence_preview(eid: str, inode: str, offset: int = 0, u=Depends(require_permission('EVIDENCE_READ'))):
+    """What the file is (from its first bytes) and, for text, its content."""
+    return _preview(_image_file(eid, inode, offset, u), u, 'evidence')
+
+
+@r.get('/evidence/{eid}/raw')
+def evidence_raw(eid: str, inode: str, offset: int = 0, u=Depends(require_permission('EVIDENCE_READ'))):
+    """An image or PDF inside the image, for rendering in the preview."""
+    return _raw(_image_file(eid, inode, offset, u), u, 'evidence')
+
+
+@r.get('/artifacts/{artifact_id}/content')
+def artifact_content(artifact_id: str, start: int = 0, length: int = 4096, u=Depends(require_permission('EVIDENCE_READ'))):
+    return _page(_artifact_file(artifact_id, u), start, length, u, 'artifact')
+
+
+@r.get('/artifacts/{artifact_id}/preview')
+def artifact_preview(artifact_id: str, u=Depends(require_permission('EVIDENCE_READ'))):
+    return _preview(_artifact_file(artifact_id, u), u, 'artifact')
+
+
+@r.get('/artifacts/{artifact_id}/raw')
+def artifact_raw(artifact_id: str, u=Depends(require_permission('EVIDENCE_READ'))):
+    return _raw(_artifact_file(artifact_id, u), u, 'artifact')
+
+
 @r.get('/usb')
 def usb_devices(case_id:str,evidence_id:str|None=None,u=Depends(current_user)):
     if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
@@ -139,10 +244,28 @@ def usb_devices(case_id:str,evidence_id:str|None=None,u=Depends(current_user)):
     if evidence_id: q['evidence_id']=evidence_id
     return {'data':[serial(dict(x,_id=str(x['_id']))) for x in get_db()['usb_artifacts'].find(q).sort('first_install',1)]}
 
+# Windows activity records (forensic_artifacts types) and the time each list is sorted by, newest first.
+ACTIVITY_SORT={'PROGRAM_RUN':'last_run','RECENT_FILE':'lnk_modified','RECYCLE_BIN_ITEM':'deleted_time'}
+
+def _activity_text(rx):
+    return [{'executable':rx},{'executable_path':rx},{'target_path':rx},{'original_path':rx},{'volume_label':rx},{'referenced_files':rx}]
+
+@r.get('/activity')
+def activity(case_id:str,kind:str='PROGRAM_RUN',evidence_id:str|None=None,search:str|None=None,skip:int=0,limit:int=500,u=Depends(current_user)):
+    """Windows activity: programs run (Prefetch), recently opened files (Recent shortcuts), Recycle Bin items."""
+    if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
+    if kind not in ACTIVITY_SORT: raise HTTPException(400,f'Invalid kind; use one of {", ".join(ACTIVITY_SORT)}')
+    q={'case_id':case_id,'type':kind}
+    if evidence_id: q['evidence_id']=evidence_id
+    if search: q['$or']=_activity_text({'$regex':re.escape(search),'$options':'i'})
+    col=get_db()['forensic_artifacts']
+    rows=[serial(dict(x,_id=str(x['_id']))) for x in col.find(q).sort(ACTIVITY_SORT[kind],-1).skip(max(0,skip)).limit(max(1,min(limit,1000)))]
+    return {'data':rows,'total':col.count_documents(q)}
+
 @r.get('/search')
 def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
     """Keyword search across a case: file paths, timeline events, browser
-    records, USB devices and findings (case-insensitive substring match)."""
+    records, USB devices, Windows activity and findings (case-insensitive substring match)."""
     if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
     term=q.strip()
     if len(term)<2: raise HTTPException(400,'Search term must be at least 2 characters')
@@ -154,6 +277,7 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
         'browser':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['BROWSER_HISTORY','BROWSER_DOWNLOAD']},
                    '$or':[{'url':rx},{'title':rx},{'target_path':rx},{'tab_url':rx}]},[('timestamp',-1)]),
         'usb':('usb_artifacts',{'case_id':case_id,'$or':[{'friendly_name':rx},{'vendor':rx},{'product':rx},{'serial':rx}]},[('serial',1)]),
+        'activity':('forensic_artifacts',{'case_id':case_id,'type':{'$in':list(ACTIVITY_SORT)},'$or':_activity_text(rx)},[('timestamp',-1)]),
         'findings':('findings',{'case_id':case_id,'$or':[{'title':rx},{'description':rx}]},[('created_at',-1)]),
     }
     results,totals={},{}

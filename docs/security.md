@@ -17,5 +17,10 @@
 - The audit log shows administrators every record; other roles with `AUDIT_READ` see their own actions and actions on cases they can open.
 - Evidence hashes are always computed by the server; a SHA-512 sent with an upload is only used to confirm the transfer, and a mismatch discards the upload.
 - Internal `.local` email domains are accepted for accounts (common for on-premises directories).
+- An image is registered once per case: an upload whose SHA-256 is already registered in the case is refused and discarded.
+- Deleting evidence needs `EVIDENCE_DELETE` (administrators and investigators) and a reason, is refused while an analysis of the image runs, and is recorded in the chain of custody and the audit log; the item's history is kept.
+- A case under legal hold (`LEGAL_HOLD_MANAGE`, administrators and investigators; a reason is required to place and to release it) blocks evidence deletion for everyone, administrators included (HTTP 423). Case edits and offline sync cannot change the hold.
+- Tags need `FINDING_CREATE` and case access; adding, changing and removing them is audited.
+- File content shown in the viewer is read without writing a copy, typed from its first bytes (never from the name), never rendered as HTML, and served with `nosniff`, `attachment` and a sandbox CSP; each view is audited as `FILE_CONTENT_VIEWED`.
 
 For production, add TLS, encrypted storage, secrets management, network segmentation, MFA/SSO, rate limiting at the edge, malware sandboxing, SIEM integration, backups, retention controls and periodic security assessment.

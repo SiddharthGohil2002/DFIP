@@ -1,12 +1,13 @@
 import { useRef, useState, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, Play, ShieldCheck, UploadCloud } from 'lucide-react';
+import { CheckCircle2, Copy, Play, ShieldCheck, Trash2, UploadCloud } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { post, uploadEvidence } from '../lib/api';
 import { formatBytes, useTime } from '../lib/format';
 import type { Evidence } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, Hash, PageHeader, ProgressBar, StatusBadge, useToast } from '../ui';
+import { DeleteEvidenceModal } from './DeleteEvidence';
 
 const ACCEPT = '.e01,.ex01,.raw,.dd,.aff,.aff4';
 const SUPPORTED = ['E01', 'EX01', 'RAW', 'DD', 'AFF', 'AFF4'];
@@ -14,9 +15,11 @@ const SUPPORTED = ['E01', 'EX01', 'RAW', 'DD', 'AFF', 'AFF4'];
 export function EvidencePage() {
   const { can } = useAuth();
   const { overview, activeCase, reloadOverview } = useCase();
+  const held = !!(overview?.case.legal_hold?.active || activeCase?.legal_hold?.active);
   const toast = useToast();
   const time = useTime();
   const [busy, setBusy] = useState('');
+  const [deleting, setDeleting] = useState<Evidence | null>(null);
   const evidence = overview?.evidence || [];
   const running = new Set((overview?.jobs || []).filter((j) => ['QUEUED', 'RUNNING'].includes(j.status)).map((j) => j.payload?.evidence_id));
 
@@ -44,7 +47,7 @@ export function EvidencePage() {
         title="Evidence"
         subtitle={`Disk images for ${activeCase?.case_id || 'this case'}. Each upload is hashed (SHA-256 and SHA-512) on the server, stored read-only, and logged to the chain of custody.`}
       />
-      {can('EVIDENCE_UPLOAD') && <UploadCard onUploaded={reloadOverview} />}
+      {can('EVIDENCE_UPLOAD') && <UploadCard evidence={evidence} onUploaded={reloadOverview} />}
 
       <Card title="Evidence register" subtitle="Integrity is re-verified automatically before every analysis run." flush>
         {!evidence.length ? (
@@ -72,6 +75,16 @@ export function EvidencePage() {
                         </Button>
                       )}{' '}
                       <Link to={`/app/evidence/${e.evidence_id}`} className="btn sm">Details</Link>
+                      {can('EVIDENCE_DELETE') && (
+                        <>
+                          {' '}
+                          <Button size="sm" variant="danger" icon={<Trash2 size={13} />} disabled={running.has(e.evidence_id) || held}
+                            title={held ? 'The case is under legal hold: evidence cannot be deleted' : running.has(e.evidence_id) ? 'An analysis is running for this evidence' : `Delete ${e.evidence_id}`}
+                            onClick={() => setDeleting(e)}>
+                            Delete
+                          </Button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -80,11 +93,12 @@ export function EvidencePage() {
           </div>
         )}
       </Card>
+      <DeleteEvidenceModal evidence={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setDeleting(null); reloadOverview(); }} />
     </div>
   );
 }
 
-function UploadCard({ onUploaded }: { onUploaded: () => void }) {
+function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded: () => void }) {
   const { caseId } = useCase();
   const toast = useToast();
   const input = useRef<HTMLInputElement>(null);
@@ -97,6 +111,8 @@ function UploadCard({ onUploaded }: { onUploaded: () => void }) {
 
   const ext = file?.name.split('.').pop()?.toUpperCase() || '';
   const supported = !file || SUPPORTED.includes(ext);
+  // Early hint only: the server compares SHA-256 and refuses an image already registered in the case.
+  const lookalike = file && evidence.find((e) => e.filename === file.name && e.size === file.size);
 
   function choose(f: File | null) {
     setFile(f);
@@ -161,6 +177,12 @@ function UploadCard({ onUploaded }: { onUploaded: () => void }) {
           <input ref={input} type="file" accept={ACCEPT} hidden onChange={(e) => choose(e.target.files?.[0] || null)} />
         </div>
         {!supported && <Banner tone="warn">.{ext.toLowerCase()} is not a supported forensic image format.</Banner>}
+        {lookalike && (
+          <Banner tone="warn">
+            <Copy size={16} style={{ flex: 'none' }} />
+            <div>This file has the same name and size as <span className="mono strong">{lookalike.evidence_id}</span>, already in this case. An image is registered only once per case: if the contents are identical, the server will refuse the upload.</div>
+          </Banner>
+        )}
         {progress !== null && (
           <div className="row">
             <ProgressBar value={progress * 100} />

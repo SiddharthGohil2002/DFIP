@@ -1,12 +1,9 @@
 import { useState } from 'react';
 import { ShieldCheck, ShieldX } from 'lucide-react';
 import { useCase } from '../lib/caseContext';
-import { useTime } from '../lib/format';
+import { actionLabel, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { Banner, Card, Empty, Hash, Loading, PageHeader, StatusBadge } from '../ui';
-
-/** "ANALYSIS_INTEGRITY_CHECK" -> "Analysis integrity check" (the code stays in the tooltip). */
-const actionLabel = (action: string) => (action ? action.charAt(0) + action.slice(1).toLowerCase().replace(/_/g, ' ') : '');
 
 export function CustodyPage() {
   const { caseId, overview } = useCase();
@@ -20,7 +17,7 @@ export function CustodyPage() {
     <div className="stack">
       <PageHeader
         title="Chain of custody"
-        subtitle="Append-only record of who handled each evidence item and what was done: registration, integrity checks, analysis integrity checks and file recoveries. Newest first."
+        subtitle="Append-only record of who handled each evidence item and what was done: registration, integrity checks, analysis integrity checks, file recoveries and deletions. Newest first."
         actions={
           (overview?.evidence.length || 0) > 1 && (
             <select className="select" style={{ width: 220 }} value={evidence} onChange={(e) => setEvidence(e.target.value)} aria-label="Evidence">
@@ -56,6 +53,7 @@ export function CustodyPage() {
                     <td className="small">
                       {(c.status || c.result) && <StatusBadge status={c.status || c.result} />}
                       {c.original_path && <div className="muted break">{c.original_path}</div>}
+                      {c.reason && <div className="break">Reason: {c.reason}</div>}
                     </td>
                   </tr>
                 ))}

@@ -49,7 +49,7 @@ export function SearchPage() {
 
   return (
     <div className="stack">
-      <PageHeader title="Keyword search" subtitle="Case-insensitive search across file paths (including deleted files), timeline events, browser history and downloads, USB devices and findings in the active case." />
+      <PageHeader title="Keyword search" subtitle="Case-insensitive search across file paths (including deleted files), timeline events, browser history and downloads, USB devices, Windows activity and findings in the active case." />
       <Card>
         <form className="row" onSubmit={run}>
           <input className="input grow" style={{ maxWidth: 520 }} value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. payroll, SecureDelete, AA951D0000007252, .ps1" autoFocus aria-label="Keyword" />
@@ -95,6 +95,15 @@ export function SearchPage() {
                 <td className="small strong">{u.friendly_name || `${u.vendor} ${u.product}`}</td>
                 <td className="mono small">{u.serial}</td>
                 <td className="small" colSpan={2}>{u.source}</td>
+              </tr>
+            ))}
+          </Group>
+          <Group title="Windows activity" total={res.totals.activity} shown={(res.results.activity || []).length} link={{ to: '/app/activity', label: 'Open Windows activity' }}>
+            {(res.results.activity || []).map((a) => (
+              <tr key={a._id}>
+                <td className="small">{a.type === 'PROGRAM_RUN' ? 'Program run' : a.type === 'RECENT_FILE' ? 'File opened' : 'Recycle Bin'}</td>
+                <td className="mono small nowrap">{time(a.last_run || a.lnk_modified || a.deleted_time)}</td>
+                <td className="cell-path small mono" colSpan={2}>{a.executable_path || a.executable || a.target_path || a.original_path}</td>
               </tr>
             ))}
           </Group>

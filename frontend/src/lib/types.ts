@@ -21,6 +21,17 @@ export interface CaseItem {
   created_at: string;
   updated_at: string;
   demo?: boolean;
+  legal_hold?: LegalHold;
+}
+
+export interface LegalHold {
+  active: boolean;
+  reason: string;
+  set_by_name?: string;
+  set_at?: string;
+  released_by_name?: string;
+  released_at?: string;
+  release_reason?: string;
 }
 
 export interface AnalysisSummary {
@@ -30,6 +41,9 @@ export interface AnalysisSummary {
   browser_history?: number;
   browser_downloads?: number;
   usb_devices?: number;
+  programs_run?: number;
+  recent_files?: number;
+  recycle_bin_items?: number;
   files_scanned?: number;
   yara_matches?: number;
   patterns?: number;
@@ -81,10 +95,14 @@ export interface CaseCounts {
   browser_history: number;
   browser_downloads: number;
   usb_devices: number;
+  programs_run: number;
+  recent_files: number;
+  recycle_bin_items: number;
   malware_indicators: number;
   patterns: number;
   anomalies_flagged: number;
   findings: number;
+  tags: number;
   reports: number;
   custody_events: number;
 }

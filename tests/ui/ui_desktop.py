@@ -36,12 +36,21 @@ with sync_playwright() as p:
     expect(page.get_by_text('Investigation functions')).to_be_visible()
     assert '#/app' in page.url, page.url
     expect(page.get_by_text('This workstation')).to_be_visible()
-    expect(page.get_by_text('host.docker.internal:8000')).to_be_visible()
+    expect(page.get_by_role('definition').filter(has_text='host.docker.internal:8000')).to_be_visible()
     token = page.evaluate("sessionStorage.getItem('dfip_device_token')")
     assert token, 'workstation was not registered'
     page.screenshot(path='/out/d2-desktop-home.png', full_page=True)
 
     step['v'] = 'evidence detail'
+    # Other suites may have left a newer, empty case active: switch to one with analysed evidence.
+    analysed = page.evaluate("""async () => {
+        const r = await fetch('http://host.docker.internal:8000/api/evidence',
+                              { headers: { Authorization: 'Bearer ' + sessionStorage.getItem('dfip_token') } });
+        const e = (await r.json()).data.find((x) => x.analysis_status === 'COMPLETED');
+        return e && e.case_id;
+    }""")
+    page.get_by_label('Active case').select_option(analysed)
+    page.get_by_role('link', name='Case desktop').first.click()
     page.get_by_role('link', name='Open', exact=True).first.click()
     expect(page.get_by_text('Verify a local copy')).to_be_visible()
     expect(page.get_by_text('Available in the installed DFIP desktop app.')).to_be_visible()

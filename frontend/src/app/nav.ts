@@ -1,5 +1,5 @@
 import {
-  Clock, FileText, FileX, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen,
+  Activity, BarChart3, Bookmark, Clock, FileText, FileX, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen,
   Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
@@ -29,7 +29,13 @@ const n = (v: number) => v.toLocaleString();
 export const NAV: NavGroup[] = [
   {
     title: 'Workspace',
-    items: [{ to: '/app', label: 'Case desktop', icon: LayoutDashboard, noTile: true }],
+    items: [
+      { to: '/app', label: 'Case desktop', icon: LayoutDashboard, noTile: true },
+      {
+        to: '/app/dashboard', label: 'Activity dashboard', icon: BarChart3, tone: 'teal',
+        description: 'When the computer was used, top websites, file types and USB connections, as charts.',
+      },
+    ],
   },
   {
     title: 'Case',
@@ -52,7 +58,7 @@ export const NAV: NavGroup[] = [
       },
       {
         to: '/app/timeline', label: 'Timeline', icon: Clock,
-        description: 'Filesystem MACB times, browser and USB events in one chronology.',
+        description: 'Filesystem MACB times, browser, USB and Windows activity in one chronology.',
         count: (c) => c.timeline_events, countLabel: () => 'events',
       },
       {
@@ -64,6 +70,12 @@ export const NAV: NavGroup[] = [
         to: '/app/usb', label: 'USB devices', icon: Usb, tone: 'amber',
         description: 'Removable storage history from the SYSTEM hive and setupapi.dev.log.',
         count: (c) => c.usb_devices, countLabel: () => 'devices',
+      },
+      {
+        to: '/app/activity', label: 'Windows activity', icon: Activity, tone: 'teal',
+        description: 'Programs run (Prefetch), files opened (Recent shortcuts) and the Recycle Bin.',
+        count: (c) => c.programs_run + c.recent_files + c.recycle_bin_items,
+        countLabel: (c) => `${n(c.programs_run)} programs · ${n(c.recent_files)} opened · ${n(c.recycle_bin_items)} recycled`,
       },
       {
         to: '/app/indicators', label: 'Indicators', icon: ShieldAlert, tone: 'red',
@@ -78,7 +90,7 @@ export const NAV: NavGroup[] = [
       },
       {
         to: '/app/search', label: 'Keyword search', icon: Search,
-        description: 'Search file paths, timeline, browser records, USB devices and findings.',
+        description: 'Search file paths, timeline, browser records, USB devices, Windows activity and findings.',
       },
     ],
   },
@@ -89,6 +101,11 @@ export const NAV: NavGroup[] = [
         to: '/app/findings', label: 'Findings', icon: NotebookPen, tone: 'amber',
         description: 'Record investigator observations linked to evidence.',
         count: (c) => c.findings, countLabel: () => 'findings',
+      },
+      {
+        to: '/app/tagged', label: 'Tagged items', icon: Bookmark, tone: 'red',
+        description: 'Files, events, visits, devices and activity bookmarked during review, with notes.',
+        count: (c) => c.tags, countLabel: () => 'tagged items',
       },
       {
         to: '/app/reports', label: 'Reports', icon: FileText, tone: 'green',

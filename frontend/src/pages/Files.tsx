@@ -6,6 +6,8 @@ import { useCase } from '../lib/caseContext';
 import { api, downloadFile, post } from '../lib/api';
 import { formatBytes, formatNumber, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
+import { TagButton } from '../lib/tags';
+import { ViewButton } from '../ui/FileViewer';
 import type { Artifact, FsEntry } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Hash, Loading, Modal, PageHeader, Pager, Tabs, useToast } from '../ui';
 
@@ -124,6 +126,8 @@ function FileIndex({ evidenceId, deletedOnly, onRecovered }: { evidenceId: strin
                     <td className="mono tiny nowrap">{time(f.atime, false)}</td>
                     <td className="mono tiny nowrap">{time(f.crtime, false)}</td>
                     <td className="nowrap right">
+                      <TagButton type="FILE" id={f._id} title={f.path} />{' '}
+                      {!f.is_dir && <ViewButton source={{ kind: 'image', evidenceId, inode: f.inode, offset: f.partition_offset, name: f.path }} />}{' '}
                       {rec ? (
                         <Button size="sm" icon={<Download size={13} />} onClick={() => downloadFile(`/forensics/artifacts/${rec.artifact_id}/download`, rec.filename).catch((e) => toast(e.message, 'danger'))}>
                           Download
@@ -192,6 +196,8 @@ function RecoveredFiles({ caseId }: { caseId: string }) {
                   <td><Hash value={a.sha256} short={16} /></td>
                   <td className="small nowrap">{time(a.timestamp)}</td>
                   <td className="nowrap right">
+                    <TagButton type="ARTIFACT" id={a.artifact_id} title={a.original_path || a.filename} />{' '}
+                    {a.artifact_id && <ViewButton source={{ kind: 'artifact', artifactId: a.artifact_id, name: a.filename || a.original_path || 'Recovered file' }} />}{' '}
                     {can('ANALYSIS_RUN') && <Button size="sm" icon={<FileSearch size={13} />} busy={busy === a.artifact_id} onClick={() => inspect(a)}>Metadata</Button>}{' '}
                     <Button size="sm" icon={<Download size={13} />} onClick={() => downloadFile(`/forensics/artifacts/${a.artifact_id}/download`, a.filename || 'recovered.bin').catch((e) => toast(e.message, 'danger'))}>
                       Download

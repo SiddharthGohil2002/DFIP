@@ -34,6 +34,11 @@ with sync_playwright() as p:
                     problems.append(f'[viewer] write action visible: {label}')
             if 'Users' in nav or 'Audit log' in nav:
                 problems.append('[viewer] admin nav visible')
+        if role in ('viewer', 'analyst'):
+            page.goto(BASE + '/app/evidence')
+            page.wait_for_load_state('networkidle')
+            if page.get_by_role('button', name='Delete').count():
+                problems.append(f'[{role}] Delete evidence visible')
         if role == 'analyst' and 'Users' in nav:
             problems.append('[analyst] Users nav visible')
         if role == 'admin':

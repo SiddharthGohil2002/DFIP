@@ -11,6 +11,7 @@ import { Badge, Banner, Button, Card, Empty, Loading, ProgressBar, StatusBadge, 
 import { NAV } from '../app/nav';
 import { WorkstationCard } from '../app/Workstation';
 import { CaseFormModal } from './Cases';
+import { LegalHoldBadge, LegalHoldButton } from './LegalHold';
 
 const RUNNING = new Set(['QUEUED', 'RUNNING']);
 
@@ -63,9 +64,11 @@ export function HomePage() {
             <span>Status <StatusBadge status={c.status} /></span>
             <span>Priority <StatusBadge status={c.priority} /></span>
             <span>Opened {time(c.created_at)}</span>
+            {c.legal_hold?.active && <span><LegalHoldBadge caseItem={c} /></span>}
           </div>
         </div>
         <div className="row" style={{ alignItems: 'flex-start' }}>
+          <LegalHoldButton caseItem={c} />
           {can('EVIDENCE_UPLOAD') && <Button icon={<Upload size={15} />} onClick={() => navigate('/app/evidence')}>Add evidence</Button>}
           {can('REPORT_CREATE') && <Button variant="primary" icon={<FileText size={15} />} onClick={() => navigate('/app/reports')}>Generate report</Button>}
         </div>
@@ -173,7 +176,7 @@ function EvidenceCard({ evidence, jobs, onChange }: { evidence: Evidence[]; jobs
                     </div>
                   ) : e.analysis_status === 'COMPLETED' && s ? (
                     <span className="small muted">
-                      Analyzed: {s.files ?? 0} files ({s.deleted_files ?? 0} deleted) · {s.timeline_events ?? 0} events · {(s.browser_history ?? 0) + (s.browser_downloads ?? 0)} browser · {s.usb_devices ?? 0} USB
+                      Analyzed: {s.files ?? 0} files ({s.deleted_files ?? 0} deleted) · {s.timeline_events ?? 0} events · {(s.browser_history ?? 0) + (s.browser_downloads ?? 0)} browser · {s.usb_devices ?? 0} USB{s.programs_run !== undefined && ` · ${(s.programs_run ?? 0) + (s.recent_files ?? 0) + (s.recycle_bin_items ?? 0)} activity`}
                     </span>
                   ) : (
                     <Badge tone={e.analysis_status === 'FAILED' ? 'danger' : 'warn'}>{e.demo ? 'Demo record' : e.analysis_status === 'FAILED' ? 'Analysis failed' : 'Not analyzed'}</Badge>
@@ -196,16 +199,18 @@ function EvidenceCard({ evidence, jobs, onChange }: { evidence: Evidence[]; jobs
   );
 }
 
-/** Four steps from an empty case to a report, ticked off from the case's own data; hidden when complete. */
+/** Four steps from an empty case to a report, ticked off from the case's own data; hidden when complete
+ * or when the user's role can do none of the remaining steps (e.g. a viewer). */
 function GettingStarted({ counts }: { counts: CaseCounts }) {
+  const { can } = useAuth();
   const steps = [
-    { label: 'Upload a disk image', hint: 'E01, RAW/DD or AFF; hashed and sealed read-only', done: counts.evidence > 0, to: '/app/evidence', action: 'Upload' },
-    { label: 'Run the full analysis', hint: 'Files, timeline, browser history, USB devices', done: counts.evidence_analyzed > 0, to: '/app/evidence', action: 'Analyze' },
-    { label: 'Review and record findings', hint: 'Deleted files, timeline, indicators', done: counts.findings > 0, to: '/app/findings', action: 'Add finding' },
-    { label: 'Generate the report', hint: 'Hash-sealed PDF for the case file', done: counts.reports > 0, to: '/app/reports', action: 'Generate' },
+    { label: 'Upload a disk image', hint: 'E01, RAW/DD or AFF; hashed and sealed read-only', done: counts.evidence > 0, to: '/app/evidence', action: 'Upload', permission: 'EVIDENCE_UPLOAD' },
+    { label: 'Run the full analysis', hint: 'Files, timeline, browser history, USB devices', done: counts.evidence_analyzed > 0, to: '/app/evidence', action: 'Analyze', permission: 'ANALYSIS_RUN' },
+    { label: 'Review and record findings', hint: 'Deleted files, timeline, indicators', done: counts.findings > 0, to: '/app/findings', action: 'Add finding', permission: 'FINDING_CREATE' },
+    { label: 'Generate the report', hint: 'Hash-sealed PDF for the case file', done: counts.reports > 0, to: '/app/reports', action: 'Generate', permission: 'REPORT_CREATE' },
   ];
   const done = steps.filter((s) => s.done).length;
-  if (done === steps.length) return null;
+  if (done === steps.length || !steps.some((s) => !s.done && can(s.permission))) return null;
   const next = steps.findIndex((s) => !s.done);
   return (
     <section className="card getting-started">
@@ -224,7 +229,7 @@ function GettingStarted({ counts }: { counts: CaseCounts }) {
               <div className="strong small">{s.label}</div>
               <div className="tiny muted">{s.hint}</div>
             </div>
-            {i === next && <Link className="btn sm primary" to={s.to}>{s.action} <ArrowRight size={13} /></Link>}
+            {i === next && can(s.permission) && <Link className="btn sm primary" to={s.to}>{s.action} <ArrowRight size={13} /></Link>}
           </li>
         ))}
       </ol>

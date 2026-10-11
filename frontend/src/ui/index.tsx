@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { Check, Copy, Inbox, X } from 'lucide-react';
 import { NAV } from '../app/nav';
@@ -85,7 +86,7 @@ export function Badge({ tone = 'neutral', children, title }: { tone?: Tone; chil
 const STATUS_TONES: Record<string, Tone> = {
   VERIFIED: 'ok', COMPLETED: 'ok', ACTIVE: 'ok', OPEN: 'info', IN_PROGRESS: 'accent', ON_HOLD: 'warn',
   RUNNING: 'accent', QUEUED: 'warn', PENDING: 'warn', PENDING_DESKTOP: 'warn', FAILED: 'danger', INTEGRITY_FAILED: 'danger',
-  CANCELLED: 'neutral', SUSPENDED: 'danger', DISABLED: 'neutral', ARCHIVED: 'neutral',
+  CANCELLED: 'neutral', DELETED: 'danger', SUSPENDED: 'danger', DISABLED: 'neutral', ARCHIVED: 'neutral',
   CRITICAL: 'danger', HIGH: 'warn', MEDIUM: 'accent', LOW: 'info', INFO: 'neutral',
 };
 
@@ -150,7 +151,8 @@ export function Modal({ open, title, onClose, children, footer, wide }: {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
   if (!open) return null;
-  return (
+  // Rendered on <body>, so a dialog opened from a table cell does not inherit the cell's alignment or wrapping.
+  return createPortal(
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
@@ -162,7 +164,8 @@ export function Modal({ open, title, onClose, children, footer, wide }: {
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

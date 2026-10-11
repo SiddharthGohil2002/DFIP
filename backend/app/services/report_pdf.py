@@ -39,7 +39,7 @@ def _fmt(v):
     if isinstance(v, datetime):
         return v.strftime('%Y-%m-%d %H:%M:%S UTC')
     if isinstance(v, (list, tuple)):
-        return ', '.join(str(x) for x in v) or '—'
+        return ', '.join(_fmt(x) for x in v) or '—'
     return str(v)
 
 
@@ -61,8 +61,8 @@ def _table(header, rows, widths, mono_cols=()):
     return t
 
 
-def _section(story, title, header, rows, widths, empty, mono_cols=(), total=None):
-    story.append(Paragraph(escape(title), H2))
+def _section(story, title, header, rows, widths, empty, mono_cols=(), total=None, heading=H2):
+    story.append(Paragraph(escape(title), heading))
     if not rows:
         story.append(Paragraph(escape(empty), NOTE))
     else:
@@ -75,6 +75,9 @@ def _section(story, title, header, rows, widths, empty, mono_cols=(), total=None
 
 def build_case_report(db, case: dict, report_id: str, version: int, path: Path, generated_by: dict, now: datetime):
     cid = case['case_id']
+    # Sections are numbered in order of appearance.
+    numbers = iter(range(1, 100))
+    T = lambda title: f'{next(numbers)}. {title}'
     evidence = list(db['evidence'].find({'case_id': cid}).sort('created_at', 1))
     eids = [e['evidence_id'] for e in evidence]
     investigator = None
@@ -89,6 +92,8 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
             ['Report', f'{report_id} (version {version} for this case)'],
             ['Case', f'{cid} — {case["name"]}'],
             ['Status / priority', f'{case.get("status")} / {case.get("priority")}'],
+            ['Legal hold', (f'ACTIVE since {_fmt(case["legal_hold"].get("set_at"))} by {case["legal_hold"].get("set_by_name")}: '
+                            f'{case["legal_hold"].get("reason")}') if (case.get('legal_hold') or {}).get('active') else 'Not under legal hold'],
             ['Lead investigator', f'{investigator["name"]} <{investigator["email"]}>' if investigator else None],
             ['Description', case.get('description')],
             ['Generated', now],
@@ -101,7 +106,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
         Spacer(1, 10),
     ]
 
-    _section(story, '1. Evidence register', ['Evidence', 'File', 'Format', 'Size (bytes)', 'Acquired', 'Integrity', 'Analysis'],
+    _section(story, T('Evidence register'), ['Evidence', 'File', 'Format', 'Size (bytes)', 'Acquired', 'Integrity', 'Analysis'],
              [[e['evidence_id'], e.get('filename'), e.get('format'), e.get('size'), e.get('created_at'),
                e.get('verification_status'), e.get('analysis_status') or 'NOT RUN'] for e in evidence],
              [1.1, 2.4, 0.8, 1.2, 1.7, 1.2, 1.1], 'No evidence has been registered for this case.')
@@ -113,38 +118,43 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     custody = list(db['chain_of_custody'].find({'case_id': cid}).sort('timestamp', 1))
     # Readable action labels wrap at spaces; older records may only carry a user ID.
     names = {str(x['_id']): x.get('name') for x in db['users'].find({}, {'name': 1})}
-    _section(story, '2. Chain of custody', ['Time', 'Evidence', 'Action', 'By', 'SHA-256 / result'],
+    _section(story, T('Chain of custody'), ['Time', 'Evidence', 'Action', 'By', 'SHA-256 / result'],
              [[c.get('timestamp'), c.get('evidence_id'), (c.get('action') or '').replace('_', ' ').capitalize(),
                c.get('user_name') or names.get(str(c.get('user_id'))) or c.get('user_id'),
-               f'{(c.get("sha256") or "")[:24]}… {c.get("status") or c.get("result") or ""}'.strip() if c.get('sha256') else c.get('status') or c.get('result')]
+               ((f'{(c.get("sha256") or "")[:24]}… {c.get("status") or c.get("result") or ""}'.strip() if c.get('sha256') else c.get('status') or c.get('result') or '')
+                + (f' ({c["reason"]})' if c.get('reason') else ''))]
               for c in custody],
              [1.6, 0.9, 1.6, 1.6, 2.2], 'No custody events recorded.')
 
-    story.append(Paragraph('3. Analysis summary', H2))
+    story.append(Paragraph(T('Analysis summary'), H2))
     runs = []
     for e in evidence:
         s = e.get('analysis_summary') or {}
+        activity = None
+        if 'programs_run' in s:
+            activity = f'{s.get("programs_run", 0)} / {s.get("recent_files", 0)} / {s.get("recycle_bin_items", 0)}'
         runs.append([e['evidence_id'], e.get('analyzed_at'), s.get('files'), s.get('deleted_files'), s.get('timeline_events'),
-                     s.get('browser_history'), s.get('usb_devices'), s.get('yara_matches')])
-    story.append(_table(['Evidence', 'Analyzed', 'Files', 'Deleted', 'Timeline events', 'Browser visits', 'USB devices', 'YARA hits'],
-                        runs, [1, 1.7, .7, .7, 1, 1, .9, .8]) if runs else Paragraph('No evidence analyzed.', NOTE))
+                     s.get('browser_history'), s.get('usb_devices'), activity, s.get('yara_matches')])
+    story.append(_table(['Evidence', 'Analyzed', 'Files', 'Deleted', 'Timeline events', 'Browser visits', 'USB devices',
+                         'Programs / recent files / recycled', 'YARA hits'],
+                        runs, [1, 1.6, .6, .6, .9, .8, .8, 1.3, .6]) if runs else Paragraph('No evidence analyzed.', NOTE))
     story.append(Spacer(1, 10))
 
     deleted_q = {'evidence_id': {'$in': eids}, 'deleted': True, 'is_virtual': False}
     deleted = list(db['fs_entries'].find(deleted_q).sort('path', 1).limit(MAX_ROWS))
-    _section(story, '4. Deleted files (filesystem metadata)', ['Evidence', 'Path', 'Inode', 'Size', 'Modified', 'Created'],
+    _section(story, T('Deleted files (filesystem metadata)'), ['Evidence', 'Path', 'Inode', 'Size', 'Modified', 'Created'],
              [[d['evidence_id'], d['path'], d.get('inode'), d.get('size'), d.get('mtime'), d.get('crtime')] for d in deleted],
              [0.9, 3.2, 0.7, 0.7, 1.5, 1.5], 'No deleted file entries were found (or evidence was not analyzed).',
              total=db['fs_entries'].count_documents(deleted_q))
 
     recovered = list(db['forensic_artifacts'].find({'case_id': cid, 'type': 'RECOVERED_FILE'}).sort('timestamp', 1))
-    _section(story, '5. Recovered files', ['Recovered', 'Original path', 'Was deleted', 'Size', 'SHA-256'],
+    _section(story, T('Recovered files'), ['Recovered', 'Original path', 'Was deleted', 'Size', 'SHA-256'],
              [[r.get('timestamp'), r.get('original_path') or f'inode {r.get("inode")}', 'yes' if r.get('was_deleted') else 'no',
                r.get('size'), r.get('sha256')] for r in recovered],
              [1.3, 2.6, 0.7, 0.7, 3.2], 'No files have been recovered.', mono_cols=(4,))
 
     usb = list(db['usb_artifacts'].find({'case_id': cid}))
-    _section(story, '6. USB device history', ['Device', 'Serial', 'VID:PID', 'Drive', 'First install', 'Last connected', 'Last removed', 'Source'],
+    _section(story, T('USB device history'), ['Device', 'Serial', 'VID:PID', 'Drive', 'First install', 'Last connected', 'Last removed', 'Source'],
              [[u.get('friendly_name') or f'{u.get("vendor")} {u.get("product")}', u.get('serial'),
                f'{u["vid"]}:{u["pid"]}' if u.get('vid') else None, u.get('drive_letters'),
                u.get('first_install') or u.get('setupapi_first_install'), u.get('last_arrival'), u.get('last_removal'),
@@ -152,20 +162,45 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
              [1.5, 1.7, 0.9, 0.6, 1.3, 1.3, 1.3, 1.2], 'No USB storage devices were found in the SYSTEM hive or setupapi.dev.log.')
 
     hist = list(db['forensic_artifacts'].find({'case_id': cid, 'type': 'BROWSER_HISTORY'}).sort('last_visit_time', -1))
-    _section(story, '7. Browser history', ['Browser', 'Last visit', 'Visits', 'URL', 'Title'],
+    _section(story, T('Browser history'), ['Browser', 'Last visit', 'Visits', 'URL', 'Title'],
              [[h.get('browser'), h.get('last_visit_time'), h.get('visit_count'), h.get('url'), h.get('title')] for h in hist],
              [0.8, 1.5, 0.5, 3.2, 2], 'No browser history databases were found.')
     downloads = list(db['forensic_artifacts'].find({'case_id': cid, 'type': 'BROWSER_DOWNLOAD'}).sort('start_time', -1))
-    _section(story, '8. Browser downloads', ['Browser', 'Started', 'Saved to', 'From'],
+    _section(story, T('Browser downloads'), ['Browser', 'Started', 'Saved to', 'From'],
              [[d.get('browser'), d.get('start_time'), d.get('target_path'), d.get('tab_url')] for d in downloads],
              [0.8, 1.5, 3, 3], 'No browser downloads were found.')
 
+    art = db['forensic_artifacts']
+    activity_title = T('Windows activity')
+    story.append(Paragraph(escape(activity_title), H2))
+    story.append(Paragraph('Programs run come from Prefetch files, opened files from shortcuts in the user\'s Recent folder '
+                           '(Windows writes the shortcut when the file is opened; the target times describe the file itself), '
+                           'and deletions from Recycle Bin index ($I) files.', NOTE))
+    n = activity_title.split('.')[0]
+    q = {'case_id': cid, 'type': 'PROGRAM_RUN'}
+    _section(story, f'{n}.1 Programs run (Prefetch)', ['Program', 'Run count', 'Last run', 'Earlier runs', 'Prefetch file'],
+             [[p.get('executable_path') or p.get('executable'), p.get('run_count'), p.get('last_run'),
+               (p.get('last_run_times') or [])[1:], p.get('source_path')] for p in art.find(q).sort('last_run', -1).limit(MAX_ROWS)],
+             [2.6, 0.6, 1.3, 1.6, 1.9], 'No Prefetch files were found.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'RECENT_FILE'}
+    _section(story, f'{n}.2 Recently opened files', ['Opened (last)', 'File', 'Drive', 'Target size', 'Target modified', 'Shortcut'],
+             [[f.get('lnk_modified'), f.get('target_path'),
+               ' '.join(x for x in (f.get('drive_type'), f.get('volume_label'), f.get('drive_serial')) if x) or None,
+               f.get('target_size'), f.get('target_modified'), f.get('source_path')]
+              for f in art.find(q).sort('lnk_modified', -1).limit(MAX_ROWS)],
+             [1.3, 2.2, 1.3, 0.7, 1.3, 2.2], 'No Recent-folder shortcuts were found.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'RECYCLE_BIN_ITEM'}
+    _section(story, f'{n}.3 Recycle Bin', ['Deleted', 'Original path', 'Size', 'Content ($R) present', 'Index file'],
+             [[b.get('deleted_time'), b.get('original_path'), b.get('original_size'), 'yes' if b.get('data_present') else 'no',
+               b.get('source_path')] for b in art.find(q).sort('deleted_time', -1).limit(MAX_ROWS)],
+             [1.3, 2.8, 0.7, 0.9, 2.6], 'No Recycle Bin index files were found.', total=art.count_documents(q), heading=H3)
+
     malware = list(db['forensic_artifacts'].find({'case_id': cid, 'type': 'MALWARE_INDICATOR'}))
-    _section(story, '9. Malware indicators (YARA)', ['Evidence', 'Rule', 'File'],
+    _section(story, T('Malware indicators (YARA)'), ['Evidence', 'Rule', 'File'],
              [[m.get('evidence_id'), m.get('rule'), m.get('original_path')] for m in malware],
              [1, 2.5, 4], 'No YARA rule matches in scanned user-profile scripts and executables.')
 
-    story.append(Paragraph('10. Investigator findings', H2))
+    story.append(Paragraph(T('Investigator findings'), H2))
     findings = list(db['findings'].find({'case_id': cid}).sort('created_at', 1))
     if not findings:
         story.append(Paragraph('No findings recorded.', NOTE))
@@ -176,19 +211,31 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
             story.append(Paragraph('Evidence: ' + escape(', '.join(f['evidence_ids'])), NOTE))
         story.append(Spacer(1, 6))
 
+    from .tags import resolve
+    tag_order = {'EVIDENCE': 0, 'NOTABLE': 1, 'FOLLOW_UP': 2}
+    tagged = sorted(db['tags'].find({'case_id': cid}), key=lambda t: (tag_order.get(t.get('label'), 9), str((t.get('snapshot') or {}).get('timestamp') or '')))
+    item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
+                 'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file'}
+    _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
+             [[(t.get('label') or '').replace('_', ' ').capitalize(),
+               f'{(t.get("snapshot") or {}).get("title")}' + ('' if resolve(db, t) is not None else ' (not in the latest analysis)'),
+               item_kind.get(t.get('item_type'), t.get('item_type')), (t.get('snapshot') or {}).get('timestamp'), t.get('note'),
+               t.get('created_by_name')] for t in tagged],
+             [0.8, 2.8, 1.1, 1.3, 2.2, 1.1], 'No items have been tagged.')
+
     # Notable events: everything except per-file MACB entries, plus MACB entries of deleted files.
     notable_q = {'case_id': cid, '$or': [{'type': {'$ne': 'FILE_MACB'}}, {'deleted': True}]}
     notable = list(db['timeline_events'].find(notable_q).sort('timestamp', 1).limit(MAX_ROWS))
     file_events = db['timeline_events'].count_documents({'case_id': cid, 'type': 'FILE_MACB'})
     story.append(PageBreak())
-    _section(story, '11. Timeline of notable events', ['Time (UTC)', 'Type', 'Event'],
+    _section(story, T('Timeline of notable events'), ['Time (UTC)', 'Type', 'Event'],
              [[t.get('timestamp'), t.get('type'), t.get('description')] for t in notable],
              [1.5, 1.3, 5], 'No timeline events.', total=db['timeline_events'].count_documents(notable_q))
     story.append(Paragraph(f'The full filesystem timeline ({file_events} file MACB events) is available in DFIP and as '
                            'Sleuth Kit bodyfiles in the analysis directory for independent verification with mactime.', NOTE))
 
     chain = verify_chain()
-    story += [Spacer(1, 10), Paragraph('12. Audit trail integrity', H2),
+    story += [Spacer(1, 10), Paragraph(T('Audit trail integrity'), H2),
               Paragraph(escape(f'Hash-chained audit log verification at report time: '
                                f'{"VALID" if chain.get("valid") else "BROKEN at sequence " + str(chain.get("broken_sequence"))}'
                                f' ({chain.get("records_checked", 0)} records checked).'), BODY),

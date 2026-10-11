@@ -19,12 +19,16 @@ from .artifact_locator import ArtifactCollector, extract
 from .browser_artifacts import PARSERS as BROWSER_PARSERS
 from .filesystem import iter_bodyfile, write_bodyfile
 from .hashing import sha256_file
-from .timeline import browser_events, macb_events, usb_events
+from .timeline import activity_events, browser_events, macb_events, usb_events
 from .tools import filesystem_stats, parse_mmls, recover_file, scan_yara
 from .usb import merge_usb_sources, parse_setupapi, parse_system_hive
+from .windows_activity import parse_lnk, parse_prefetch, parse_recycle_index_file
 from .working_image import analysis_image, needs_working_copy
 
 BATCH = 5000
+# Windows activity artifacts: how many of each kind one analysis extracts (a real disk can hold thousands).
+MAX_ACTIVITY_ITEMS = {'PREFETCH': 2048, 'LNK_RECENT': 5000, 'RECYCLE_BIN_INFO': 5000}
+MAX_SUMMARY_ARTIFACTS = 200
 RULES_FILE = Path(__file__).resolve().parents[2] / 'rules' / 'default.yar'
 SCAN_CANDIDATE_RE = re.compile(r'^/(?:Users|Documents and Settings)/.+\.(?:ps1|bat|cmd|vbs|js|hta|exe|dll|scr)$', re.I)
 MAX_SCAN_FILES = 200
@@ -104,6 +108,11 @@ class AnalysisPipeline:
 
         self._checkpoint(80, 'yara-scan')
         self._yara_scan()
+
+        # Tags point at records this run replaced; re-link them by natural key (kept out of the counts).
+        self._checkpoint(88, 'relinking-tags')
+        from ..services.tags import relink_evidence
+        self.summary['tags'] = relink_evidence(self.db, self.eid)
 
         self._checkpoint(90, 'case-analytics')
         from ..analysis.services import compute_anomalies, compute_patterns
@@ -188,13 +197,25 @@ class AnalysisPipeline:
             'original_path': item['path'], 'inode': item['inode'], 'offset': item['partition_offset'],
             'size': result['size'], 'sha256': result['sha256'], 'sidecars': result['sidecars'],
             'source': 'SLEUTH_KIT_ICAT'}])
-        self.summary['artifacts'].append({'kind': item['kind'], 'path': item['path'], 'sha256': result['sha256'],
-                                          'artifact_id': aid})
+        self.summary['artifacts_total'] = self.summary.get('artifacts_total', 0) + 1
+        if len(self.summary['artifacts']) < MAX_SUMMARY_ARTIFACTS:
+            self.summary['artifacts'].append({'kind': item['kind'], 'path': item['path'], 'sha256': result['sha256'],
+                                              'artifact_id': aid})
         return aid
 
     def _process_artifacts(self, items: list[dict]):
-        hive_results, setupapi_items = [], []
+        hive_results, setupapi_items, activity = [], [], []
+        for key in ('programs_run', 'recent_files', 'recycle_bin_items'):
+            self._count(key, 0)
+        seen: dict[str, int] = {}
         for n, item in enumerate(items):
+            cap = MAX_ACTIVITY_ITEMS.get(item['kind'])
+            if cap is not None:
+                seen[item['kind']] = seen.get(item['kind'], 0) + 1
+                if seen[item['kind']] > cap:
+                    if seen[item['kind']] == cap + 1:
+                        self.summary['warnings'].append(f'Only the first {cap} {item["kind"]} files were analysed')
+                    continue
             dest = self.work / 'extracted' / f'{n:03d}-{item["kind"].lower()}'
             result = extract(self.image, item, dest)
             if result.get('status') != 'COMPLETED':
@@ -208,7 +229,51 @@ class AnalysisPipeline:
                 hive_results.append((item, aid, parse_system_hive(local)))
             elif item['kind'] == 'SETUPAPI_LOG':
                 setupapi_items.append((item, aid, local))
+            elif item['kind'] in MAX_ACTIVITY_ITEMS:
+                row = self._activity_record(item, local, aid)
+                if row:
+                    activity.append(row)
         self._parse_usb(hive_results, setupapi_items)
+        self._store_activity(activity)
+
+    def _activity_record(self, item, local: Path, parent_id: str) -> dict | None:
+        """One Windows activity record from an extracted Prefetch, Recent shortcut or Recycle Bin $I file."""
+        parser = {'PREFETCH': parse_prefetch, 'LNK_RECENT': parse_lnk, 'RECYCLE_BIN_INFO': parse_recycle_index_file}[item['kind']]
+        parsed = parser(local)
+        if parsed.get('status') != 'COMPLETED':
+            self.summary['warnings'].append(f'{item["path"]}: {parsed.get("error")}')
+            return None
+        if parsed.get('warning'):
+            self.summary['warnings'].append(f'{item["path"]}: {parsed["warning"]}')
+        fields = {k: v for k, v in parsed.items() if k not in ('status', 'warning')}
+        name = item['path'].rsplit('/', 1)[-1]
+        iso = lambda t: t.isoformat() if hasattr(t, 'isoformat') else t
+        row = {'artifact_id': str(uuid.uuid4()), 'case_id': self.case_id, 'evidence_id': self.eid,
+               'source_path': item['path'], 'source_file': item['path'], 'parent_artifact_id': parent_id,
+               'partition_offset': item['partition_offset'], 'timestamp': datetime.now(timezone.utc), **fields}
+        if item['kind'] == 'PREFETCH':
+            row.update(type='PROGRAM_RUN', source='PREFETCH', pf_name=name, pf_modified=iso(item.get('fs_mtime')))
+        elif item['kind'] == 'LNK_RECENT':
+            row.update(type='RECENT_FILE', source='LNK', lnk_name=name,
+                       lnk_created=iso(item.get('fs_crtime')), lnk_modified=iso(item.get('fs_mtime')))
+        else:
+            data = item.get('recycle_data') or {}
+            row.update(type='RECYCLE_BIN_ITEM', source='RECYCLE_BIN', sid=item.get('sid'), index_name=name,
+                       original_name=(row.get('original_path') or '').replace('/', '\\').rsplit('\\', 1)[-1] or None,
+                       data_present=bool(data), data_path=data.get('path'), data_inode=data.get('inode'),
+                       data_size=data.get('size'), data_is_dir=data.get('is_dir'))
+        return row
+
+    def _store_activity(self, rows: list[dict]):
+        if not rows:
+            return
+        self._insert('forensic_artifacts', rows)
+        events = activity_events(rows)
+        self._insert('timeline_events', events)
+        self._count('programs_run', sum(r['type'] == 'PROGRAM_RUN' for r in rows))
+        self._count('recent_files', sum(r['type'] == 'RECENT_FILE' for r in rows))
+        self._count('recycle_bin_items', sum(r['type'] == 'RECYCLE_BIN_ITEM' for r in rows))
+        self._count('timeline_events', len(events))
 
     def _parse_browser(self, item, local: Path, parent_id: str):
         parsed = BROWSER_PARSERS[item['kind']](local, self.case_id, self.eid)

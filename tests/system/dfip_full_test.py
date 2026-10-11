@@ -417,6 +417,13 @@ def t_evidence():
     good = upload(inv, C['B'], data, 'second-copy.dd', extra={'sha512': C['IMG_SHA512'].upper()})
     check('an upload with a matching client SHA-512 is accepted', good.status == 200 and good.json.get('sha512') == C['IMG_SHA512'], good)
     C['B_E'] = good.json.get('evidence_id')
+    check('the same image can be registered in a different case', good.status == 200 and good.json.get('case_id') == C['B'], good)
+    before = set(glob.glob('/app/storage/evidence/original/*'))
+    dup = upload(inv, A, data, 'renamed-copy.dd')
+    check('the same image uploaded again to its case is refused (409) whatever its file name, naming the existing evidence',
+          dup.status == 409 and E in (dup.detail or ''), dup)
+    check('...and the duplicate is discarded, not registered', set(glob.glob('/app/storage/evidence/original/*')) == before
+          and [e['evidence_id'] for e in get('/api/evidence', inv).json['data'] if e['case_id'] == A] == [E])
 
 
 @section('07 Full analysis job')
@@ -481,7 +488,9 @@ def t_filesystem():
     check('deleted file size is 2,191 bytes (true size)', pay['size'] == len(PAYROLL) == 2191, pay['size'])
     check('deleted file modified time is 2026-09-01 09:41:02 UTC', iso(pay['mtime']) == utc(2026, 9, 1, 9, 41, 2), pay['mtime'])
     q = get(f'/api/forensics/evidence/{E}/files?q=PAYROLL', inv).json
-    check('path filter is case-insensitive', q['total'] == 1 and q['data'][0]['path'] == pay['path'], q['total'])
+    want = {e['path'] for e in C['TRUTH'] if 'payroll' in e['path'].lower() and not e['virtual']}
+    check('path filter is case-insensitive (the CSV and its Recent shortcut)', q['total'] == len(want) == 2
+          and {d['path'] for d in q['data']} == want, (q['total'], want))
     check('regex characters in the filter are treated literally', get(f'/api/forensics/evidence/{E}/files?q=.%2A', inv).json['total'] == 0)
     check('deleted=false excludes the deleted file', all(not f['deleted'] for f in get(f'/api/forensics/evidence/{E}/files?deleted=false&limit=1000', inv).json['data']))
     ist = post(f"/api/forensics/evidence/{E}/istat?inode={pay['inode']}&offset={pay['partition_offset']}", inv)
@@ -537,6 +546,53 @@ def t_recovery():
     check('PCAP analysis of a non-PCAP file fails cleanly', pc.status < 500, pc)
     mem = post(f"/api/forensics/artifacts/{C['PAY_ART']}/memory", inv, timeout=300)
     check('memory analysis of a non-memory file fails cleanly', mem.status < 500, str(mem)[:200])
+
+
+@section('09b File viewer (hex and preview)')
+def t_viewer():
+    import base64
+    import pymongo
+    inv, E = C['INVESTIGATOR'], C['E']
+    truth = {e['path']: e for e in C['TRUTH']}
+    pay = C['PAY']
+    base = f'/api/forensics/evidence/{E}'
+    q = lambda inode: f'inode={inode}&offset=2048'
+    page = lambda inode, start=0, length=4096: get(f'{base}/content?{q(inode)}&start={start}&length={length}', inv)
+    p0 = page(pay['inode']).json
+    check('hex page 0 of the deleted payroll export equals the original bytes', base64.b64decode(p0['data_b64']) == PAYROLL
+          and p0['size'] == len(PAYROLL) and p0['eof'] is True, {k: p0.get(k) for k in ('start', 'length', 'size', 'eof')})
+    s = page(pay['inode'], 100, 50).json
+    check('a byte range in the middle (100-150) is exact', base64.b64decode(s['data_b64']) == PAYROLL[100:150] and s['start'] == 100)
+    past = page(pay['inode'], 5000).json
+    check('reading past the end returns no bytes and says so', past['length'] == 0 and past['eof'] is True, past)
+    check('a folder cannot be viewed (400)', page(truth['/Users/alice/Documents']['inode']).status == 400)
+    check('an invalid inode is 400 and an unknown one 404', page('1;ls').status == 400 and page('99999999').status == 404)
+    check('beyond 256 MiB the viewer asks for a recovered copy (416)', page(pay['inode'], 300 * 1024 * 1024).status == 416)
+    a = get(f"/api/forensics/artifacts/{C['PAY_ART']}/content?start=2000&length=500", inv).json
+    check('a recovered file can be read at any offset', base64.b64decode(a['data_b64']) == PAYROLL[2000:2500], a.get('start'))
+
+    pv = get(f'{base}/preview?{q(pay["inode"])}', inv).json
+    check('preview: the CSV is detected as text and shown', pv['kind'] == 'text' and pv['text'] == PAYROLL.decode() and pv['encoding'] == 'UTF-8', pv.get('kind'))
+    for path, kind, mime in (('/Users/alice/Pictures/whiteboard.png', 'image', 'image/png'), ('/Users/alice/Documents/offer-letter.pdf', 'pdf', 'application/pdf')):
+        inode = truth[path]['inode']
+        p = get(f'{base}/preview?{q(inode)}', inv).json
+        raw = get(f'{base}/raw?{q(inode)}', inv)
+        icat = sh('icat', '-o', '2048', str(IMG), inode).stdout
+        h = {k.lower(): v for k, v in raw.headers.items()}
+        check(f'{path.rsplit("/", 1)[-1]}: detected as {mime} from its content and rendered byte for byte',
+              p['kind'] == kind and p['mime'] == mime and p['renderable'] is True and raw.status == 200 and raw.body == icat
+              and h.get('content-type', '').startswith(mime), (p, raw.status))
+        check(f'{path.rsplit("/", 1)[-1]}: served with nosniff, as an attachment, under a sandbox policy',
+              h.get('x-content-type-options') == 'nosniff' and h.get('content-disposition') == 'attachment'
+              and 'sandbox' in h.get('content-security-policy', ''), h)
+    pf = next(p for p in truth if p.startswith('/Windows/Prefetch/'))
+    bp = get(f'{base}/preview?{q(truth[pf]["inode"])}', inv).json
+    check('a binary file (Prefetch) is reported as binary and not rendered (415)', bp['kind'] == 'binary'
+          and get(f'{base}/raw?{q(truth[pf]["inode"])}', inv).status == 415, bp)
+    check('another investigator cannot read the file (404)', get(f'{base}/content?{q(pay["inode"])}', C['INV2']).status == 404)
+    db = pymongo.MongoClient(os.environ['MONGODB_URI'])['dfip']
+    views = {a['metadata'].get('view') for a in db.audit_logs.find({'action': 'FILE_CONTENT_VIEWED', 'metadata.evidence_id': E})}
+    check('viewing file content is recorded in the audit log', {'hex', 'preview', 'render'} <= views, views)
 
 
 @section('10 Timeline (vs Sleuth Kit mactime)')
@@ -676,6 +732,71 @@ def t_usb():
     check('another investigator gets 404 for the USB list', get(f'/api/forensics/usb?case_id={A}', C['INV2']).status == 404)
 
 
+# What scripts/test-image/make_artifacts.py wrote (UTC): SecureDelete ran at 10:06:02 and 14:18:30, the payroll
+# export was opened from E: (the SanDisk, label CRUZER) at 14:14:06 and moved to the Recycle Bin at 14:15:20.
+SECUREDELETE_PATH = r'\VOLUME{01dc1f2a3b4c5d6e-5e1f22c4}\USERS\ALICE\DOWNLOADS\SECUREDELETE.EXE'
+RECENT_LNK = '/Users/alice/AppData/Roaming/Microsoft/Windows/Recent/payroll-export.csv.lnk'
+RECYCLE_DIR = '/$Recycle.Bin/S-1-5-21-3623811015-3361044348-30300820-1001'
+
+
+@section('12b Windows activity (vs ExifTool and the generator)')
+def t_activity():
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    act = lambda kind, extra='': get(f'/api/forensics/activity?case_id={A}&kind={kind}{extra}', inv)
+    truth = {e['path']: e for e in C['TRUTH']}
+    check('Sleuth Kit lists the Recycle Bin, Recent shortcut and Prefetch files under their exact names',
+          {f'{RECYCLE_DIR}/$I3K9D2A.csv', f'{RECYCLE_DIR}/$R3K9D2A.csv', RECENT_LNK} <= set(truth)
+          and any(p.startswith('/Windows/Prefetch/SECUREDELETE.EXE-') for p in truth), sorted(p for p in truth if 'Recycle' in p))
+
+    runs = act('PROGRAM_RUN').json['data']
+    pf = next((r for r in runs if r.get('executable') == 'SECUREDELETE.EXE'), {})
+    check('Prefetch: SECUREDELETE.EXE ran twice, last at 14:18:30 and before that at 10:06:02 UTC',
+          pf.get('run_count') == 2 and [iso(t) for t in pf.get('last_run_times', [])] == [utc(2026, 9, 1, 14, 18, 30), utc(2026, 9, 1, 10, 6, 2)], pf)
+    check('Prefetch: executable path, volume serial and loaded files',
+          pf.get('executable_path') == SECUREDELETE_PATH and [v.get('serial') for v in pf.get('volumes', [])] == ['5E1F-22C4']
+          and any(f.endswith('PAYROLL-EXPORT.CSV') for f in pf.get('referenced_files', [])), {k: pf.get(k) for k in ('executable_path', 'volumes')})
+
+    recent = act('RECENT_FILE').json['data']
+    lnk = next((r for r in recent if r.get('source_path') == RECENT_LNK), {})
+    work = Path(tempfile.mkdtemp())
+    (work / 'r.lnk').write_bytes(sh('icat', '-o', '2048', str(IMG), truth[RECENT_LNK]['inode']).stdout)
+    exif = json.loads(subprocess.run(['exiftool', '-json', '-n', '-G1', '-a', '-s', str(work / 'r.lnk')], capture_output=True,
+                                     text=True, env={'TZ': 'UTC', 'PATH': '/usr/bin:/bin'}).stdout)[0]
+    tag = lambda name: next((v for k, v in exif.items() if k.endswith(':' + name)), None)
+    exif_time = lambda name: datetime.strptime(str(tag(name))[:19], '%Y:%m:%d %H:%M:%S').replace(tzinfo=timezone.utc) if tag(name) else None
+    serial = tag('DriveSerialNumber')
+    check('Recent shortcut: target, drive and size equal ExifTool on the extracted shortcut',
+          lnk.get('target_path') == tag('LocalBasePath') == r'E:\payroll-export.csv' and lnk.get('drive_type') == 'Removable'
+          and tag('DriveType') == 2 and lnk.get('volume_label') == tag('VolumeLabel') == 'CRUZER'
+          and serial is not None and lnk.get('drive_serial') == f'{serial >> 16:04X}-{serial & 0xFFFF:04X}'
+          and lnk.get('target_size') == tag('TargetFileSize') == len(PAYROLL), (lnk, exif))
+    check('Recent shortcut: target times equal ExifTool',
+          iso(lnk.get('target_created')) == exif_time('CreateDate') and iso(lnk.get('target_modified')) == exif_time('ModifyDate')
+          and iso(lnk.get('target_accessed')) == exif_time('AccessDate'), {k: lnk.get(k) for k in ('target_created', 'target_modified', 'target_accessed')})
+    check('Recent shortcut: last opened = the shortcut file\'s own time (14:14:06)',
+          iso(lnk.get('lnk_modified')) == datetime.fromtimestamp(truth[RECENT_LNK]['mtime'], timezone.utc) == utc(2026, 9, 1, 14, 14, 6), lnk.get('lnk_modified'))
+
+    rb = act('RECYCLE_BIN_ITEM').json['data']
+    item = next((r for r in rb if r.get('index_name') == '$I3K9D2A.csv'), {})
+    check('Recycle Bin: original path, size and deletion time from the $I record',
+          item.get('original_path') == r'C:\Users\alice\Documents\payroll-export.csv' and item.get('original_size') == len(PAYROLL)
+          and iso(item.get('deleted_time')) == utc(2026, 9, 1, 14, 15, 20) and item.get('format_version') == 2, item)
+    rec = post(f"/api/forensics/evidence/{E}/recover?inode={item.get('data_inode')}&offset={item.get('partition_offset')}", inv).json or {}
+    check('Recycle Bin: the $R content is present and recovers to the payroll export, byte for byte',
+          item.get('data_present') is True and item.get('data_path') == f'{RECYCLE_DIR}/$R3K9D2A.csv'
+          and rec.get('sha256') == hashlib.sha256(PAYROLL).hexdigest(), rec)
+
+    tl = get(f'/api/forensics/timeline?case_id={A}&type=PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN&order=asc&limit=100', inv).json['data']
+    got = [(e['type'], iso(e['timestamp'])) for e in tl]
+    want = [('PROGRAM_RUN', utc(2026, 9, 1, 10, 6, 2)), ('RECENT_FILE_OPENED', utc(2026, 9, 1, 14, 14, 6)),
+            ('FILE_DELETED_TO_RECYCLE_BIN', utc(2026, 9, 1, 14, 15, 20)), ('PROGRAM_RUN', utc(2026, 9, 1, 14, 18, 30))]
+    check('timeline: program runs, file opened from E: and the deletion, at their true times and in order', got == want, got)
+    check('search filter finds SecureDelete and nothing for an unknown name',
+          act('PROGRAM_RUN', '&search=securedelete').json['total'] == 1 and act('PROGRAM_RUN', '&search=nosuchprogram').json['total'] == 0)
+    check('an invalid kind is 400', act('BROWSER_HISTORY').status == 400)
+    check('another investigator gets 404', get(f'/api/forensics/activity?case_id={A}', C['INV2']).status == 404)
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -720,6 +841,7 @@ def t_search():
     t = s['totals']
     check('"payroll" finds the file, timeline events and the browser visit', t['files'] >= 1 and t['timeline'] >= 2 and t['browser'] >= 1, t)
     check('USB search by vendor', get(f'/api/forensics/search?case_id={A}&q=sandisk', inv).json['totals']['usb'] == 1)
+    check('Windows activity search finds the SecureDelete program run', get(f'/api/forensics/search?case_id={A}&q=securedelete', inv).json['totals'].get('activity') == 1)
     check('one-character search is refused (400)', get(f'/api/forensics/search?case_id={A}&q=a', inv).status == 400)
     inj = get(f'/api/forensics/search?case_id={A}&q=%7B%22%24ne%22%3Anull%7D', inv)
     check('query-operator text is searched literally', inj.status == 200 and sum(inj.json['totals'].values()) == 0, inj)
@@ -746,6 +868,57 @@ def t_findings():
     check("...including the user's own evidence from another case (400)", other_case.status == 400, other_case)
     s = get(f'/api/forensics/search?case_id={A}&q=payroll', inv).json
     check('search finds the finding', s['totals']['findings'] >= 1, s['totals'])
+
+
+TAG_NOTE = 'Shortcut proves the file was opened from E:'
+
+
+@section('16b Tags and bookmarks')
+def t_tags():
+    import pymongo
+    db = pymongo.MongoClient(os.environ['MONGODB_URI'])['dfip']
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    tag = lambda body, tok=inv: post('/api/tags', tok, dict({'case_id': A, 'label': 'EVIDENCE'}, **body))
+    usb_ev = get(f'/api/forensics/timeline?case_id={A}&type=USB_ACTIVITY&q=SanDisk&limit=5', inv).json['data'][0]
+    visit = next(r for r in get(f'/api/forensics/browser?case_id={A}&kind=BROWSER_HISTORY', inv).json['data'] if 'filetransfer' in r['url'])
+    sandisk = next(d for d in get(f'/api/forensics/usb?case_id={A}', inv).json['data'] if d['serial'] == '4C530001230518109141')
+    lnk = get(f'/api/forensics/activity?case_id={A}&kind=RECENT_FILE', inv).json['data'][0]
+    items = {'FILE': C['PAY']['_id'], 'TIMELINE_EVENT': usb_ev['_id'], 'BROWSER': visit['_id'], 'USB': sandisk['_id'],
+             'ACTIVITY': lnk['_id'], 'ARTIFACT': C['PAY_ART']}
+    made = {k: tag({'item_type': k, 'item_id': v, 'label': 'EVIDENCE' if k != 'BROWSER' else 'NOTABLE',
+                    'note': TAG_NOTE if k == 'ACTIVITY' else f'{k} tagged by the test'}) for k, v in items.items()}
+    check('an item of every type can be tagged', all(r.status == 200 and r.json['tag_id'].startswith('TAG-') for r in made.values()),
+          {k: r.status for k, r in made.items()})
+    check('the tag keeps a snapshot of the item', made['FILE'].json['snapshot']['title'] == C['PAY']['path']
+          and made['USB'].json['snapshot']['title'].startswith('SanDisk') and made['ACTIVITY'].json['snapshot']['title'] == r'E:\payroll-export.csv',
+          {k: r.json.get('snapshot') for k, r in made.items()})
+    dup = tag({'item_type': 'FILE', 'item_id': C['PAY']['_id']})
+    check('the same item cannot be tagged twice (409)', dup.status == 409 and made['FILE'].json['tag_id'] in (dup.detail or ''), dup)
+    check('viewer cannot tag (403)', tag({'item_type': 'FILE', 'item_id': C['PAY']['_id']}, C['VIEWER']).status == 403)
+    check('another investigator cannot tag in this case (404)', tag({'item_type': 'USB', 'item_id': sandisk['_id']}, C['INV2']).status == 404)
+    check("an item cannot be tagged under a different case (404)",
+          post('/api/tags', inv, {'case_id': C['B'], 'item_type': 'USB', 'item_id': sandisk['_id']}).status == 404)
+    check('an unknown label or item type is refused (400)', tag({'item_type': 'FILE', 'item_id': C['PAY']['_id'], 'label': 'HOT'}).status == 400
+          and tag({'item_type': 'EMAIL', 'item_id': C['PAY']['_id']}).status == 400)
+    tid = made['BROWSER'].json['tag_id']
+    p = patch(f'/api/tags/{tid}', inv, {'label': 'FOLLOW_UP', 'note': '  Check who uploaded what  '})
+    check('a tag\'s label and note can be changed (note trimmed)', p.status == 200 and p.json['label'] == 'FOLLOW_UP' and p.json['note'] == 'Check who uploaded what', p)
+
+    before = {t['item_type']: t['item_id'] for t in get(f'/api/tags?case_id={A}', inv).json['data']}
+    j = wait_job(inv, post(f'/api/jobs/analysis/{E}', inv).json['job_id'])
+    after = {t['item_type']: t for t in get(f'/api/tags?case_id={A}', inv).json['data']}
+    check('re-running the analysis re-links every tag to the new records', j['status'] == 'COMPLETED'
+          and j['result']['summary'].get('tags') == {'relinked': 5, 'unresolved': 0} and all(t['resolved'] for t in after.values()),
+          (j.get('result', {}).get('summary', {}).get('tags'), {k: t['resolved'] for k, t in after.items()}))
+    check('re-analysed records have new IDs, the recovered file keeps its own',
+          all(after[k]['item_id'] != before[k] for k in ('FILE', 'TIMELINE_EVENT', 'BROWSER', 'USB', 'ACTIVITY'))
+          and after['ARTIFACT']['item_id'] == before['ARTIFACT'], (before, {k: t['item_id'] for k, t in after.items()}))
+    extra = tag({'item_type': 'TIMELINE_EVENT', 'item_id': get(f'/api/forensics/timeline?case_id={A}&type=BROWSER_DOWNLOAD&limit=1', inv).json['data'][0]['_id']})
+    rm = req('DELETE', f"/api/tags/{extra.json['tag_id']}", inv)
+    check('a tag can be removed', rm.status == 200 and all(t['tag_id'] != extra.json['tag_id'] for t in get(f'/api/tags?case_id={A}', inv).json['data']), rm)
+    actions = {a['action'] for a in db.audit_logs.find({'action': {'$in': ['TAG_ADDED', 'TAG_UPDATED', 'TAG_REMOVED']}, 'metadata.case_id': A})}
+    check('tagging is recorded in the audit log', actions == {'TAG_ADDED', 'TAG_UPDATED', 'TAG_REMOVED'}, actions)
+    check('another investigator cannot list the case\'s tags (404)', get(f'/api/tags?case_id={A}', C['INV2']).status == 404)
 
 
 @section('17 Analyst assigned to a case')
@@ -1019,7 +1192,7 @@ def t_e01():
     case = post('/api/cases', inv, {'name': 'E01 test'}).json['case_id']
     r = upload(inv, case, e01.read_bytes(), 'laptop.E01')
     check('E01 uploads with format E01', r.status == 200 and r.json['format'] == 'E01', r)
-    eid = r.json['evidence_id']
+    eid = C['E01_E'] = r.json['evidence_id']
     pre = get(f'/api/forensics/evidence/{eid}/partitions', inv)
     check('before analysis, examining the E01 asks to run the analysis first (409)', pre.status == 409 and 'analysis' in pre.detail.lower(), pre)
     j = wait_job(inv, post(f"/api/jobs/analysis/{eid}", inv).json['job_id'])
@@ -1037,6 +1210,9 @@ def t_e01():
         pay = next((d for d in dele if d['path'].endswith('payroll-export.csv')), None)
         rr = post(f"/api/forensics/evidence/{r.json['evidence_id']}/recover?inode={pay['inode']}&offset={pay['partition_offset']}", inv).json if pay else {}
         check('deleted file recovered from the E01 matches the original', rr.get('sha256') == hashlib.sha256(PAYROLL).hexdigest(), rr)
+        import base64
+        pg = get(f"/api/forensics/evidence/{eid}/content?inode={pay['inode']}&offset={pay['partition_offset']}", inv).json if pay else {}
+        check('the file viewer reads the E01 through its verified working copy', base64.b64decode(pg.get('data_b64') or '') == PAYROLL, pg.get('size'))
     bad = bytearray(e01.read_bytes())
     bad[len(bad) // 2] ^= 0xFF  # corrupt one byte of compressed media data
     rb = upload(inv, case, bytes(bad), 'corrupt.E01').json
@@ -1091,13 +1267,74 @@ def t_overview():
         'browser_history': q(f'/api/forensics/browser?case_id={A}&limit=1')['total'],
         'browser_downloads': q(f'/api/forensics/browser?case_id={A}&kind=BROWSER_DOWNLOAD&limit=1')['total'],
         'usb_devices': len(q(f'/api/forensics/usb?case_id={A}')['data']),
+        'programs_run': q(f'/api/forensics/activity?case_id={A}&kind=PROGRAM_RUN&limit=1')['total'],
+        'recent_files': q(f'/api/forensics/activity?case_id={A}&kind=RECENT_FILE&limit=1')['total'],
+        'recycle_bin_items': q(f'/api/forensics/activity?case_id={A}&kind=RECYCLE_BIN_ITEM&limit=1')['total'],
         'findings': len(q(f'/api/findings?case_id={A}')['data']),
+        'tags': q(f'/api/tags?case_id={A}')['total'],
         'reports': len(q(f'/api/reports?case_id={A}')['data']),
         'custody_events': len(q(f'/api/chain?case_id={A}')['data']),
     }
     diff = {k: (c.get(k), v) for k, v in exp.items() if c.get(k) != v}
     check('every overview count equals the matching list', not diff, diff)
     check('overview lists recent jobs', len(o['jobs']) >= 1)
+
+
+ACTIVITY_EVENT_TYPES = 'BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY,PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN'
+
+
+@section('28b Activity dashboard')
+def t_dashboard():
+    inv, A = C['INVESTIGATOR'], C['A']
+    dash = lambda extra='': get(f'/api/cases/{A}/dashboard{extra}', inv)
+    events = get(f'/api/forensics/timeline?case_id={A}&type={ACTIVITY_EVENT_TYPES}&limit=2000', inv).json['data']
+
+    def truth(offset_minutes):
+        cells = {}
+        for e in events:
+            t = iso(e['timestamp']) + timedelta(minutes=offset_minutes)
+            cells[(t.isoweekday(), t.hour)] = cells.get((t.isoweekday(), t.hour), 0) + 1
+        return cells
+    d = dash().json
+    check('heatmap covers exactly the user-activity events', d['heatmap']['total'] == len(events) == sum(x['total'] for x in d['per_day']) > 0,
+          (d['heatmap']['total'], len(events)))
+    check('UTC heatmap: every weekday x hour cell equals the timeline', {(a, b): n for a, b, n in d['heatmap']['cells']} == truth(0), d['heatmap']['cells'])
+    for tz, offset in (('Asia/Kolkata', 330), ('America/New_York', -240), ('%2B05%3A30', 330)):
+        cells = {(a, b): n for a, b, n in dash(f'?tz={tz}').json['heatmap']['cells']}
+        check(f'heatmap in {tz.replace("%2B", "+").replace("%3A", ":")} equals the timeline shifted by {offset} minutes', cells == truth(offset), cells)
+    check('an unknown or malformed time zone is refused (400)', dash('?tz=Mars/Phobos').status == 400 and dash('?tz=%27bad%27').status == 400)
+    all_scope = dash('?scope=all').json
+    check('including filesystem times counts every timeline event', all_scope['heatmap']['total'] ==
+          get(f'/api/forensics/timeline?case_id={A}&limit=1', inv).json['total'], all_scope['heatmap']['total'])
+
+    hosts = {}
+    for r in get(f'/api/forensics/browser?case_id={A}&kind=BROWSER_HISTORY', inv).json['data']:
+        h = re.sub(r'^www\.', '', re.match(r'^[a-z]+://([^/:]+)', r['url']).group(1))
+        hosts.setdefault(h, [0, 0])
+        hosts[h][0] += r.get('visit_count') or 0
+        hosts[h][1] += 1
+    check('top websites equal the browser history (visits and pages per site)',
+          {x['host']: [x['visits'], x['pages']] for x in d['top_domains']['data']} == hosts, d['top_domains'])
+
+    ext = {}
+    for e in C['TRUTH']:
+        if e['virtual'] or e['mode'].startswith('d'):
+            continue
+        m = re.search(r'\.([A-Za-z0-9]{1,10})$', e['path'].rsplit('/', 1)[-1])
+        key = m.group(1).lower() if m else '(none)'
+        ext[key] = ext.get(key, 0) + 1
+    ft = d['file_types']
+    check('file types equal the Sleuth Kit listing (count per extension)',
+          all(ext.get(x['extension']) == x['count'] for x in ft['data']) and sum(x['count'] for x in ft['data']) + ft['other']['count'] == sum(ext.values()),
+          (ft, ext))
+
+    usb = {u['serial']: u for u in get(f'/api/forensics/usb?case_id={A}', inv).json['data']}
+    spans = {s['serial']: s for s in d['usb_spans']}
+    fields = ('setupapi_first_install', 'first_install', 'last_install', 'last_arrival', 'last_removal')
+    check('USB lanes: one per device, spanning its first and last recorded time', set(spans) == set(usb) and all(
+        iso(spans[s]['first']) == min(iso(usb[s][f]) for f in fields if usb[s].get(f)) and
+        iso(spans[s]['last']) == max(iso(usb[s][f]) for f in fields if usb[s].get(f)) for s in usb), spans)
+    check('another investigator gets 404', get(f'/api/cases/{A}/dashboard', C['INV2']).status == 404)
 
 
 @section('29 Evidence tampering is detected')
@@ -1148,8 +1385,117 @@ def t_audit_tamper():
     check('re-inserting it restores a valid chain', get('/api/chain/verify', C['ADMIN']).json['valid'] is True)
 
 
+@section('31 Deleting evidence')
+def t_delete():
+    import glob
+    import pymongo
+    db = pymongo.MongoClient(os.environ['MONGODB_URI'])['dfip']
+    inv, data = C['INVESTIGATOR'], IMG.read_bytes()
+    case = post('/api/cases', inv, {'name': 'Deletion test'}).json['case_id']
+    ev = upload(inv, case, data, 'to-delete.dd').json
+    eid, original = ev['evidence_id'], Path(ev['storage_path'])
+    path = f'/api/evidence/{eid}'
+    reason = 'Uploaded to the wrong case'
+    job = post(f'/api/jobs/analysis/{eid}', inv).json['job_id']
+    busy = req('DELETE', path, inv, {'reason': 'Deleting during the analysis'})
+    check('deletion is refused (409) while an analysis of the image is queued or running', busy.status == 409 and job in (busy.detail or ''), busy)
+    wait_job(inv, job)
+    files = get(f'/api/forensics/evidence/{eid}/files?deleted=true', inv).json['data']
+    pay = next(d for d in files if d['path'].endswith('payroll-export.csv'))
+    post(f"/api/forensics/evidence/{eid}/recover?inode={pay['inode']}&offset={pay['partition_offset']}", inv)
+    post(f'/api/forensics/evidence/{eid}/carve?engine=photorec', inv, timeout=1800)
+    post('/api/findings', inv, {'case_id': case, 'title': 'Linked to the deleted image', 'description': 'x', 'evidence_ids': [eid]})
+    tagged = post('/api/tags', inv, {'case_id': case, 'item_type': 'FILE', 'item_id': pay['_id'], 'note': 'on the image to delete'})
+    rep = post(f'/api/reports?case_id={case}', inv).json
+    results = ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts')
+    before = {c: db[c].count_documents({'evidence_id': eid}) for c in results}
+    stored = [p for p in glob.glob(f'/app/storage/analysis/*/{eid}') if os.path.isdir(p)]
+    check('viewer cannot delete evidence (403)', req('DELETE', path, C['VIEWER'], {'reason': 'Not allowed here'}).status == 403)
+    check('analyst cannot delete evidence (403)', req('DELETE', path, C['ANALYST'], {'reason': 'Not allowed here'}).status == 403)
+    check('another investigator cannot delete it (404)', req('DELETE', path, C['INV2'], {'reason': 'Not my case'}).status == 404)
+    check('a reason is required (422 without one or with only spaces)',
+          req('DELETE', path, inv, {}).status == 422 and req('DELETE', path, inv, {'reason': '      '}).status == 422)
+    r = req('DELETE', path, inv, {'reason': reason})
+    check('the case investigator deletes the evidence', r.status == 200 and (r.json or {}).get('deleted') is True and not r.json.get('warnings'), r)
+    check('it is gone from the evidence detail and list', get(path, inv).status == 404
+          and all(e['evidence_id'] != eid for e in get('/api/evidence', inv).json['data']))
+    left = {c: db[c].count_documents({'evidence_id': eid}) for c in results}
+    check('every analysis result taken from the image is removed', all(before.values()) and not any(left.values()), (before, left))
+    check('its analysis jobs are removed', db.jobs.count_documents({'payload.evidence_id': eid}) == 0)
+    check('tags on its items are removed', tagged.status == 200 and r.json['removed'].get('tags') == 1
+          and not get(f'/api/tags?case_id={case}', inv).json['data'], (tagged, r.json.get('removed')))
+    check('the stored image and its recovered, carved and pipeline files are removed',
+          len(stored) >= 3 and not original.exists() and not any(os.path.exists(p) for p in stored), stored)
+    fnd = next(x for x in get(f'/api/findings?case_id={case}', inv).json['data'] if x['title'] == 'Linked to the deleted image')
+    check('a finding that cited it is kept, without the link', eid not in (fnd.get('evidence_ids') or []) and r.json['findings_unlinked'] == 1, fnd)
+    cust = get(f'/api/chain?case_id={case}', inv).json['data']
+    d = [c for c in cust if c['evidence_id'] == eid and c['action'] == 'EVIDENCE_DELETED']
+    check('custody keeps its history and records the deletion with reason, person and hash',
+          any(c['evidence_id'] == eid and c['action'] == 'EVIDENCE_REGISTERED' for c in cust)
+          and d and d[0].get('reason') == reason and d[0].get('user_name') == 'Demo Investigator' and d[0].get('sha256') == C['IMG_SHA256'], d)
+    au = db.audit_logs.find_one({'action': 'EVIDENCE_DELETED', 'metadata.evidence_id': eid})
+    check('the deletion is in the audit log and the hash chain stays valid',
+          au and au['metadata'].get('reason') == reason and get('/api/chain/verify', C['ADMIN']).json['valid'] is True, au and au.get('metadata'))
+    check('a report generated before the deletion is kept', get(f"/api/reports/{rep['report_id']}/download", inv).status == 200)
+    again = upload(inv, case, data, 'to-delete.dd')
+    check('the image can be registered again afterwards, under a new ID', again.status == 200 and again.json['evidence_id'] != eid, again)
+    if C.get('E01_E'):
+        wc = Path(f"/app/storage/analysis/working/{C['E01_E']}.raw")
+        existed = wc.exists()
+        r2 = req('DELETE', f"/api/evidence/{C['E01_E']}", inv, {'reason': 'E01 test finished'})
+        check('deleting an E01 also removes its raw working copy', existed and r2.status == 200 and not wc.exists(), (existed, r2))
+    if again.status == 200:
+        ad = req('DELETE', f"/api/evidence/{again.json['evidence_id']}", C['ADMIN'], {'reason': 'Administrator clean-up'})
+        check('an administrator can delete evidence in any case', ad.status == 200, ad)
+
+
+@section('31b Legal hold')
+def t_legal_hold():
+    import pymongo
+    db = pymongo.MongoClient(os.environ['MONGODB_URI'])['dfip']
+    inv = C['INVESTIGATOR']
+    case = post('/api/cases', inv, {'name': 'Legal hold test'}).json['case_id']
+    ev = upload(inv, case, os.urandom(1024 * 1024), 'held.dd').json['evidence_id']
+    hold = lambda body, tok=inv: post(f'/api/cases/{case}/legal-hold', tok, body)
+    held = lambda: (get(f'/api/cases/{case}', inv).json.get('legal_hold') or {}).get('active')
+    reason = 'Litigation hold requested by counsel'
+    check('a reason is required (422 without one or with only spaces)',
+          hold({'active': True}).status == 422 and hold({'active': True, 'reason': '      '}).status == 422)
+    check('viewer and analyst cannot place a hold (403)', hold({'active': True, 'reason': reason}, C['VIEWER']).status == 403
+          and hold({'active': True, 'reason': reason}, C['ANALYST']).status == 403)
+    check('another investigator cannot place a hold on this case (404)', hold({'active': True, 'reason': reason}, C['INV2']).status == 404)
+    r = hold({'active': True, 'reason': reason})
+    lh = (r.json or {}).get('legal_hold') or {}
+    check('the case investigator places the hold, recorded with reason, person and time',
+          r.status == 200 and lh.get('active') is True and lh.get('reason') == reason and lh.get('set_by_name') == 'Demo Investigator' and lh.get('set_at'), r)
+    check('placing it again is 409', hold({'active': True, 'reason': 'Once more, please'}).status == 409)
+    d = req('DELETE', f'/api/evidence/{ev}', inv, {'reason': 'Trying while held'})
+    check('evidence cannot be deleted while the case is under legal hold (423)',
+          d.status == 423 and 'legal hold' in (d.detail or '') and get(f'/api/evidence/{ev}', inv).status == 200, d)
+    ad = req('DELETE', f'/api/evidence/{ev}', C['ADMIN'], {'reason': 'Administrator trying while held'})
+    check('...not even by an administrator', ad.status == 423, ad)
+    patch(f'/api/cases/{case}', inv, {'legal_hold': {'active': False}, 'description': 'Edited while held'})
+    check('editing the case cannot release the hold', held() is True)
+    now = datetime.now(timezone.utc).isoformat()
+    post('/api/desktop/sync/push', inv, {'device_id': 'x', 'records': [{
+        'record_type': 'case_update', 'record_id': 'lh-1', 'case_id': case, 'data': {'legal_hold': {'active': False}, 'description': 'Offline edit'},
+        'local_created_at': now, 'local_modified_at': now, 'device_id': 'x'}]})
+    check('an offline update from the desktop app cannot release it either', held() is True)
+    check('releasing needs a reason too (422)', hold({'active': False}).status == 422)
+    rel = hold({'active': False, 'reason': 'Matter closed by counsel'})
+    rl = (rel.json or {}).get('legal_hold') or {}
+    check('the hold is released, keeping the original reason and who released it and why',
+          rel.status == 200 and rl.get('active') is False and rl.get('reason') == reason and rl.get('release_reason') == 'Matter closed by counsel'
+          and rl.get('released_by_name') == 'Demo Investigator', rel)
+    check('releasing again is 409', hold({'active': False, 'reason': 'Already released'}).status == 409)
+    check('after the release the evidence can be deleted', req('DELETE', f'/api/evidence/{ev}', inv, {'reason': 'Hold released'}).status == 200)
+    acts = [a['action'] for a in db.audit_logs.find({'action': {'$in': ['LEGAL_HOLD_PLACED', 'LEGAL_HOLD_RELEASED']}, 'metadata.case_id': case}).sort('sequence', 1)]
+    check('placing and releasing are in the audit log and the chain stays valid',
+          acts == ['LEGAL_HOLD_PLACED', 'LEGAL_HOLD_RELEASED'] and get('/api/chain/verify', C['ADMIN']).json['valid'] is True, acts)
+
+
 # ============================================================ OTHER PHASES
-@section('31 Desktop-only writes (REQUIRE_DESKTOP_FOR_WRITES=true)')
+@section('32 Desktop-only writes (REQUIRE_DESKTOP_FOR_WRITES=true)')
 def t_desktop_writes():
     check('/health reports desktop-only writes', get('/health').json.get('require_desktop_for_writes') is True)
     inv = token_of('investigator@dfip.local')
@@ -1179,7 +1525,7 @@ def t_desktop_writes():
         check('sync push from the web cannot write either', not made, sp)
 
 
-@section('32 Open registration (REGISTRATION_MODE=open)')
+@section('33 Open registration (REGISTRATION_MODE=open)')
 def t_reg_open():
     check('/health reports open registration', get('/health').json.get('registration_mode') == 'open')
     email = f'open.{uuid.uuid4().hex[:6]}@test.local'
@@ -1191,7 +1537,7 @@ def t_reg_open():
     check("new user sees no one else's cases", get('/api/cases', t).json['data'] == [])
 
 
-@section('33 Registration turned off (REGISTRATION_MODE=disabled)')
+@section('34 Registration turned off (REGISTRATION_MODE=disabled)')
 def t_reg_disabled():
     check('/health reports registration disabled', get('/health').json.get('registration_mode') == 'disabled')
     r = post('/api/auth/register', body={'name': 'Nobody', 'email': f'n.{uuid.uuid4().hex[:6]}@test.local', 'password': 'Disabled-Registration-1'})
@@ -1199,9 +1545,9 @@ def t_reg_disabled():
 
 
 PHASES = {
-    'main': [t_platform, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_filesystem, t_recovery, t_timeline,
-             t_browser, t_usb, t_indicators, t_carving, t_search, t_findings, t_analyst, t_reports, t_audit, t_notifications,
-             t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_tamper, t_audit_tamper],
+    'main': [t_platform, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_filesystem, t_recovery, t_viewer, t_timeline,
+             t_browser, t_usb, t_activity, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],
     'reg_disabled': [t_reg_disabled],

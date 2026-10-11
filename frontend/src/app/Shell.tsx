@@ -13,6 +13,7 @@ import { Logo } from './Logo';
 import { DesktopDownload } from './DesktopDownload';
 import { ChangePasswordModal } from './ChangePassword';
 import { NAV } from './nav';
+import { LegalHoldBadge } from '../pages/LegalHold';
 
 function initials(name: string) {
   return name.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
@@ -81,9 +82,11 @@ export function Shell({ children }: { children: ReactNode }) {
               ))}
             </select>
             {activeCase && <StatusBadge status={activeCase.status} />}
+            <LegalHoldBadge caseItem={activeCase} />
             {can('CASE_CREATE') && (
-              <Button size="sm" icon={<Plus size={14} />} onClick={() => setCreating(true)}>
-                New case
+              // The legal-hold badge takes the room of the label on medium screens; the icon keeps the name.
+              <Button size="sm" icon={<Plus size={14} />} onClick={() => setCreating(true)} title="New case" aria-label="New case">
+                <span className={activeCase?.legal_hold?.active ? 'hide-medium' : undefined}>New case</span>
               </Button>
             )}
           </div>
@@ -102,7 +105,7 @@ export function Shell({ children }: { children: ReactNode }) {
           )}
           <div className="spacer" />
           {IS_DESKTOP && (
-            <span className="small muted row hide-narrow" title="DFIP server">
+            <span className="small muted row hide-medium" title="DFIP server">
               <Server size={14} /> {serverUrl().replace(/^https?:\/\//, '')}
             </span>
           )}
