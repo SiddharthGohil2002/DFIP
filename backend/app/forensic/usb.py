@@ -19,40 +19,16 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .registry import as_bytes as _as_bytes, control_sets as _control_sets, filetime_to_datetime, signed_dword
+from .registry import subkey as _subkey, values as _values
+
 DEVICE_PROPERTIES_GUID = '{83da6326-97a6-4088-9453-a1923f573b29}'
 PROPERTY_TIMES = {0x64: 'first_install', 0x65: 'last_install', 0x66: 'last_arrival', 0x67: 'last_removal'}
-_FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
 
 _DEVICE_CLASS_RE = re.compile(r'^(?P<type>[^&]+)&Ven_(?P<vendor>[^&]*)&Prod_(?P<product>[^&]*)(?:&Rev_(?P<rev>.*))?$', re.I)
 _VIDPID_RE = re.compile(r'VID_(?P<vid>[0-9A-F]{4})&PID_(?P<pid>[0-9A-F]{4})', re.I)
 _SETUPAPI_DEV_RE = re.compile(r'^>>>\s+\[Device Install[^\]]*? - (?P<dev>[^\]]+)\]')
 _SETUPAPI_START_RE = re.compile(r'^>>>\s+Section start (?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})(?:\.\d+)?')
-
-
-def filetime_to_datetime(raw) -> datetime | None:
-    b = _as_bytes(raw)
-    if not b or len(b) < 8:
-        return None
-    ft = int.from_bytes(b[:8], 'little')
-    if ft <= 0:
-        return None
-    try:
-        return _FILETIME_EPOCH + timedelta(microseconds=ft // 10)
-    except OverflowError:
-        return None
-
-
-def _as_bytes(raw):
-    if raw is None:
-        return None
-    if isinstance(raw, (bytes, bytearray)):
-        return bytes(raw)
-    if isinstance(raw, str):
-        try:
-            return bytes.fromhex(raw)
-        except ValueError:
-            return None
-    return None
 
 
 def _iso(dt):
@@ -69,17 +45,6 @@ def split_instance(instance: str) -> tuple[str, bool]:
     unique = not (len(instance) > 1 and instance[1] == '&')
     serial = re.sub(r'&\d+$', '', instance) if unique else instance
     return serial, unique
-
-
-def _values(key) -> dict:
-    return {v.name: v.value for v in key.iter_values()}
-
-
-def _subkey(key, name):
-    for s in key.iter_subkeys():
-        if s.name.lower() == name.lower():
-            return s
-    return None
 
 
 def _property_times(instance_key) -> dict:
@@ -109,31 +74,13 @@ def _property_times(instance_key) -> dict:
     return out
 
 
-def _control_sets(reg) -> list[str]:
-    names = []
-    try:
-        current = _values(reg.get_key('\\Select')).get('Current')
-        if current:
-            names.append(f'ControlSet{int(current):03d}')
-    except Exception:
-        pass
-    for s in reg.get_key('\\').iter_subkeys():
-        if s.name.lower().startswith('controlset') and s.name not in names:
-            names.append(s.name)
-    return names
-
-
 def _timezone_bias_minutes(reg, control_set: str):
     """UTC = local time + ActiveTimeBias (minutes)."""
     try:
         vals = _values(reg.get_key(f'\\{control_set}\\Control\\TimeZoneInformation'))
     except Exception:
         return None
-    bias = vals.get('ActiveTimeBias', vals.get('Bias'))
-    if isinstance(bias, int):
-        # REG_DWORD holding a signed value
-        return bias - (1 << 32) if bias >= (1 << 31) else bias
-    return None
+    return signed_dword(vals.get('ActiveTimeBias', vals.get('Bias')))
 
 
 def _mounted_devices(reg) -> list[tuple[str, str]]:

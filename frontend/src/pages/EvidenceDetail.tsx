@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, HardDriveDownload, Play, ShieldCheck, Trash2, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, HardDriveDownload, Play, ShieldCheck, SlidersHorizontal, Trash2, XCircle } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { post } from '../lib/api';
@@ -10,6 +10,7 @@ import { useApi } from '../lib/useApi';
 import type { Evidence, Job } from '../lib/types';
 import { Banner, Button, Card, Empty, ErrorBanner, Field, Hash, Loading, PageHeader, ProgressBar, Stat, StatusBadge, useToast } from '../ui';
 import { DeleteEvidenceModal } from './DeleteEvidence';
+import { AnalysisModulesCard, AnalysisOptionsModal } from './AnalysisModules';
 
 const RUNNING = new Set(['QUEUED', 'RUNNING']);
 
@@ -30,6 +31,7 @@ export function EvidenceDetailPage() {
   const custody = useApi<{ data: any[] }>(e ? `/chain?evidence_id=${encodeURIComponent(e.evidence_id)}` : null);
   const [busy, setBusy] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [options, setOptions] = useState(false);
 
   const j = job.data;
   const running = !!j && RUNNING.has(j.status);
@@ -46,6 +48,12 @@ export function EvidenceDetailPage() {
     prevStatus.current = status;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [j?.status, j?.job_id]);
+  // Module statuses live on the evidence record: refresh it as the job moves from one module to the next.
+  const moduleStage = j?.stage?.split('@')[0];
+  useEffect(() => {
+    if (running) ev.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moduleStage]);
 
   if (ev.loading && !e) return <Loading />;
   if (ev.error || !e) return <ErrorBanner error={ev.error || 'Evidence not found'} />;
@@ -62,6 +70,13 @@ export function EvidenceDetailPage() {
     } finally {
       setBusy('');
     }
+  }
+
+  function queuedJob(jobId: string) {
+    setQueued(jobId);
+    setPolling(true);
+    reloadOverview();
+    ev.reload();
   }
 
   async function analyze() {
@@ -97,6 +112,9 @@ export function EvidenceDetailPage() {
                 {running ? 'Analysis running' : e.analysis_status === 'COMPLETED' ? 'Re-run analysis' : 'Run full analysis'}
               </Button>
             )}
+            {!e.demo && can('ANALYSIS_RUN') && (
+              <Button icon={<SlidersHorizontal size={15} />} disabled={running} onClick={() => setOptions(true)}>Analysis options</Button>
+            )}
             {can('EVIDENCE_DELETE') && (
               <Button variant="danger" icon={<Trash2 size={15} />} disabled={running || held}
                 title={held ? 'The case is under legal hold: evidence cannot be deleted' : running ? 'An analysis is running for this evidence' : undefined}
@@ -107,6 +125,7 @@ export function EvidenceDetailPage() {
           </>
         }
       />
+      <AnalysisOptionsModal evidence={e} open={options} onClose={() => setOptions(false)} onQueued={queuedJob} />
       <DeleteEvidenceModal
         evidence={deleting ? e : null}
         onClose={() => setDeleting(false)}
@@ -191,6 +210,7 @@ export function EvidenceDetailPage() {
           </div>
         )}
       </Card>
+      {!e.demo && <AnalysisModulesCard evidence={e} running={running} canRun={can('ANALYSIS_RUN')} onQueued={queuedJob} />}
     </div>
   );
 }

@@ -9,7 +9,7 @@ from ..repositories.cases import get_case
 from ..security import current_user, require_write
 from ..services.audit import log
 from ..services.sequences import next_sequence
-from ..services.tags import ITEM_COLLECTIONS, LABELS, find_item, item_id_of, key_hash, natural_key, resolve, snapshot
+from ..services.tags import ITEM_COLLECTIONS, KEY_VERSION, LABELS, find_item, item_id_of, key_hash, natural_key, resolve, snapshot
 from ..websocket.manager import manager
 
 r = APIRouter(prefix='/tags', tags=['tags'])
@@ -94,7 +94,8 @@ def create(x: TagIn, u=Depends(require_write('FINDING_CREATE'))):
     tag = {
         'tag_id': f'TAG-{next_sequence("tags", floor=db["tags"].count_documents({})):04d}',
         'case_id': x.case_id, 'evidence_id': doc.get('evidence_id'), 'item_type': x.item_type,
-        'item_id': item_id_of(x.item_type, doc), 'match': match, 'key_hash': kh, 'label': x.label, 'note': x.note,
+        'item_id': item_id_of(x.item_type, doc), 'match': match, 'key_hash': kh, 'key_version': KEY_VERSION,
+        'label': x.label, 'note': x.note,
         'snapshot': snapshot(x.item_type, doc), 'created_by': str(u['_id']), 'created_by_name': u.get('name'),
         'created_at': now, 'updated_at': now,
     }

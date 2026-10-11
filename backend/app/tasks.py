@@ -9,8 +9,11 @@ Ground rule carried over from the rest of the platform: real evidence never gets
 synthetic artifacts. The `demo` flag on the evidence record is checked ; only
 records explicitly created as demo data take the synthetic path.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import asyncio
+import os
+import socket
+import time
 import traceback
 from pathlib import Path
 
@@ -43,6 +46,42 @@ def _notify(user_id: str, title: str, message: str, level: str = 'INFO'):
         asyncio.run(create(user_id, title, message, level))
     except Exception:
         logger.warning('Notification delivery failed for job on user %s', user_id, exc_info=True)
+
+
+HEARTBEAT_SECONDS = 15
+STALE_AFTER = timedelta(minutes=10)   # a RUNNING job without a heartbeat for this long lost its worker
+
+
+def _claim(job_id: str):
+    """Atomically takes a queued job, or a running one whose worker stopped sending heartbeats.
+
+    Returns (job, resumed) or (None, False) when another worker owns the job or it already finished. A message
+    redelivered by the broker therefore never starts a second, concurrent run of the same job.
+    """
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    worker = f'{socket.gethostname()}:{os.getpid()}'
+    fields = {'status': 'RUNNING', 'updated_at': now, 'heartbeat_at': now, 'worker': worker}
+    job = db['jobs'].find_one_and_update(
+        {'job_id': job_id, 'status': 'QUEUED'},
+        {'$set': dict(fields, started_at=now, stage='starting'), '$inc': {'attempts': 1}})
+    if job:
+        return job, False
+    job = db['jobs'].find_one_and_update(
+        {'job_id': job_id, 'status': 'RUNNING', 'heartbeat_at': {'$lt': now - STALE_AFTER}},
+        {'$set': dict(fields, stage='resuming'), '$inc': {'attempts': 1}})
+    return job, bool(job)
+
+
+def _heartbeat(job_id: str):
+    last = [0.0]
+
+    def beat():
+        if time.monotonic() - last[0] >= HEARTBEAT_SECONDS:
+            last[0] = time.monotonic()
+            get_db()['jobs'].update_one({'job_id': job_id, 'status': 'RUNNING'},
+                                        {'$set': {'heartbeat_at': datetime.now(timezone.utc)}})
+    return beat
 
 
 def _is_cancelled(job_id: str) -> bool:
@@ -101,7 +140,11 @@ def forensic_analysis_task(self, job_id: str, evidence_id: str, created_by: str)
     if _is_cancelled(job_id):
         return {'job_id': job_id, 'status': 'CANCELLED'}
 
-    _mark_running(job_id)
+    job, resumed = _claim(job_id)
+    if not job:
+        logger.warning('Job %s is owned by another worker or already finished; ignoring the duplicate delivery', job_id)
+        return {'job_id': job_id, 'status': 'DUPLICATE_IGNORED'}
+    payload = job.get('payload') or {}
     db = get_db()
     try:
         e = get_evidence(evidence_id)
@@ -123,14 +166,18 @@ def forensic_analysis_task(self, job_id: str, evidence_id: str, created_by: str)
 
             db['evidence'].update_one({'_id': e['_id']}, {'$set': {'analysis_status': 'RUNNING', 'last_analysis_job': job_id}})
             try:
-                result = AnalysisPipeline(db, e, job_id, progress=progress_cb,
-                                          is_cancelled=lambda: _is_cancelled(job_id)).run()
+                result = AnalysisPipeline(db, e, job_id, progress=progress_cb, is_cancelled=lambda: _is_cancelled(job_id),
+                                          profile=payload.get('profile'), modules=payload.get('modules'),
+                                          heartbeat=_heartbeat(job_id), resume=resumed).run()
             except Cancelled:
                 db['evidence'].update_one({'_id': e['_id']}, {'$set': {'analysis_status': 'CANCELLED'}})
                 return {'job_id': job_id, 'status': 'CANCELLED'}
             except Exception:
                 db['evidence'].update_one({'_id': e['_id']}, {'$set': {'analysis_status': 'FAILED'}})
                 raise
+            # One run record per evidence: the latest (earlier ones are in the job history).
+            db['forensic_artifacts'].delete_many({'evidence_id': e['evidence_id'], 'type': 'ANALYSIS_RUN',
+                                                  'source': 'DFIP_ANALYSIS_PIPELINE'})
             db['forensic_artifacts'].insert_one({
                 'case_id': e['case_id'], 'evidence_id': e['evidence_id'], 'type': 'ANALYSIS_RUN',
                 'timestamp': datetime.now(timezone.utc), 'data': result,

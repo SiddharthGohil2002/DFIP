@@ -1,0 +1,217 @@
+{
+  "sources": [
+    {
+      "name": "dfvfs",
+      "repo": "log2timeline/dfvfs",
+      "commit": "917cefc9426d6ded2687d2b55164ded25b44fcb7",
+      "path": "test_data",
+      "license": "Apache-2.0",
+      "files": [
+        {
+          "name": "vss.raw",
+          "used_by": "Volume Shadow Copies",
+          "sha256": "e633f0be5fb9ee9a07d44ba5223b786012ce89e9f0024f93d743568e6d052f16",
+          "size": 82771968
+        },
+        {
+          "name": "bdetogo.raw",
+          "used_by": "BitLocker To Go detection and unlock",
+          "sha256": "ed7982a1f9263e4e54889fea1fa74112d12fea0a0aa7cd8f84fc6f03198ae71b",
+          "size": 67108864
+        },
+        {
+          "name": "luks1.raw",
+          "used_by": "LUKS detection and unlock",
+          "sha256": "62d74398519015912e3216766912a2a4d1afc7dc4f7378f676943aaf5e0828f1",
+          "size": 10485760
+        },
+        {
+          "name": "ntfs.raw",
+          "used_by": "NTFS internals",
+          "sha256": "28a2f08b20d39c09e5f6b88f568fa863866b45b2e04b66bcbea33177cff88714",
+          "size": 4194304
+        },
+        {
+          "name": "ntfs-fixed.vhd",
+          "used_by": "VHD (fixed)",
+          "sha256": "797a3a1ffb1966b634bef79bf4b1e93641545cce8560b1f81d8d2c3f84b00de2",
+          "size": 4194816
+        },
+        {
+          "name": "ntfs-dynamic.vhdx",
+          "used_by": "VHDX (dynamic)",
+          "sha256": "e02e32fbacdc0b02e5fe435b9527099627cc2c4d72e68f263d202bc9fa413763",
+          "size": 37748736
+        },
+        {
+          "name": "ntfs-parent.vhd",
+          "used_by": "differential VHD parent",
+          "sha256": "d63dae47d313b4e5579f236c0c6277bff9f8b047630bd77a4842659f408d8ea8",
+          "size": 4194816
+        },
+        {
+          "name": "ntfs-differential.vhd",
+          "used_by": "differential VHD (needs its parent)",
+          "sha256": "d7fab76041754c582111087449abcfc43c4a859d2449f1b2334b45b81d43393b",
+          "size": 4284416
+        },
+        {
+          "name": "ext2.raw",
+          "used_by": "reference listing for the container formats",
+          "sha256": "a6c2f0e39afe6c6ab432ca5465349fcefe8dc944398e97b2d957d3f89dbb5d80",
+          "size": 4194304
+        },
+        {
+          "name": "ext2.vmdk",
+          "used_by": "VMDK",
+          "sha256": "578b5f75af790030113a92c4227c6e53dad53a17e65cb491781dc75b3cef31f8",
+          "size": 262144
+        },
+        {
+          "name": "ext2.qcow2",
+          "used_by": "QCOW2",
+          "sha256": "130bb8d85ee04deb9cffa1d731ee7348ddb045eaf3762f2141a5ddf9b7f4ecb8",
+          "size": 524288
+        },
+        {
+          "name": "ext2.vhd",
+          "used_by": "VHD",
+          "sha256": "225f16a8d65ba442fbd9958606b60bb6001b33be024b90661baffd67f3210230",
+          "size": 2100224
+        },
+        {
+          "name": "ext2.vhdx",
+          "used_by": "VHDX",
+          "sha256": "d729323aafb2a7473e39abe9382076014d99a0c16e8333b9decbd81d355b1087",
+          "size": 16777216
+        },
+        {
+          "name": "ext2.split.E01",
+          "used_by": "split E01 (segment 1)",
+          "sha256": "d14f130c462b0ab8efb6bb44bbfe5680e00ffaa90538cde84579d1eb0dcac00f",
+          "size": 3116330
+        },
+        {
+          "name": "ext2.split.E02",
+          "used_by": "split E01 (segment 2)",
+          "sha256": "b508375954ec1d1caeed8a6e5fc503f98493816ad6a3af89f5d220244c5f2864",
+          "size": 1083353
+        },
+        {
+          "name": "ext2.splitraw.000",
+          "used_by": "split raw (part 1)",
+          "sha256": "2a864677a8f3c56a57ef5f02ca456205e06a274c5ba1b803c8235601d7930ee2",
+          "size": 2097152
+        },
+        {
+          "name": "ext2.splitraw.001",
+          "used_by": "split raw (part 2)",
+          "sha256": "5647f05ec18958947d32874eeb788fa396a05d0bab7c1b71f112ceb7e9b31eee",
+          "size": 2097152
+        },
+        {
+          "name": "apfs.raw",
+          "used_by": "APFS file system",
+          "sha256": "e3e3adcbbf189403d892b013d6cba155f2e58e42ff5eb541ec681c37a91a3f29",
+          "size": 4153344
+        },
+        {
+          "name": "hfsplus.raw",
+          "used_by": "HFS+ file system",
+          "sha256": "03cfaa73e1bc61ee19d285252ae6919afc9990506ad1c2919249d1e11d289b08",
+          "size": 4153344
+        }
+      ]
+    },
+    {
+      "name": "plaso",
+      "repo": "log2timeline/plaso",
+      "commit": "ff99e578312d7f35c2961b2e0d1f4c09f33a986e",
+      "path": "test_data",
+      "license": "Apache-2.0",
+      "files": [
+        {
+          "name": "SRUDB.dat",
+          "used_by": "SRUM network and app usage",
+          "sha256": "6536ae6bb5b91f6f8f37a4af26f6cfaecc8a1f745370bfba83af7ebae6694e3e",
+          "size": 7864320
+        },
+        {
+          "name": "Windows.edb",
+          "used_by": "Windows Search index (ESE)",
+          "sha256": "e96837a0ad37be5a55222fa98991bec6b5c5ba956610f9d241aa8c65f2e0714c",
+          "size": 42008576
+        },
+        {
+          "name": "MFT",
+          "used_by": "$MFT parsing",
+          "sha256": "c78f4968345b70783fbf6573d86c4bf300295ae26ddde4033dd1037b802e13c1",
+          "size": 13402112
+        },
+        {
+          "name": "UsnJrnl.raw",
+          "used_by": "$UsnJrnl records",
+          "sha256": "a7a4d536b6a5e2008b070cfea1832f57ff3c99de04380285651e00f420853b6f",
+          "size": 1728
+        },
+        {
+          "name": "usnjrnl.qcow2",
+          "used_by": "$UsnJrnl on an NTFS volume",
+          "sha256": "1746df3a672924fac8e7456e9e005afe9e55d02eb0383929430a49637584a13d",
+          "size": 9568256
+        },
+        {
+          "name": "nromanoff@stark-research-labs.com.pst",
+          "used_by": "Outlook PST",
+          "sha256": "bab64f3589f8ce758df9e595b89a5e4b9be159929e49100397152fdcc7bd6013",
+          "size": 59442176
+        },
+        {
+          "name": "test.pcap",
+          "used_by": "network capture",
+          "sha256": "203c4eee17b73aa3c9ec8faf3bc1a7da4c9ac606bdcb6157f312ed16f84edc5f",
+          "size": 1276502
+        },
+        {
+          "name": "SYSTEM",
+          "used_by": "real SYSTEM hive",
+          "sha256": "96dc1f1cc3c0b44ef9af72d1c18a8e6a4338c67988f303d05693ca4be6bf7eb9",
+          "size": 15990784
+        },
+        {
+          "name": "SOFTWARE",
+          "used_by": "real SOFTWARE hive",
+          "sha256": "c2e1a391d6be9740e79da7944e012ad9ac878902db38ec7fc225a2a68d262a1b",
+          "size": 37748736
+        },
+        {
+          "name": "NTUSER.DAT",
+          "used_by": "real NTUSER.DAT hive",
+          "sha256": "4a3232850f9677de96774b4de0020ac7f5e2efeb5e4576a200bb751d9e1c9d1d",
+          "size": 786432
+        }
+      ]
+    },
+    {
+      "name": "python-evtx",
+      "repo": "williballenthin/python-evtx",
+      "commit": "c0007441657899c39180de10a2be1a0e43dbeaf9",
+      "path": "tests/data",
+      "license": "Apache-2.0",
+      "files": [
+        {
+          "name": "security.evtx",
+          "used_by": "real Security event log",
+          "sha256": "5f29a03cf8c1b4bfbd82c4074ccc81ecfe85d7ee15375afc352ed5025c9a4d8d",
+          "size": 2166784
+        },
+        {
+          "name": "system.evtx",
+          "used_by": "real System event log",
+          "sha256": "ccb83cfefc9038017224cd97b800b66e248fe14529649ddf47907e5a2021449e",
+          "size": 1118208
+        }
+      ]
+    }
+  ]
+}

@@ -153,6 +153,7 @@ def section(name):
             except Exception as exc:  # a crash fails the section but the suite continues
                 check('section ran to completion', False, f'{type(exc).__name__}: {exc}\n{traceback.format_exc(limit=3)}')
         run.__name__ = fn.__name__
+        run.section_id = name.split(' ', 1)[0]
         return run
     return deco
 
@@ -203,6 +204,44 @@ def t_platform():
     o = get('/openapi.json').json or {}
     check('OpenAPI schema lists the API (>= 80 operations)', sum(len(v) for v in o.get('paths', {}).values()) >= 80,
           len(o.get('paths', {})))
+
+
+SAMPLES = Path('/testdata/samples')  # scripts/test-image/fetch-samples.sh
+
+
+def sample(source, name):
+    """A pinned public test sample, or None when samples were not downloaded."""
+    p = SAMPLES / source / name
+    return p if p.is_file() else None
+
+
+def mongo():
+    import pymongo
+    return pymongo.MongoClient(os.environ['MONGODB_URI'])['dfip']
+
+
+def file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+@section('01b Public test samples')
+def t_samples():
+    manifest = SAMPLES / 'manifest.json'
+    if not manifest.is_file():
+        note('public test samples', 'not downloaded (sh scripts/test-image/fetch-samples.sh); sample-based checks will be skipped')
+        return
+    bad, n = [], 0
+    for src in json.loads(manifest.read_text())['sources']:
+        for f in src['files']:
+            n += 1
+            p = SAMPLES / src['name'] / f['name']
+            if not p.is_file() or file_sha256(p) != f['sha256']:
+                bad.append(f"{src['name']}/{f['name']}")
+    check(f'all {n} public samples (dfVFS, Plaso, python-evtx; Apache-2.0) match their pinned SHA-256', not bad, bad)
 
 
 @section('02 Authentication')
@@ -456,6 +495,110 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
+def _ids(db, col, q):
+    return sorted(str(x['_id']) for x in db[col].find(q, {'_id': 1}))
+
+
+def _analyse(token, eid, body=None):
+    """Starts an analysis (waiting for any running one first) and returns the finished job."""
+    for _ in range(60):
+        r = post(f'/api/jobs/analysis/{eid}', token, body)
+        if r.status != 409:
+            break
+        time.sleep(1)
+    return wait_job(token, r.json['job_id'])
+
+
+@section('07b Analysis modules, profiles and re-runs')
+def t_modules():
+    inv, E = C['INVESTIGATOR'], C['E']
+    db = mongo()
+    mods = get(f'/api/evidence/{E}', inv).json.get('modules') or {}
+    check('each module of the standard profile completed, with its counts and version',
+          set(mods) == {'fs_index', 'artifacts', 'yara'} and all(m.get('status') == 'COMPLETED' and isinstance(m.get('counts'), dict)
+                                                               and m.get('version') for m in mods.values()),
+          {k: v.get('status') for k, v in mods.items()})
+    d = get('/api/jobs/analysis/modules', inv).json or {}
+    check('the modules and the three profiles are listed', {m['name'] for m in d.get('modules', [])} == {'fs_index', 'artifacts', 'yara'}
+          and {p['name'] for p in d.get('profiles', [])} == {'quick', 'standard', 'full'} and d.get('default_profile') == 'standard', d)
+    check('an unknown profile or module is refused (400)', post(f'/api/jobs/analysis/{E}', inv, {'profile': 'everything'}).status == 400
+          and post(f'/api/jobs/analysis/{E}', inv, {'modules': ['nope']}).status == 400)
+    check('viewer cannot start an analysis (403)', post(f'/api/jobs/analysis/{E}', C['VIEWER'], {'modules': ['yara']}).status == 403)
+
+    # Re-running one module replaces only its own output.
+    fs_before = _ids(db, 'fs_entries', {'evidence_id': E})
+    art_before = _ids(db, 'forensic_artifacts', {'evidence_id': E, 'pipeline_module': 'artifacts'})
+    yara_before = list(db.forensic_artifacts.find({'evidence_id': E, 'type': 'MALWARE_INDICATOR'}))
+    r = post(f'/api/jobs/analysis/{E}', inv, {'modules': ['yara']})
+    busy = post(f'/api/jobs/analysis/{E}', inv)
+    if busy.status == 200:  # the first job already finished: wait for the extra one too
+        wait_job(inv, busy.json['job_id'])
+    check('a second analysis of the same evidence is refused while one is queued or running (409)',
+          busy.status == 409 and r.json['job_id'] in (busy.detail or ''), busy)
+    j = wait_job(inv, r.json['job_id'])
+    s = (j.get('result') or {}).get('summary') or {}
+    check('re-running one module runs only that module', j['status'] == 'COMPLETED' and s.get('plan') == ['yara'], (j.get('status'), s.get('plan')))
+    check("the other modules' records are untouched (same database IDs)",
+          fs_before == _ids(db, 'fs_entries', {'evidence_id': E}) and art_before == _ids(db, 'forensic_artifacts', {'evidence_id': E, 'pipeline_module': 'artifacts'}),
+          (len(fs_before), len(art_before)))
+    yara_after = list(db.forensic_artifacts.find({'evidence_id': E, 'type': 'MALWARE_INDICATOR'}))
+    check('the re-run module replaced its own records (new IDs, same match)',
+          len(yara_before) == len(yara_after) == 1 and yara_after[0]['_id'] != yara_before[0]['_id']
+          and yara_after[0]['rule'] == yara_before[0]['rule'] and yara_after[0]['pipeline_module'] == 'yara', yara_after[:1])
+    check('the job summary still reports the whole evidence', s.get('counts') == C['COUNTS'], (s.get('counts'), C['COUNTS']))
+    job = db.jobs.find_one({'job_id': r.json['job_id']})
+    check('a running job is claimed by one worker and sends heartbeats', job.get('worker') and job.get('heartbeat_at') and job.get('attempts') == 1,
+          {k: job.get(k) for k in ('worker', 'heartbeat_at', 'attempts')})
+
+    j = _analyse(inv, E, {'modules': ['fs_index']})
+    s = j['result']['summary']
+    check('re-running the file system index also refreshes the modules built on it',
+          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
+
+    # A broker redelivery of a finished job must not run it again.
+    sys.path.insert(0, '/app')
+    from app.tasks import forensic_analysis_task
+    n = db.fs_entries.count_documents({'evidence_id': E})
+    res = forensic_analysis_task.apply(args=(j['job_id'], E, C['INVESTIGATOR_id'])).get()
+    check('a redelivered job that already ran is ignored, not run twice',
+          res.get('status') == 'DUPLICATE_IGNORED' and db.fs_entries.count_documents({'evidence_id': E}) == n, res)
+
+    # Output written before modules existed is replaced as a whole on the next run.
+    db.fs_entries.update_many({'evidence_id': E}, {'$unset': {'pipeline_module': ''}})
+    j = _analyse(inv, E, {'modules': ['yara']})
+    s = j['result']['summary']
+    check('output from before analysis modules existed is replaced as a whole',
+          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'yara'] and s['counts'] == C['COUNTS']
+          and db.fs_entries.count_documents({'evidence_id': E, 'pipeline_module': {'$exists': False}}) == 0, s.get('plan'))
+
+    # The quick profile, and adding a module to it later.
+    q = post('/api/cases', inv, {'name': 'Quick triage profile', 'priority': 'LOW'}).json['case_id']
+    qe = upload(inv, q, IMG.read_bytes(), 'quick.dd').json['evidence_id']
+    j = _analyse(inv, qe, {'profile': 'quick'})
+    s = j['result']['summary']
+    same = lambda counts: all(counts.get(k) == C['COUNTS'][k] for k in ('files', 'deleted_files', 'browser_history', 'usb_devices', 'programs_run'))
+    check('the quick profile runs the file system index and artifacts only',
+          s['plan'] == ['fs_index', 'artifacts'] and 'yara_matches' not in s['counts'] and same(s['counts']), (s.get('plan'), s.get('counts')))
+    j = _analyse(inv, qe, {'modules': ['yara']})
+    s = j['result']['summary']
+    check('a module can be added later without re-running the others',
+          s['plan'] == ['yara'] and s['counts'].get('yara_matches') == C['COUNTS']['yara_matches'] and same(s['counts']), (s.get('plan'), s.get('counts')))
+
+    # Tags made with the older natural keys move to the new ones and still follow their item.
+    ev = next(e for e in get(f"/api/forensics/timeline?case_id={C['A']}&limit=500", inv).json['data'] if e['type'] == 'RECENT_FILE_OPENED')
+    t = post('/api/tags', inv, {'case_id': C['A'], 'item_type': 'TIMELINE_EVENT', 'item_id': ev['_id'], 'label': 'NOTABLE', 'note': 'key migration'}).json
+    db.tags.update_one({'tag_id': t['tag_id']}, {'$set': {'key_version': 1, 'match': {
+        'evidence_id': E, 'type': ev['type'], 'timestamp': iso(ev['timestamp']), 'description': ev['description']}}})
+    from app.services.tags import migrate_keys
+    migrate_keys(db)
+    tag = db.tags.find_one({'tag_id': t['tag_id']})
+    check('tags made with older keys are migrated to the new ones', tag['key_version'] == 2 and set(tag['match']) == {'evidence_id', 'nk'}, tag['match'])
+    j = _analyse(inv, E, {'modules': ['artifacts']})
+    check('...and still follow their item after it is re-created', j['result']['summary'].get('tags') == {'relinked': 1, 'unresolved': 0},
+          j['result']['summary'].get('tags'))
+    req('DELETE', f"/api/tags/{t['tag_id']}", inv)
+
+
 @section('08 Partitions and filesystem index (vs Sleuth Kit)')
 def t_filesystem():
     inv, E = C['INVESTIGATOR'], C['E']
@@ -496,6 +639,33 @@ def t_filesystem():
     ist = post(f"/api/forensics/evidence/{E}/istat?inode={pay['inode']}&offset={pay['partition_offset']}", inv)
     check('istat on the deleted file shows its size', ist.status == 200 and '2191' in json.dumps(ist.json), str(ist)[:200])
     check('istat refuses an injected inode value (400)', post(f"/api/forensics/evidence/{E}/istat?inode=5;id&offset=2048", inv).status == 400)
+
+
+@section('08b Evidence source layer (pytsk3 reads equal icat and the generator manifest)')
+def t_source():
+    sys.path.insert(0, '/app')
+    from app.forensic.source import BlobRef, TskImageSource
+    src = TskImageSource(IMG)
+    check('the partition volume is found (p2048)', src.volumes() == ['p2048'], src.volumes())
+    files = [e for e in C['TRUTH'] if not e['virtual'] and e['mode'].startswith('r')]
+    differ = []
+    for e in files:
+        icat = sh('icat', '-o', '2048', str(IMG), e['inode']).stdout
+        data = src.read_range(BlobRef(C['E'], 'p2048', inode=e['inode']), 0, e['size'] + 1)
+        if data != icat:
+            differ.append((e['path'], len(data), len(icat)))
+    check(f'in-process reads of all {len(files)} files (including deleted ones) equal icat byte for byte', files and not differ, differ[:5])
+    walked = {(w['path'], w['deleted'], w['is_virtual']) for w in src.walk('p2048')}
+    listed = {(e['path'], e['deleted'], e['virtual']) for e in C['TRUTH']}
+    check('walking the volume lists the same entries as fls, virtual ones flagged', walked == listed,
+          (sorted(walked - listed)[:5], sorted(listed - walked)[:5]))
+    manifest = json.loads(IMG.with_suffix('.manifest.json').read_text())
+    by_path = {e['path']: e for e in files}
+    wrong = [f['path'] for f in manifest['files']
+             if f['path'] not in by_path or by_path[f['path']]['deleted'] != f['deleted']
+             or hashlib.sha256(src.read_range(BlobRef(C['E'], 'p2048', inode=by_path[f['path']]['inode']), 0, f['size'] + 1)).hexdigest() != f['sha256']]
+    check(f"every file the generator wrote ({len(manifest['files'])}) is on the image with its exact content", not wrong
+          and manifest['sha256'] == C['IMG_SHA256'], wrong)
 
 
 @section('09 Deleted file recovery (vs original content)')
@@ -1545,7 +1715,8 @@ def t_reg_disabled():
 
 
 PHASES = {
-    'main': [t_platform, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_filesystem, t_recovery, t_viewer, t_timeline,
+    'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
+             t_recovery, t_viewer, t_timeline,
              t_browser, t_usb, t_activity, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
@@ -1555,7 +1726,16 @@ PHASES = {
 
 if __name__ == '__main__':
     t0 = time.time()
-    for fn in PHASES[PHASE]:
+    selected = PHASES[PHASE]
+    # DFIP_SECTIONS=07b,12b runs only those sections (by number prefix), after the sections every other one
+    # builds on: sign-in (02), cases (04), the evidence upload (06) and its analysis (07). A section that needs
+    # another one's results (for example 08's file listing) must be listed with it.
+    wanted = [s.strip() for s in os.environ.get('DFIP_SECTIONS', '').split(',') if s.strip()]
+    if wanted and PHASE == 'main':
+        core = {'02', '04', '06', '07'}
+        selected = [fn for fn in selected if fn.section_id in core or any(fn.section_id.startswith(w) for w in wanted)]
+        print('Running sections:', ', '.join(fn.section_id for fn in selected))
+    for fn in selected:
         fn()
     (OUT / f'results-{PHASE}.json').write_text(json.dumps(RESULTS, indent=1, default=str))
     if PHASE == 'main':  # what check_pdf.py looks for in the saved reports

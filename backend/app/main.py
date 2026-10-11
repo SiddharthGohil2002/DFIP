@@ -45,6 +45,18 @@ async def startup():
         # One tag per item: the natural key's hash identifies the item across re-analysis.
         try:db['tags'].create_index([('case_id',1),('item_type',1),('key_hash',1)],unique=True)
         except Exception:pass
+        # Analysis modules replace only their own output: every pipeline collection is cleared per module.
+        for collection in ('fs_entries','timeline_events','forensic_artifacts','usb_artifacts','pipeline_warnings'):
+            try:db[collection].create_index([('evidence_id',1),('pipeline_module',1)])
+            except Exception:pass
+        for collection,keys,unique in [('analysis_facts',[('evidence_id',1)],True),('timeline_events',[('evidence_id',1),('nk',1)],False),
+                                       ('jobs',[('payload.evidence_id',1),('status',1)],False)]:
+            try:db[collection].create_index(keys,unique=unique)
+            except Exception:pass
+        # Tags made with older natural keys move to the current ones (idempotent).
+        from .services.tags import migrate_keys
+        try:migrate_keys(db)
+        except Exception as exc:print(f'[DFIP] tag key migration skipped: {exc}')
         if settings.demo_mode and db['cases'].count_documents({})==0:
             inv=db['users'].find_one({'email':'investigator@dfip.local'});now=datetime.now(timezone.utc)
             case={'case_id':'CASE-2026-001','name':'Unauthorized Data Access Investigation','description':'Demonstration investigation. All records in this case are synthetic demo data.','status':'IN_PROGRESS','priority':'HIGH','investigator_id':str(inv['_id']),'member_ids':[],'created_by':str(inv['_id']),'created_at':now,'updated_at':now,'demo':True}

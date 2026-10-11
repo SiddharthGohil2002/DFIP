@@ -279,6 +279,8 @@ def delete(eid, body: DeleteEvidence, u=Depends(require_write('EVIDENCE_DELETE')
               for col in ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts')}
     counts['jobs'] = db['jobs'].delete_many({'payload.evidence_id': eid}).deleted_count
     counts['tags'] = db['tags'].delete_many({'evidence_id': eid}).deleted_count
+    for col in ('analysis_facts', 'pipeline_warnings'):  # module bookkeeping, not counted as results
+        db[col].delete_many(q)
     unlinked = db['findings'].update_many({'case_id': case_id, 'evidence_ids': eid},
                                           {'$pull': {'evidence_ids': eid}, '$set': {'updated_at': now}}).modified_count
 

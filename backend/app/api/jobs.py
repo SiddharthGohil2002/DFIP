@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from ..security import current_user, require_write
 from ..database import get_db
 from ..websocket.manager import manager
@@ -42,15 +43,46 @@ def enqueue_verify(evidence_id: str, u=Depends(require_write('EVIDENCE_VERIFY'))
     })
     return {'job_id': job_id}
 
+class AnalysisRequest(BaseModel):
+    """Which analysis to run: a profile (quick, standard, full) or an explicit list of modules (default: standard)."""
+    profile: str | None = Field(default=None, max_length=20)
+    modules: list[str] | None = Field(default=None, max_length=50)
+
+
+@r.get('/analysis/modules')
+def analysis_modules(u=Depends(current_user)):
+    """The analysis modules and processing profiles a job can run."""
+    from ..forensic.modules import describe
+    return describe()
+
+
 @r.post('/analysis/{evidence_id}')
-def enqueue_analysis(evidence_id: str, u=Depends(require_write('ANALYSIS_RUN'))):
+def enqueue_analysis(evidence_id: str, req: AnalysisRequest | None = None, u=Depends(require_write('ANALYSIS_RUN'))):
     from ..repositories.evidence import get_evidence
     from ..repositories.cases import get_case
+    from ..forensic.modules import resolve_request
     e = get_evidence(evidence_id)
     if not e or not get_case(e['case_id'], u):
         raise HTTPException(404, 'Evidence not found or access denied')
+    # One analysis per evidence at a time. A running job counts only while its worker sends heartbeats, and a
+    # queued one only while it could still be waiting for a worker, so a crashed job never blocks the evidence.
+    from datetime import timedelta
+    from ..core.config import settings
+    now = datetime.now(timezone.utc)
+    busy = get_db()['jobs'].find_one({'type': 'FORENSIC_ANALYSIS', 'payload.evidence_id': evidence_id, '$or': [
+        {'status': 'QUEUED', 'created_at': {'$gte': now - timedelta(seconds=2 * settings.analysis_time_limit)}},
+        {'status': 'RUNNING', 'heartbeat_at': {'$gte': now - timedelta(minutes=10)}}]}, {'job_id': 1})
+    if busy:
+        raise HTTPException(409, f'An analysis of this evidence is already queued or running ({busy["job_id"]})')
+    req = req or AnalysisRequest()
+    try:
+        requested = resolve_request(req.profile, req.modules)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    payload = {'evidence_id': evidence_id, 'profile': None if req.modules else (req.profile or 'standard'),
+               'modules': requested if req.modules else None}
     from ..services.jobs import queue
-    job_id = queue.enqueue('FORENSIC_ANALYSIS', {'evidence_id': evidence_id}, u['_id'])
+    job_id = queue.enqueue('FORENSIC_ANALYSIS', payload, u['_id'])
     manager.emit_sync('JOB_CREATED', {
         'job_id': job_id,
         'type': 'FORENSIC_ANALYSIS',

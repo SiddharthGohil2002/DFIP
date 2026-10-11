@@ -6,6 +6,7 @@ from pathlib import Path
 import base64,re,uuid
 from ..forensic import content
 from ..forensic.filesystem import INODE_RE
+from ..forensic.source import offset_of
 from ..forensic.hashing import sha256_file
 from ..forensic.working_image import analysis_image,WorkingCopyUnavailable
 from ..repositories.cases import allowed_case_query
@@ -34,6 +35,12 @@ def tsk_image(e,create=False):
         return analysis_image(e,create=create,db=get_db(),actor='DFIP')
     except WorkingCopyUnavailable as exc:
         raise HTTPException(409,str(exc))
+
+def _volume_offset(offset:int,volume_id:str|None)->int:
+    """The partition start sector from a volume id ('p2048'); the older `offset=` parameter still works."""
+    if volume_id is None: return offset
+    try: return offset_of(volume_id)
+    except ValueError: raise HTTPException(400,'Invalid volume id')
 
 def serial(v):
     if hasattr(v,'isoformat'): return v.isoformat()
@@ -87,11 +94,12 @@ def istat(eid:str,inode:str,offset:int=0,u=Depends(require_write('ANALYSIS_RUN')
     return serial(inode_stat(tsk_image(e),inode,offset))
 
 @r.get('/evidence/{eid}/files')
-def files(eid:str,deleted:bool|None=None,q:str|None=None,offset:int|None=None,skip:int=0,limit:int=200,u=Depends(current_user)):
+def files(eid:str,deleted:bool|None=None,q:str|None=None,offset:int|None=None,volume_id:str|None=None,skip:int=0,limit:int=200,u=Depends(current_user)):
     """Filesystem index built by the analysis pipeline (Sleuth Kit fls)."""
     e=auth_evidence(eid,u)
     query={'evidence_id':e['evidence_id'],'is_virtual':False}
     if deleted is not None: query['deleted']=deleted
+    if volume_id is not None: offset=_volume_offset(0,volume_id)
     if offset is not None: query['partition_offset']=offset
     if q: query['path']={'$regex':re.escape(q),'$options':'i'}
     limit=max(1,min(limit,1000))
@@ -101,7 +109,8 @@ def files(eid:str,deleted:bool|None=None,q:str|None=None,offset:int|None=None,sk
             'analysis_status':e.get('analysis_status'),'summary':e.get('analysis_summary')}
 
 @r.post('/evidence/{eid}/recover')
-def recover(eid:str,inode:str,offset:int=0,u=Depends(require_write('ANALYSIS_RUN'))):
+def recover(eid:str,inode:str,offset:int=0,volume_id:str|None=None,u=Depends(require_write('ANALYSIS_RUN'))):
+    offset=_volume_offset(offset,volume_id)
     e=auth_evidence(eid,u)
     if e.get('demo'): raise HTTPException(400,'Demo evidence cannot be recovered')
     if not INODE_RE.match(inode): raise HTTPException(400,'Invalid inode address')
@@ -205,21 +214,22 @@ def _raw(target, u, resource):
 
 
 @r.get('/evidence/{eid}/content')
-def evidence_content(eid: str, inode: str, offset: int = 0, start: int = 0, length: int = 4096, u=Depends(require_permission('EVIDENCE_READ'))):
+def evidence_content(eid: str, inode: str, offset: int = 0, volume_id: str | None = None, start: int = 0, length: int = 4096,
+                     u=Depends(require_permission('EVIDENCE_READ'))):
     """One page of a file inside the image (base64), for the hex viewer."""
-    return _page(_image_file(eid, inode, offset, u), start, length, u, 'evidence')
+    return _page(_image_file(eid, inode, _volume_offset(offset, volume_id), u), start, length, u, 'evidence')
 
 
 @r.get('/evidence/{eid}/preview')
-def evidence_preview(eid: str, inode: str, offset: int = 0, u=Depends(require_permission('EVIDENCE_READ'))):
+def evidence_preview(eid: str, inode: str, offset: int = 0, volume_id: str | None = None, u=Depends(require_permission('EVIDENCE_READ'))):
     """What the file is (from its first bytes) and, for text, its content."""
-    return _preview(_image_file(eid, inode, offset, u), u, 'evidence')
+    return _preview(_image_file(eid, inode, _volume_offset(offset, volume_id), u), u, 'evidence')
 
 
 @r.get('/evidence/{eid}/raw')
-def evidence_raw(eid: str, inode: str, offset: int = 0, u=Depends(require_permission('EVIDENCE_READ'))):
+def evidence_raw(eid: str, inode: str, offset: int = 0, volume_id: str | None = None, u=Depends(require_permission('EVIDENCE_READ'))):
     """An image or PDF inside the image, for rendering in the preview."""
-    return _raw(_image_file(eid, inode, offset, u), u, 'evidence')
+    return _raw(_image_file(eid, inode, _volume_offset(offset, volume_id), u), u, 'evidence')
 
 
 @r.get('/artifacts/{artifact_id}/content')

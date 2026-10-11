@@ -13,6 +13,13 @@ def shot(page, name):
     page.screenshot(path=f'{OUT}/{name}.png', full_page=True)
 
 
+def api_get(page, path):
+    """GET an API path as the signed-in user (expected UI values come from the API; the system tests check the
+    API itself against ground truth)."""
+    return page.evaluate("""async (p) => (await fetch('/api' + p, {
+        headers: { Authorization: 'Bearer ' + sessionStorage.getItem('dfip_token') } })).json()""", path)
+
+
 with sync_playwright() as p:
     b = p.chromium.launch()
     ctx = b.new_context(viewport={'width': 1440, 'height': 900}, accept_downloads=True)
@@ -56,7 +63,10 @@ with sync_playwright() as p:
 
     step['v'] = 'analysis'
     page.get_by_role('link', name='Case desktop').click()
-    expect(page.get_by_text('Analyzed: 40 files (1 deleted)')).to_be_visible(timeout=180000)
+    expect(page.get_by_text('Analyzed:')).to_be_visible(timeout=180000)
+    href = page.get_by_role('link', name='Open', exact=True).first.get_attribute('href')  # this case's evidence
+    counts = api_get(page, f"/evidence/{href.rstrip('/').rsplit('/', 1)[-1]}")['analysis_summary']
+    expect(page.get_by_text(f"Analyzed: {counts['files']} files ({counts['deleted_files']} deleted)")).to_be_visible()
     shot(page, '05-home-analyzed')
 
     step['v'] = 'evidence detail'
@@ -64,6 +74,33 @@ with sync_playwright() as p:
     expect(page.get_by_text('Partition table (mmls)')).to_be_visible()
     expect(page.get_by_text('Win95 FAT32 (0x0c)')).to_be_visible()
     shot(page, '06-evidence-detail')
+
+    step['v'] = 'analysis modules'
+    modules_card = page.locator('.card', has=page.get_by_role('heading', name='Analysis modules'))
+    expect(modules_card.get_by_role('row')).to_have_count(4)  # header + 3 modules
+    eid = page.url.rstrip('/').rsplit('/', 1)[-1]
+    before = api_get(page, f'/evidence/{eid}')['modules']['yara']['run_id']
+    page.get_by_role('button', name='Analysis options').click()
+    dialog = page.get_by_role('dialog')
+    expect(dialog.get_by_text('Quick triage')).to_be_visible()
+    dialog.get_by_text('Choose modules').click()
+    dialog.get_by_role('checkbox', name='YARA scan').check()
+    shot(page, '06b-analysis-options')
+    dialog.get_by_role('button', name='Start analysis').click()
+    expect(dialog).to_have_count(0)
+    for _ in range(120):  # wait for a new YARA run (not the earlier one) to finish
+        yara = api_get(page, f'/evidence/{eid}')['modules']['yara']
+        if yara['run_id'] != before and yara['status'] == 'COMPLETED':
+            break
+        page.wait_for_timeout(1000)
+    else:
+        problems.append('[analysis modules] the YARA re-run did not complete')
+    expect(page.get_by_role('button', name='Re-run analysis')).to_be_enabled(timeout=30000)
+    yara_row = modules_card.get_by_role('row').filter(has_text='YARA scan')
+    expect(yara_row.get_by_text('COMPLETED', exact=True)).to_be_visible()
+    n = counts['yara_matches']
+    expect(yara_row.get_by_text(f"{n} YARA match{'' if n == 1 else 'es'}")).to_be_visible()
+    shot(page, '06c-analysis-modules')
 
     step['v'] = 'deleted files'
     page.get_by_role('link', name='Deleted files').first.click()
@@ -104,7 +141,7 @@ with sync_playwright() as p:
 
     step['v'] = 'timeline'
     page.get_by_role('link', name='Timeline').first.click()
-    expect(page.get_by_text('96 events')).to_be_visible()
+    expect(page.get_by_text(f"{counts['timeline_events']} events")).to_be_visible()
     shot(page, '08-timeline')
     page.locator('svg.chart rect.bar').last.click()
     expect(page.get_by_role('button', name='Full range')).to_be_visible()

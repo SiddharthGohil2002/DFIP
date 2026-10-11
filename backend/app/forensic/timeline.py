@@ -6,7 +6,44 @@ timestamp of an entry, labelled with which of Modified/Accessed/Changed/Born
 from the evidence itself; entries with no recorded time produce no events.
 """
 from __future__ import annotations
+import hashlib
 from datetime import datetime, timezone
+
+
+def event_nk(e: dict) -> str | None:
+    """A stable natural key for a non-file timeline event, used to re-link tags after a re-analysis.
+
+    It is built only from what identifies the event in its source (the record's file, URL, device, ...) and never
+    from times that a later correction could change (file-system times on FAT depend on the time zone). Program
+    run times are FILETIMEs from inside the Prefetch file, so they stay part of the key. The same function works
+    on documents written before keys existed, which is how existing tags are migrated.
+    """
+    t = e.get('type')
+    if t == 'FILE_MACB':
+        return None
+    ts = e.get('timestamp')
+    ts = ts.isoformat() if hasattr(ts, 'isoformat') else ts
+    if t == 'BROWSER_VISIT':
+        parts = (t, e.get('source_file'), e.get('url'))
+    elif t == 'BROWSER_DOWNLOAD':
+        parts = (t, e.get('source_file'), e.get('description'))
+    elif t == 'USB_ACTIVITY':
+        parts = (t, e.get('serial'), e.get('usb_event'), e.get('description'))
+    elif t == 'PROGRAM_RUN':
+        parts = (t, e.get('source_file'), ts)
+    elif t == 'RECENT_FILE_OPENED':
+        parts = (t, e.get('source_file'), 'first' if str(e.get('description', '')).startswith('File first opened') else 'last')
+    elif t == 'FILE_DELETED_TO_RECYCLE_BIN':
+        parts = (t, e.get('source_file'))
+    else:
+        parts = (t, e.get('source_file'), ts, e.get('description'))
+    return hashlib.sha1('|'.join('' if p is None else str(p) for p in parts).encode()).hexdigest()
+
+
+def _with_nk(events: list[dict]) -> list[dict]:
+    for e in events:
+        e['nk'] = event_nk(e)
+    return events
 
 
 def _parse_iso(value):
@@ -39,6 +76,7 @@ def macb_events(entry: dict, case_id: str, evidence_id: str, partition_offset: i
             'type': 'FILE_MACB', 'macb': macb,
             'description': f'[{macb}] {entry["path"]}{suffix}',
             'path': entry['path'], 'inode': entry.get('inode'), 'partition_offset': partition_offset,
+            'volume_id': f'p{int(partition_offset or 0)}',
             'deleted': bool(entry.get('deleted')), 'is_dir': bool(entry.get('is_dir')),
             'size': entry.get('size'), 'source': 'SLEUTH_KIT_FLS',
         })
@@ -64,7 +102,7 @@ def browser_events(rows: list[dict]) -> list[dict]:
                                'description': f'{r.get("browser") or "Browser"} download: {r.get("target_path")}'
                                               + (f' from {r["tab_url"]}' if r.get('tab_url') else ''),
                                'url': r.get('tab_url'), 'source': r.get('source'), 'source_file': r.get('source_path')})
-    return events
+    return _with_nk(events)
 
 
 USB_TIME_LABELS = {
@@ -87,7 +125,7 @@ def usb_events(devices: list[dict], case_id: str, evidence_id: str) -> list[dict
                                'type': 'USB_ACTIVITY', 'usb_event': field.upper(),
                                'description': f'USB device {words}: {label} (serial {d.get("serial")})',
                                'serial': d.get('serial'), 'source': d.get('source_detail', {}).get(field, d.get('source'))})
-    return events
+    return _with_nk(events)
 
 
 # Windows activity. LNK header times describe the target file, not when it was opened, so they are kept
@@ -124,4 +162,4 @@ def activity_events(rows: list[dict]) -> list[dict]:
             size = f' ({r["original_size"]:,} bytes)' if isinstance(r.get('original_size'), int) else ''
             add(r, r.get('deleted_time'), 'FILE_DELETED_TO_RECYCLE_BIN',
                 f'Deleted to Recycle Bin: {r.get("original_path")}{size}', r.get('original_path'))
-    return events
+    return _with_nk(events)

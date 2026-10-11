@@ -69,6 +69,28 @@ export interface Evidence {
   created_by?: string;
   storage_path?: string;
   demo?: boolean;
+  /** Each analysis module's latest run on this evidence. */
+  modules?: Record<string, ModuleStatus>;
+}
+
+export interface ModuleStatus {
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  job_id?: string;
+  run_id?: string;
+  version?: string;
+  counts?: Record<string, number>;
+  warnings?: string[];
+  warnings_total?: number;
+  error?: string | null;
+  started_at?: string;
+  finished_at?: string | null;
+}
+
+/** GET /jobs/analysis/modules: what an analysis job can run. */
+export interface AnalysisCatalog {
+  modules: { name: string; label: string; description: string; requires: string[]; version: string }[];
+  profiles: { name: string; label: string; modules: string[] }[];
+  default_profile: string;
 }
 
 export interface Job {

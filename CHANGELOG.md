@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed — analysis modules (foundation for the next features)
+- **Analysis modules and profiles.** An analysis is now a plan of modules (file system index; browser, USB and Windows activity; YARA scan), each owning its own output. Choose a profile (Quick triage, Standard, Full) or individual modules in the new **Analysis options** dialog, and re-run a single module from the evidence page's **Analysis modules** card; only its records are replaced, and the modules built on it are refreshed. `POST /api/jobs/analysis/{id}` accepts `{profile}` or `{modules}`; `GET /api/jobs/analysis/modules` lists them.
+- **One analysis per evidence at a time** (409 while one is queued or running).
+- Jobs are claimed by one worker and send heartbeats: a redelivered message never starts a second run, and a job whose worker died is taken over and continues after the modules it had completed.
+- External tools run in their own process group under a memory limit; cancelling a job now stops a long-running tool (for example `fls` on a large disk) instead of waiting for it to finish.
+- In-process reading of disk images (pytsk3) behind a new evidence-source layer, and a `volume_id` (`p2048`) on file-index records and file endpoints.
+- Tag keys no longer include times that a time-zone correction could change; existing tags are migrated at startup.
+- Test infrastructure: the test-disk generator writes a manifest of every file it created; `scripts/test-image/fetch-samples.sh` downloads pinned public samples (dfVFS, Plaso, python-evtx; Apache-2.0); `SECTIONS=07b,12b sh tests/system/run.sh` runs selected system-test sections.
+
+### Fixed — analysis jobs
+- Long analyses could run twice: Redis redelivered unacknowledged tasks after its 1-hour default visibility timeout while the analysis limit is 6 hours. The timeout now outlasts the longest job.
+- The analysis summary could grow past MongoDB's 16 MB document limit on disks with many warnings; the summary keeps the first 200 and every warning is stored in `pipeline_warnings`.
+- Old analysis run records and work folders no longer pile up on every re-run.
+
 ### Added — investigation features
 - **Windows activity** (new page, timeline, search, report): programs run from Prefetch files (run count, up to eight last-run times, files loaded, volume; Windows 10/11 compressed Prefetch included, via libscca), files opened from shortcuts in the Recent folders (target, removable/network drive with label and serial, target times; via liblnk) and files moved to the Recycle Bin from `$I` records (original path, size, deletion time, and the `$R` content, which can be recovered). In the demo case this proves the chain: SecureDelete.exe ran, the payroll export was opened from the SanDisk drive (E:) and then moved to the Recycle Bin.
 - **Tags**: a bookmark button on deleted files, timeline events, browser records, USB devices, Windows activity records and recovered or carved files marks them as Evidence, Notable or Follow up with a note. A Tagged items page lists them, the case report has a "Tagged evidence" section, and tags stay attached to the right records when an analysis is re-run.

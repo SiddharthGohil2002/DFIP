@@ -8,6 +8,10 @@ Recent additions:
 
 | Route | Purpose |
 |---|---|
+| `POST /api/jobs/analysis/{id}` (optional body `{profile: quick\|standard\|full}` or `{modules: [...]}`) | Queue an analysis; no body = standard. 400 for an unknown profile or module, 409 while another analysis of the evidence is queued or running |
+| `GET /api/jobs/analysis/modules` | The analysis modules (name, label, description, requirements, version) and profiles |
+| `GET /api/evidence/{id}` → `modules` | Each module's latest run: status, version, run ID, counts, warnings |
+| `volume_id` (e.g. `p2048`) on `/forensics/evidence/{id}/files`, `/recover`, `/content`, `/preview`, `/raw` | Names the volume; the older `offset=` still works |
 | `DELETE /api/evidence/{id}` (body `{reason}`) | Delete an evidence item and everything taken from it; refused (409) during an analysis and (423) under legal hold |
 | `GET /api/forensics/activity?case_id&kind=PROGRAM_RUN|RECENT_FILE|RECYCLE_BIN_ITEM&search` | Windows activity records |
 | `GET /api/forensics/evidence/{id}/content|preview|raw?inode&offset` and `/api/forensics/artifacts/{id}/content|preview|raw` | File viewer: hex pages (base64), type and text preview, image/PDF bytes |

@@ -9,6 +9,11 @@ from __future__ import annotations
 import hashlib
 import json
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
+
+from ..forensic.timeline import event_nk
+
+KEY_VERSION = 2  # 2: keys use volume_id and never a time that a time-zone correction could change
 
 ITEM_COLLECTIONS = {
     'FILE': 'fs_entries', 'TIMELINE_EVENT': 'timeline_events', 'BROWSER': 'forensic_artifacts',
@@ -43,12 +48,14 @@ def natural_key(item_type: str, doc) -> dict:
     e = doc.get('evidence_id')
     t = doc.get('type')
     if item_type == 'FILE':
-        return {'evidence_id': e, 'partition_offset': doc.get('partition_offset'), 'inode': doc.get('inode'), 'path': doc.get('path')}
+        return {'evidence_id': e, 'volume_id': _volume(doc), 'inode': doc.get('inode'), 'path': doc.get('path')}
     if item_type == 'TIMELINE_EVENT':
         if t == 'FILE_MACB':
-            return {'evidence_id': e, 'type': t, 'partition_offset': doc.get('partition_offset'), 'inode': doc.get('inode'),
-                    'path': doc.get('path'), 'macb': doc.get('macb'), 'timestamp': doc.get('timestamp')}
-        return {'evidence_id': e, 'type': t, 'timestamp': doc.get('timestamp'), 'description': doc.get('description')}
+            # Each of the m/a/c/b letters belongs to exactly one event of a file, so the letters identify the
+            # event without its time (which a time-zone correction may change).
+            return {'evidence_id': e, 'type': t, 'volume_id': _volume(doc), 'inode': doc.get('inode'),
+                    'path': doc.get('path'), 'macb': doc.get('macb')}
+        return {'evidence_id': e, 'nk': doc.get('nk') or event_nk(doc)}
     if item_type == 'BROWSER':
         return {'evidence_id': e, 'type': t, 'source_path': doc.get('source_path'), 'row_id': doc.get('row_id')}
     if item_type == 'USB':
@@ -60,6 +67,10 @@ def natural_key(item_type: str, doc) -> dict:
     if t == 'EXTRACTED_FILE':
         return {'evidence_id': e, 'type': t, 'original_path': doc.get('original_path')}
     return {'artifact_id': doc.get('artifact_id')}  # recovered and carved files are never replaced
+
+
+def _volume(doc) -> str:
+    return doc.get('volume_id') or f'p{int(doc.get("partition_offset") or 0)}'
 
 
 def key_hash(match: dict) -> str:
@@ -112,6 +123,29 @@ def resolve(db, tag) -> dict | None:
             db['tags'].update_one({'_id': tag['_id']}, {'$set': {'item_id': item_id_of(tag['item_type'], doc)}})
             tag['item_id'] = item_id_of(tag['item_type'], doc)
     return doc
+
+
+def migrate_keys(db) -> dict:
+    """Moves tags made with older natural keys to the current ones (run at startup; safe to repeat).
+
+    The new key is computed from the item the tag still points at. A tag whose item is gone keeps its old key and
+    snapshot. Two tags that would end up with the same key (the same item tagged twice under the old keys) are
+    left as they were rather than merged.
+    """
+    migrated = skipped = 0
+    for tag in db['tags'].find({'key_version': {'$ne': KEY_VERSION}}):
+        doc = find_item(db, tag['item_type'], tag['item_id'])
+        if doc is None:
+            skipped += 1
+            continue
+        match = natural_key(tag['item_type'], doc)
+        try:
+            db['tags'].update_one({'_id': tag['_id']}, {'$set': {'match': match, 'key_hash': key_hash(match),
+                                                                 'key_version': KEY_VERSION}})
+            migrated += 1
+        except DuplicateKeyError:
+            skipped += 1
+    return {'migrated': migrated, 'skipped': skipped}
 
 
 def relink_evidence(db, evidence_id: str) -> dict:

@@ -49,6 +49,9 @@ mdir -i "$PART" '::/$Recycle.Bin/S-1-5-21-3623811015-3361044348-30300820-1001'
 # Delete a file so deleted-file recovery has something to find.
 mdel -i "$PART" ::/Users/alice/Documents/payroll-export.csv
 
+# Ground truth for the tests: every generated file with its size, SHA-256 and stamped time.
+python3 scripts/test-image/write_manifest.py "$TREE" "$IMG" 2048 Users/alice/Documents/payroll-export.csv
+
 rm -rf "$WORK"
 echo "Built $IMG"
 sha256sum "$IMG"

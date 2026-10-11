@@ -1,0 +1,208 @@
+"""Where evidence content comes from, behind one interface.
+
+Analysis modules and the file viewer read files through an EvidenceSource instead of calling Sleuth Kit tools
+directly, so the same code works on a disk image (TskImageSource, in-process through pytsk3) and on a folder of
+loose files such as an unpacked triage package (DirectorySource).
+
+A volume is named by a `volume_id`: `p<start sector>` for a partition of a disk image (`p0` when the image is a
+bare file system), and later `p<start>/vss<n>` for a shadow copy or `pkg` for a logical package. A `BlobRef`
+names one piece of content: a file by inode (images) or path (folders), optionally one of its data streams, and,
+for content found inside other content (an archive member, an e-mail attachment), the chain of containers.
+"""
+from __future__ import annotations
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterator
+
+SECTOR = 512
+_VOLUME_RE = re.compile(r'^p(\d+)$')
+_INODE_RE = re.compile(r'^(\d+)(?:-(\d+)(?:-(\d+))?)?$')
+
+
+def volume_id(partition_offset: int) -> str:
+    return f'p{int(partition_offset or 0)}'
+
+
+def offset_of(vid: str) -> int:
+    """The start sector of a partition volume id ('p2048' -> 2048); ValueError for anything else."""
+    m = _VOLUME_RE.match(vid or '')
+    if not m:
+        raise ValueError(f'Not a partition volume id: {vid!r}')
+    return int(m.group(1))
+
+
+@dataclass(frozen=True)
+class BlobRef:
+    evidence_id: str
+    volume_id: str
+    inode: str | None = None
+    path: str | None = None
+    stream: str | None = None
+    chain: tuple = field(default_factory=tuple)
+
+
+class Blob:
+    """Random-access content of one file."""
+    size: int = 0
+
+    def read(self, start: int, length: int) -> bytes:  # pragma: no cover - interface
+        raise NotImplementedError
+
+
+class EvidenceSource:
+    def volumes(self) -> list[str]:  # pragma: no cover - interface
+        raise NotImplementedError
+
+    def walk(self, vid: str) -> Iterator[dict]:  # pragma: no cover - interface
+        raise NotImplementedError
+
+    def open(self, ref: BlobRef) -> Blob:  # pragma: no cover - interface
+        raise NotImplementedError
+
+    def read_range(self, ref: BlobRef, start: int, length: int) -> bytes:
+        blob = self.open(ref)
+        if start >= blob.size:
+            return b''
+        return blob.read(start, min(length, blob.size - start))
+
+
+# ---------------------------------------------------------------------------------------------- disk images
+class _TskBlob(Blob):
+    def __init__(self, f, attr_type, attr_id):
+        self._f = f
+        self._type = attr_type
+        self._id = attr_id
+        self.size = int(f.info.meta.size or 0) if f.info.meta else 0
+        if attr_type is not None:
+            for attr in f:
+                if int(attr.info.type) == attr_type and int(attr.info.id) == attr_id:
+                    self.size = int(attr.info.size)
+                    break
+
+    def read(self, start: int, length: int) -> bytes:
+        if length <= 0 or start >= self.size:
+            return b''
+        length = min(length, self.size - start)
+        if self._type is None:
+            return self._f.read_random(start, length)
+        return self._f.read_random(start, length, self._type, self._id)
+
+
+class TskImageSource(EvidenceSource):
+    """A raw disk image (or an E01's verified raw working copy) read in-process with pytsk3."""
+
+    def __init__(self, image: Path, offsets: list[int] | None = None):
+        import pytsk3
+        self._tsk = pytsk3
+        self.image = Path(image)
+        self._img = pytsk3.Img_Info(str(self.image))
+        self._offsets = offsets
+        self._fs: dict[int, object] = {}
+
+    def volumes(self) -> list[str]:
+        if self._offsets is not None:
+            return [volume_id(o) for o in self._offsets]
+        found = []
+        try:
+            vs = self._tsk.Volume_Info(self._img)
+            for part in vs:
+                desc = part.desc.decode(errors='replace') if isinstance(part.desc, bytes) else str(part.desc)
+                if part.flags == self._tsk.TSK_VS_PART_FLAG_ALLOC and 'extended' not in desc.lower():
+                    found.append(int(part.start))
+        except OSError:
+            pass  # no partition table: a bare file system
+        return [volume_id(o) for o in (found or [0])]
+
+    def _filesystem(self, vid: str):
+        off = offset_of(vid)
+        if off not in self._fs:
+            self._fs[off] = self._tsk.FS_Info(self._img, offset=off * SECTOR)
+        return self._fs[off]
+
+    def open(self, ref: BlobRef) -> Blob:
+        m = _INODE_RE.match(ref.inode or '')
+        if not m:
+            raise ValueError('Invalid inode address')
+        f = self._filesystem(ref.volume_id).open_meta(inode=int(m.group(1)))
+        attr_type = int(m.group(2)) if m.group(2) else None
+        attr_id = int(m.group(3)) if m.group(3) else (0 if attr_type is not None else None)
+        return _TskBlob(f, attr_type, attr_id)
+
+    def walk(self, vid: str) -> Iterator[dict]:
+        """Every named entry of a volume (allocated and deleted), depth first: {path, inode, size, is_dir, deleted}."""
+        fs = self._filesystem(vid)
+        seen = set()
+
+        def visit(directory, parent):
+            for entry in directory:
+                name = entry.info.name.name
+                name = name.decode('utf-8', errors='replace') if isinstance(name, bytes) else str(name)
+                if name in ('.', '..') or entry.info.meta is None:
+                    continue
+                meta = entry.info.meta
+                path = f'{parent}/{name}' if parent != '/' else f'/{name}'
+                virtual = meta.type in (self._tsk.TSK_FS_META_TYPE_VIRT, self._tsk.TSK_FS_META_TYPE_VIRT_DIR)
+                is_dir = meta.type in (self._tsk.TSK_FS_META_TYPE_DIR, self._tsk.TSK_FS_META_TYPE_VIRT_DIR)
+                deleted = bool(int(entry.info.name.flags) & int(self._tsk.TSK_FS_NAME_FLAG_UNALLOC))
+                # Sleuth Kit's own entries ($MBR, $FAT1, $OrphanFiles, ...) are flagged as in the file index.
+                yield {'path': path, 'inode': str(meta.addr), 'size': int(meta.size or 0), 'is_dir': is_dir,
+                       'deleted': deleted, 'is_virtual': virtual}
+                if is_dir and not deleted and meta.addr not in seen:
+                    seen.add(meta.addr)
+                    try:
+                        yield from visit(entry.as_directory(), path)
+                    except OSError:
+                        continue
+
+        yield from visit(fs.open_dir(path='/'), '/')
+
+
+# --------------------------------------------------------------------------------------------- loose files
+class _FileBlob(Blob):
+    def __init__(self, path: Path):
+        self._path = path
+        self.size = path.stat().st_size
+
+    def read(self, start: int, length: int) -> bytes:
+        with self._path.open('rb') as f:
+            f.seek(start)
+            return f.read(length)
+
+
+class DirectorySource(EvidenceSource):
+    """A folder of loose files (an unpacked logical package); paths are '/'-rooted and never leave the folder."""
+
+    VOLUME = 'pkg'
+
+    def __init__(self, root: Path):
+        self.root = Path(root).resolve()
+
+    def volumes(self) -> list[str]:
+        return [self.VOLUME]
+
+    def _local(self, path: str) -> Path:
+        local = (self.root / path.lstrip('/')).resolve()
+        if local != self.root and self.root not in local.parents:
+            raise ValueError('Path is outside the package')
+        return local
+
+    def open(self, ref: BlobRef) -> Blob:
+        local = self._local(ref.path or '')
+        if not local.is_file() or local.is_symlink():
+            raise FileNotFoundError(ref.path)
+        return _FileBlob(local)
+
+    def walk(self, vid: str = VOLUME) -> Iterator[dict]:
+        for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
+            dirnames.sort()
+            rel = Path(dirpath).relative_to(self.root).as_posix()
+            rel = '' if rel == '.' else '/' + rel
+            for d in dirnames:
+                yield {'path': f'{rel}/{d}', 'inode': None, 'size': 0, 'is_dir': True, 'deleted': False}
+            for name in sorted(filenames):
+                p = Path(dirpath) / name
+                if p.is_symlink():
+                    continue
+                yield {'path': f'{rel}/{name}', 'inode': None, 'size': p.stat().st_size, 'is_dir': False, 'deleted': False}

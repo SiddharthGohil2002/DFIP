@@ -8,6 +8,7 @@
 #   sh tests/system/run.sh
 #
 # Output: tests/system/out/<phase>.log and results-<phase>.json. Exits 1 if any check fails.
+# Public samples (sh scripts/test-image/fetch-samples.sh) are used when present; SECTIONS=07b,12b runs a subset.
 set -eu
 cd "$(dirname "$0")"
 HERE=$(pwd -W 2>/dev/null || pwd)
@@ -18,11 +19,18 @@ $COMPOSE down -v >/dev/null 2>&1 || true
 $COMPOSE up -d --wait >/dev/null 2>&1
 
 run_phase() {
-  MSYS_NO_PATHCONV=1 $COMPOSE exec -T -e PYTHONDONTWRITEBYTECODE=1 backend python /tests/dfip_full_test.py "$1" > "out/$1.log" 2>&1 || true
+  MSYS_NO_PATHCONV=1 $COMPOSE exec -T -e PYTHONDONTWRITEBYTECODE=1 -e DFIP_SECTIONS="${SECTIONS:-}" backend     python /tests/dfip_full_test.py "$1" > "out/$1.log" 2>&1 || true
   tail -1 "out/$1.log"
 }
 
 run_phase main
+if [ -n "${SECTIONS:-}" ]; then
+  # A partial run (SECTIONS=07b,12b sh tests/system/run.sh) checks only the selected sections.
+  $COMPOSE down -v >/dev/null 2>&1
+  if grep -h "  FAIL" out/main.log; then exit 1; fi
+  echo "Selected system checks passed."
+  exit 0
+fi
 T_DESKTOP_WRITES=true $COMPOSE up -d --wait backend >/dev/null 2>&1 && run_phase desktop_writes
 T_REGISTRATION=open $COMPOSE up -d --wait backend >/dev/null 2>&1 && run_phase reg_open
 T_REGISTRATION=disabled $COMPOSE up -d --wait backend >/dev/null 2>&1 && run_phase reg_disabled

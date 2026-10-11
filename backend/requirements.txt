@@ -19,3 +19,4 @@ regipy==5.2.0
 # Windows Prefetch (incl. Windows 10/11 compressed) and LNK parsers (libyal; prebuilt cp311 wheels)
 libscca-python==20260527
 liblnk-python==20260525
+pytsk3==20260715
