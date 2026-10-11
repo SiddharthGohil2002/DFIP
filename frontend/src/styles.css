@@ -400,6 +400,11 @@ button { font: inherit; }
 /* File viewer (preview and hex) */
 .viewer-text { max-height: 60vh; white-space: pre-wrap; word-break: break-word; }
 .hex-dump { max-height: 60vh; font-size: 12px; line-height: 1.5; white-space: pre; }
+/* A search hit: in the hex view and in content-search snippets. */
+.hex-dump mark, .snippet mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 1px; }
+.snippet { font-family: var(--mono, ui-monospace, monospace); font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.snippets { display: grid; gap: 6px; margin: 8px 0 2px; }
+.snippet-row { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 6px 8px; background: var(--surface-2); border-radius: 6px; }
 .viewer-media { display: flex; justify-content: center; background: var(--surface-3); border-radius: var(--radius-sm); padding: 12px; }
 .viewer-media img { max-width: 100%; max-height: 60vh; image-rendering: auto; }
 .viewer-pdf { width: 100%; height: 60vh; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }

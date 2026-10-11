@@ -5,7 +5,7 @@ import { useAuth } from './auth';
 import { useCase } from './caseContext';
 import { Banner, Button, Field, Modal, useToast } from '../ui';
 
-export type TagItemType = 'FILE' | 'TIMELINE_EVENT' | 'BROWSER' | 'USB' | 'ACTIVITY' | 'ARTIFACT';
+export type TagItemType = 'FILE' | 'TIMELINE_EVENT' | 'BROWSER' | 'USB' | 'ACTIVITY' | 'ARTIFACT' | 'ENTITY';
 export type TagLabel = 'EVIDENCE' | 'NOTABLE' | 'FOLLOW_UP';
 
 export interface Tag {

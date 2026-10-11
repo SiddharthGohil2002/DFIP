@@ -3,12 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from .core.config import settings
 from .database import get_db
 from .repositories.users import seed_users
-from .api import auth,cases,evidence,notifications,reports,admin,forensics,findings,chain,jobs,threatintel,tags,hashsets,desktop as desktop_module
+from .api import auth,cases,evidence,notifications,reports,admin,forensics,findings,chain,jobs,threatintel,tags,hashsets,content,desktop as desktop_module
 from .ws import r as ws_router
 from datetime import datetime,timezone
 app=FastAPI(title='DFIP API',version='2.1.0',description='Digital Forensics Investigation Platform')
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in settings.cors_origins.split(',') if x.strip()],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
-for router in [auth.r,cases.r,evidence.r,notifications.r,reports.r,admin.r,forensics.r,findings.r,chain.r,jobs.r,threatintel.r,tags.r,hashsets.r,desktop_module.r]:app.include_router(router,prefix='/api')
+for router in [auth.r,cases.r,evidence.r,notifications.r,reports.r,admin.r,forensics.r,content.r,findings.r,chain.r,jobs.r,threatintel.r,tags.r,hashsets.r,desktop_module.r]:app.include_router(router,prefix='/api')
 app.include_router(ws_router)
 @app.on_event('startup')
 async def startup():
@@ -46,13 +46,14 @@ async def startup():
         try:db['tags'].create_index([('case_id',1),('item_type',1),('key_hash',1)],unique=True)
         except Exception:pass
         # Analysis modules replace only their own output: every pipeline collection is cleared per module.
-        for collection in ('fs_entries','timeline_events','forensic_artifacts','usb_artifacts','pipeline_warnings'):
+        for collection in ('fs_entries','timeline_events','forensic_artifacts','usb_artifacts','pipeline_warnings','entities'):
             try:db[collection].create_index([('evidence_id',1),('pipeline_module',1)])
             except Exception:pass
         for collection,keys,unique in [('hash_sets',[('set_id',1)],True),('fs_entries',[('evidence_id',1),('sha256',1)],False),
                                        ('fs_entries',[('case_id',1),('sha256',1)],False),('fs_entries',[('evidence_id',1),('file_category',1)],False),
                                        ('analysis_facts',[('evidence_id',1)],True),('timeline_events',[('evidence_id',1),('nk',1)],False),
-                                       ('jobs',[('payload.evidence_id',1),('status',1)],False)]:
+                                       ('jobs',[('payload.evidence_id',1),('status',1)],False),
+                                       ('entities',[('case_id',1),('kind',1),('value',1)],False),('entities',[('evidence_id',1),('kind',1),('count',-1)],False)]:
             try:db[collection].create_index(keys,unique=unique)
             except Exception:pass
         # Tags made with older natural keys move to the current ones (idempotent).

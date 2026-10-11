@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Eye } from 'lucide-react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
+import { ChevronLeft, ChevronRight, Eye, LocateFixed } from 'lucide-react';
 import { api, fetchBlob } from '../lib/api';
 import { formatBytes, formatNumber } from '../lib/format';
 import { Banner, Button, Loading, Modal, Tabs } from './index';
@@ -30,6 +30,12 @@ interface Page {
 
 const PAGE = 4096;
 
+/** Bytes to show highlighted when the viewer opens at a search hit. */
+export interface ViewAt {
+  offset: number;
+  length?: number | null;
+}
+
 function endpoint(src: ViewSource, what: 'content' | 'preview' | 'raw', extra = '') {
   if (src.kind === 'artifact') return `/forensics/artifacts/${encodeURIComponent(src.artifactId)}/${what}${extra ? `?${extra}` : ''}`;
   return `/forensics/evidence/${encodeURIComponent(src.evidenceId)}/${what}?inode=${encodeURIComponent(src.inode)}&offset=${src.offset}${extra ? `&${extra}` : ''}`;
@@ -37,37 +43,56 @@ function endpoint(src: ViewSource, what: 'content' | 'preview' | 'raw', extra = 
 
 const hex2 = (b: number) => b.toString(16).padStart(2, '0');
 
-function hexDump(bytes: Uint8Array, base: number): string {
-  const lines: string[] = [];
+const printable = (b: number) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '.');
+
+/** A hex dump; bytes in [mark.from, mark.to) are wrapped in <mark> in both the hex and the text columns. */
+function hexDump(bytes: Uint8Array, base: number, mark?: { from: number; to: number } | null): ReactNode {
+  const lines: ReactNode[] = [];
+  const marked = (at: number) => !!mark && at >= mark.from && at < mark.to;
   for (let i = 0; i < bytes.length; i += 16) {
-    const row = bytes.subarray(i, i + 16);
-    const hex = Array.from(row, hex2);
-    const left = hex.slice(0, 8).join(' ').padEnd(23, ' ');
-    const right = hex.slice(8).join(' ').padEnd(23, ' ');
-    const ascii = Array.from(row, (b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '.')).join('');
-    lines.push(`${(base + i).toString(16).padStart(8, '0')}  ${left}  ${right}  |${ascii}|`);
+    const row = Array.from(bytes.subarray(i, i + 16));
+    const at = base + i;
+    if (!row.some((_, k) => marked(at + k))) {
+      const hex = row.map(hex2);
+      lines.push(`${at.toString(16).padStart(8, '0')}  ${hex.slice(0, 8).join(' ').padEnd(23, ' ')}  ${hex.slice(8).join(' ').padEnd(23, ' ')}  |${row.map(printable).join('')}|\n`);
+      continue;
+    }
+    const cells: ReactNode[] = [];
+    for (let k = 0; k < 16; k++) {
+      const sep = k === 0 ? '' : k === 8 ? '  ' : ' ';
+      const text = k < row.length ? hex2(row[k]) : '  ';
+      cells.push(sep, marked(at + k) ? <mark key={`h${k}`}>{text}</mark> : text);
+    }
+    const chars = row.map((b, k) => (marked(at + k) ? <mark key={`a${k}`}>{printable(b)}</mark> : printable(b)));
+    lines.push(<Fragment key={at}>{at.toString(16).padStart(8, '0')}{'  '}{cells}{'  |'}{chars}{'|\n'}</Fragment>);
   }
-  return lines.join('\n');
+  return lines;
 }
 
-/** "View" button that opens the viewer for one file. */
-export function ViewButton({ source }: { source: ViewSource }) {
+/** "View" button that opens the viewer for one file; with `at`, "View at offset" opens the hex view there. */
+export function ViewButton({ source, at }: { source: ViewSource; at?: ViewAt }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button size="sm" icon={<Eye size={13} />} onClick={() => setOpen(true)}>View</Button>
-      {open && <FileViewer source={source} onClose={() => setOpen(false)} />}
+      {at ? (
+        <Button size="sm" icon={<LocateFixed size={13} />} onClick={() => setOpen(true)} title={`Byte ${at.offset.toLocaleString()} (0x${at.offset.toString(16)})`}>
+          View at offset
+        </Button>
+      ) : (
+        <Button size="sm" icon={<Eye size={13} />} onClick={() => setOpen(true)}>View</Button>
+      )}
+      {open && <FileViewer source={source} at={at} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
 /** Preview (text, image or PDF, decided from the file's content) and a paged hex view. Nothing is written or downloaded. */
-export function FileViewer({ source, onClose }: { source: ViewSource; onClose: () => void }) {
-  const [tab, setTab] = useState<'preview' | 'hex'>('preview');
+export function FileViewer({ source, at, onClose }: { source: ViewSource; at?: ViewAt; onClose: () => void }) {
+  const [tab, setTab] = useState<'preview' | 'hex'>(at ? 'hex' : 'preview');
   return (
     <Modal open title={source.name} onClose={onClose} wide>
       <Tabs<'preview' | 'hex'> value={tab} onChange={setTab} tabs={[{ id: 'preview', label: 'Preview' }, { id: 'hex', label: 'Hex' }]} />
-      <div style={{ paddingTop: 12 }}>{tab === 'preview' ? <PreviewPane source={source} onHex={() => setTab('hex')} /> : <HexPane source={source} />}</div>
+      <div style={{ paddingTop: 12 }}>{tab === 'preview' ? <PreviewPane source={source} onHex={() => setTab('hex')} /> : <HexPane source={source} at={at} />}</div>
     </Modal>
   );
 }
@@ -125,8 +150,9 @@ function PreviewPane({ source, onHex }: { source: ViewSource; onHex: () => void 
   );
 }
 
-function HexPane({ source }: { source: ViewSource }) {
-  const [start, setStart] = useState(0);
+function HexPane({ source, at }: { source: ViewSource; at?: ViewAt }) {
+  // Opening at a hit: start a few rows before it, on a 16-byte boundary.
+  const [start, setStart] = useState(at ? Math.max(0, at.offset - (at.offset % 16) - 64) : 0);
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState('');
   const [go, setGo] = useState('');
@@ -161,9 +187,12 @@ function HexPane({ source }: { source: ViewSource }) {
         <Button size="sm" onClick={jump}>Go to offset</Button>
         {page && <span className="small muted">Bytes {formatNumber(page.start)}–{formatNumber(page.start + page.length)} of {formatNumber(page.size)}</span>}
       </div>
+      {at && <div className="small">Match at byte {formatNumber(at.offset)} (0x{at.offset.toString(16)}){at.length ? `, ${at.length} bytes long` : ''}, highlighted.</div>}
       {error && <Banner tone="danger">{error}</Banner>}
       {!page && !error && <Loading />}
-      {bytes && (bytes.length ? <pre className="pre hex-dump">{hexDump(bytes, page!.start)}</pre> : <Banner tone="info">No bytes at this offset (past the end of the file).</Banner>)}
+      {bytes && (bytes.length
+        ? <pre className="pre hex-dump">{hexDump(bytes, page!.start, at ? { from: at.offset, to: at.offset + Math.max(1, at.length || 1) } : null)}</pre>
+        : <Banner tone="info">No bytes at this offset (past the end of the file).</Banner>)}
     </div>
   );
 }

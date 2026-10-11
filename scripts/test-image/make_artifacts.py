@@ -244,6 +244,52 @@ def hidden_files():
     write('Users/alice/Downloads/eicar.com', EICAR)
 
 
+# Content search and found data (Phase 3). Every identifier here is a published test value; the mistyped card
+# number fails its Luhn check and must not be reported.
+CONTACTS = """Personal contacts - keep private
+Zoë Martin <zoe.martin@example.org>, +44 20 7946 0958
+Bank (personal): GB82 WEST 1234 5698 7654 32
+Card on file: 4111 1111 1111 1111 (exp 09/28)
+Old card, mistyped: 4111 1111 1111 1112
+Aadhaar: 2345 6789 0124
+BTC: 1BoatSLRHtKNngkdXEeobR76b53LETtpyT
+ETH: 0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed
+File server 10.20.30.40, portal https://intranet.corp.example/hr/payroll
+"""
+HANDOVER = 'Handover: send the payroll export to alice.personal@example.net before Friday. Salary account DE89370400440532013000.'
+MEETING_RTF = (r"{\rtf1\ansi\deff0{\fonttbl{\f0 Calibri;}}{\*\generator Riched20 10.0.19041;}" "\r\n"
+               r"\pard Meeting notes 1 September: the USB drive CRUZER holds the export. Caf\'e9 at 10:00.\par" "\r\n"
+               r"Call +1 202 555 0143 about the transfer.\par" "\r\n}")
+UTF16_NOTE = 'Reminder: wipe the SanDisk drive after copying payroll-export.csv to it.\r\n'
+BUDGET_ODT_TEXT = ('Budget Q3', 'Transfer 12,400 EUR to GB82 WEST 1234 5698 7654 32 before the audit.')
+
+
+def odt(heading, paragraph) -> bytes:
+    """A minimal OpenDocument text file: the stored mimetype member first, then content.xml."""
+    content = ('<?xml version="1.0" encoding="UTF-8"?><office:document-content '
+               'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+               'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2"><office:body><office:text>'
+               f'<text:h text:outline-level="1">{heading}</text:h><text:p>{paragraph}</text:p>'
+               '</office:text></office:body></office:document-content>')
+    manifest = ('<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" '
+                'manifest:version="1.2"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/>'
+                '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as z:
+        z.writestr(zipfile.ZipInfo('mimetype'), 'application/vnd.oasis.opendocument.text')  # stored, uncompressed
+        z.writestr('content.xml', content, zipfile.ZIP_DEFLATED)
+        z.writestr('META-INF/manifest.xml', manifest, zipfile.ZIP_DEFLATED)
+    return buf.getvalue()
+
+
+def content_files():
+    write('Users/alice/Documents/contacts.txt', CONTACTS.encode('utf-8'))
+    write('Users/alice/Documents/handover.docx', docx(HANDOVER))
+    write('Users/alice/Documents/meeting-notes.rtf', MEETING_RTF)
+    write('Users/alice/Documents/notes-utf16.txt', b'\xff\xfe' + UTF16_NOTE.encode('utf-16-le'))
+    write('Users/alice/Documents/budget.odt', odt(*BUDGET_ODT_TEXT))
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     write('Windows/INF/setupapi.dev.log', SETUPAPI.replace('\n', '\r\n'))
@@ -261,6 +307,7 @@ def main():
     write('Users/alice/Pictures/whiteboard.png', png())
     write('Users/alice/Documents/offer-letter.pdf', pdf())
     hidden_files()
+    content_files()
     print(PREFETCH_NAME)
 
 

@@ -1,5 +1,6 @@
 """Tags (bookmarks) on case items: a file, a timeline event, a browser record, a USB device, a Windows activity
-record or a recovered/carved file, marked as Evidence, Notable or Follow up with a note.
+record, a recovered/carved file or a found value (an email address, card number...), marked as Evidence, Notable or
+Follow up with a note.
 
 Re-running an analysis replaces its records with new database IDs, so a tag also stores the item's natural key
 (`match`, the fields that identify it within its evidence item) and a snapshot of what it showed. A tag whose ID
@@ -17,7 +18,7 @@ KEY_VERSION = 2  # 2: keys use volume_id and never a time that a time-zone corre
 
 ITEM_COLLECTIONS = {
     'FILE': 'fs_entries', 'TIMELINE_EVENT': 'timeline_events', 'BROWSER': 'forensic_artifacts',
-    'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts',
+    'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts', 'ENTITY': 'entities',
 }
 LABELS = ('EVIDENCE', 'NOTABLE', 'FOLLOW_UP')
 _ARTIFACT_TYPES = {
@@ -62,6 +63,8 @@ def natural_key(item_type: str, doc) -> dict:
         return {'evidence_id': e, 'instance_id': doc.get('instance_id')}
     if item_type == 'ACTIVITY':
         return {'evidence_id': e, 'type': t, 'source_path': doc.get('source_path')}
+    if item_type == 'ENTITY':
+        return {'evidence_id': e, 'kind': doc.get('kind'), 'key': doc.get('key')}
     if t == 'MALWARE_INDICATOR':
         return {'evidence_id': e, 'type': t, 'rule': doc.get('rule'), 'original_path': doc.get('original_path')}
     if t == 'EXTRACTED_FILE':
@@ -105,6 +108,11 @@ def snapshot(item_type: str, doc) -> dict:
             title, detail, when = doc.get('target_path'), f'File opened{f" ({drive} drive)" if drive else ""}', doc.get('lnk_modified')
         else:
             title, detail, when = doc.get('original_path'), 'Deleted to the Recycle Bin', doc.get('deleted_time')
+    elif item_type == 'ENTITY':
+        from ..forensic.found_data import LABELS
+        n = doc.get('count') or 0
+        title = doc.get('display')  # masked for card and Aadhaar numbers
+        detail, when = f'{LABELS.get(doc.get("kind"), doc.get("kind"))} · {n:,} occurrence{"s" if n != 1 else ""} in {doc.get("file_count") or 0} file(s)', None
     else:
         sha = doc.get('sha256')
         label = {'RECOVERED_FILE': 'Recovered file', 'CARVED_FILE': 'Carved file', 'EXTRACTED_FILE': 'Extracted file',

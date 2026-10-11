@@ -23,6 +23,7 @@ const SECTIONS = [
   'Malware indicators (YARA)',
   'Hash set matches',
   'Renamed and encrypted files',
+  'Found data (card and Aadhaar numbers masked)',
   'Investigator findings',
   'Tagged evidence',
   'Timeline of notable events',

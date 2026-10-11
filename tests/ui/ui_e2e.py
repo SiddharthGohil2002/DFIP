@@ -85,6 +85,8 @@ with sync_playwright() as p:
     expect(dialog.get_by_text('Quick triage')).to_be_visible()
     dialog.get_by_text('Choose modules').click()
     dialog.get_by_role('checkbox', name='YARA scan').check()
+    dialog.get_by_role('checkbox', name=re.compile(r'^File contents')).check()  # also index the contents (and find data) for the steps below
+    dialog.get_by_role('checkbox', name=re.compile(r'^Found data')).check()
     shot(page, '06b-analysis-options')
     dialog.get_by_role('button', name='Start analysis').click()
     expect(dialog).to_have_count(0)
@@ -245,6 +247,41 @@ with sync_playwright() as p:
     page.get_by_role('button', name='Search').click()
     expect(page.get_by_text('matches for “payroll”')).to_be_visible()
     shot(page, '13-search')
+
+    step['v'] = 'content search'
+    case_id = api_get(page, f'/evidence/{eid}')['case_id']
+    page.get_by_role('tab', name='File contents').click()
+    page.get_by_label('Keyword').fill('DE89370400440532013')
+    page.get_by_role('button', name='Search').click()
+    r = api_get(page, f'/forensics/content-search?case_id={case_id}&q=DE89370400440532013')
+    expect(page.get_by_text(f"{r['total_matches']} matches in {r['total_files']} files")).to_be_visible()
+    holiday = page.locator('.card', has_text='/Users/alice/Pictures/holiday.jpg')
+    expect(holiday.locator('.snippet mark').first).to_have_text('DE89370400440532013')
+    expect(page.locator('.card', has_text='/Users/alice/Documents/handover.docx').get_by_text('in extracted text').first).to_be_visible()
+    shot(page, '13b-content-search')
+    holiday.get_by_role('button', name='View at offset').first.click()
+    dialog = page.get_by_role('dialog')
+    at = next(f for f in r['files'] if f['path'].endswith('/holiday.jpg'))['matches'][0]['byte_offset']
+    expect(dialog.get_by_text(f'Match at byte {at:,} (0x{at:x}), 19 bytes long')).to_be_visible()
+    expect(dialog.locator('pre.hex-dump mark')).to_have_count(38)  # 19 bytes, in the hex and the text columns
+    expect(dialog.locator('pre.hex-dump mark').first).to_have_text('44')  # "D"
+    shot(page, '13c-view-at-offset')
+    page.keyboard.press('Escape')
+    page.get_by_role('tab', name='Regular expression').click()
+    page.get_by_label('Regular expression').fill(r'emp05\d,DE\d{20}')
+    page.get_by_role('button', name='Search').click()
+    expect(page.get_by_text('30 matches in 3 files')).to_be_visible()
+
+    step['v'] = 'found data'
+    page.locator('a.nav-link[href$="/app/found-data"]').click()
+    expect(page.get_by_text('zoe.martin@example.org')).to_be_visible()
+    page.get_by_role('tab', name='Card numbers').click()
+    expect(page.get_by_text('Visa •••• 1111')).to_be_visible()
+    page.get_by_role('button', name='Show Visa •••• 1111 in full').click()
+    expect(page.get_by_text('4111111111111111')).to_be_visible()
+    page.get_by_role('button', name='Where Visa •••• 1111 was found').click()
+    expect(page.get_by_text('/Users/alice/Documents/contacts.txt')).to_be_visible()
+    shot(page, '13d-found-data')
 
     step['v'] = 'findings'
     page.get_by_role('link', name='Findings').first.click()

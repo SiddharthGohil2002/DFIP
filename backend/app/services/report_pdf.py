@@ -252,6 +252,15 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
              [0.8, 2.6, 1.3, 1.1, 1.8], 'No file whose content contradicts its name, and no encrypted file, was found.',
              total=db['fs_entries'].count_documents(flag_q))
 
+    from ..forensic.found_data import LABELS as FOUND_LABELS
+    found_q = {'evidence_id': {'$in': eids}}
+    found = list(db['entities'].find(found_q, {'occurrences': 0}).sort([('kind', 1), ('count', -1), ('value', 1)]).limit(MAX_ROWS))
+    _section(story, T('Found data'), ['Evidence', 'Kind', 'Value', 'Occurrences', 'Files'],
+             [[f['evidence_id'], FOUND_LABELS.get(f['kind'], f['kind']), f.get('display'), f.get('count'), f.get('file_count')] for f in found],
+             [0.9, 1.7, 3.3, 0.9, 0.8], 'No email, web or IP addresses, phone, card, IBAN, cryptocurrency or Aadhaar numbers were found, '
+             'or the file contents were not indexed (Full analysis profile). Card and Aadhaar numbers are shown masked.',
+             total=db['entities'].count_documents(found_q))
+
     story.append(Paragraph(T('Investigator findings'), H2))
     findings = list(db['findings'].find({'case_id': cid}).sort('created_at', 1))
     if not findings:

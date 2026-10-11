@@ -170,6 +170,7 @@ export interface CaseCounts {
   encrypted_files?: number;
   known_bad_files?: number;
   notable_files?: number;
+  found_data?: number;
   malware_indicators: number;
   patterns: number;
   anomalies_flagged: number;
@@ -222,6 +223,73 @@ export interface FsEntry {
 }
 
 export type HashKind = 'KNOWN_GOOD' | 'KNOWN_BAD' | 'NOTABLE';
+
+export type FoundKind = 'email' | 'url' | 'ip' | 'phone' | 'card' | 'iban' | 'crypto' | 'aadhaar';
+
+export interface FoundOccurrence {
+  path: string;
+  inode: string;
+  volume_id: string;
+  partition_offset: number | null;
+  deleted: boolean;
+  method: string;
+  text_offset: number;
+  byte_offset: number | null;
+  byte_length: number | null;
+  as_found?: string | null;
+}
+
+/** One value found in the file contents of one evidence item. Card and Aadhaar numbers come masked (no `value`). */
+export interface FoundValue {
+  _id: string;
+  evidence_id: string;
+  kind: FoundKind;
+  label?: string;
+  value?: string;
+  display: string;
+  sensitive: boolean;
+  details: Record<string, string>;
+  count: number;
+  file_count: number;
+  first?: string | null;
+  occurrences?: FoundOccurrence[];
+}
+
+export interface ContentMatch {
+  text_offset: number;
+  byte_offset: number | null;
+  byte_length: number | null;
+  before: string;
+  match: string;
+  after: string;
+}
+
+export interface ContentHit {
+  evidence_id: string;
+  entry_id: string | null;
+  path: string;
+  inode: string;
+  volume_id: string;
+  partition_offset: number | null;
+  deleted: boolean;
+  size: number;
+  method: 'text' | 'strings' | 'pdf' | 'ooxml' | 'odf' | 'rtf';
+  encoding?: string | null;
+  truncated: boolean;
+  match_count: number;
+  matches: ContentMatch[];
+}
+
+export interface ContentResults {
+  query: string;
+  mode: 'text' | 'regex';
+  total_files: number;
+  total_matches: number;
+  complete: boolean;
+  files: ContentHit[];
+  not_indexed: { evidence_id: string; filename?: string }[];
+  elapsed_ms: number;
+}
 
 export interface HashSet {
   set_id: string;

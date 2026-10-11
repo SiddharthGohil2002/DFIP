@@ -141,6 +141,7 @@ def overview(case_id: str, u=Depends(current_user)):
         'encrypted_files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'encryption': {'$ne': None, '$exists': True}}),
         'known_bad_files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'hash_status': 'KNOWN_BAD'}),
         'notable_files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'hash_status': 'NOTABLE'}),
+        'found_data': db['entities'].count_documents({'evidence_id': {'$in': eids}}),
         'malware_indicators': art.count_documents({'case_id': case_id, 'type': 'MALWARE_INDICATOR'}),
         'patterns': db['patterns'].count_documents({'case_id': case_id}),
         'anomalies_flagged': db['anomalies'].count_documents({'case_id': case_id, 'is_anomaly': True}),

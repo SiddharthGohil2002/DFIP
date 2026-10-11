@@ -50,6 +50,12 @@ stamp '2026-09-01 14:16:40' 'Users/alice/Documents/private.zip'
 stamp '2026-08-29 15:12:00' 'Users/alice/Documents/salary-review.docx'
 stamp '2026-08-31 20:05:00' 'Users/alice/Documents/vault.dat'
 stamp '2026-09-01 10:40:00' 'Users/alice/Downloads/eicar.com'
+# Documents for content search and found data.
+stamp '2026-08-27 18:30:00' 'Users/alice/Documents/contacts.txt'
+stamp '2026-09-01 13:05:00' 'Users/alice/Documents/handover.docx'
+stamp '2026-09-01 11:20:00' 'Users/alice/Documents/meeting-notes.rtf'
+stamp '2026-09-01 14:11:30' 'Users/alice/Documents/notes-utf16.txt'
+stamp '2026-08-26 09:15:00' 'Users/alice/Documents/budget.odt'
 # Standard time (EST, UTC-5): proves the conversion follows daylight saving by date, not one fixed offset.
 stamp '2026-01-15 15:30:00' 'Users/alice/Documents/q1-forecast.txt'
 stamp '2025-11-02 14:00:00' 'Users/alice/Documents/year-end-checklist.txt'

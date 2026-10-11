@@ -22,6 +22,7 @@ import tempfile
 import time
 import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -501,7 +502,8 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
-ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'hash_match', 'yara']
+STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'hash_match', 'yara']
+ALL_MODULES = STANDARD_MODULES + ['content', 'found_data']  # the full profile adds file contents and found data
 
 
 def _ids(db, col, q):
@@ -524,7 +526,7 @@ def t_modules():
     db = mongo()
     mods = get(f'/api/evidence/{E}', inv).json.get('modules') or {}
     check('each module of the standard profile completed, with its counts and version',
-          set(mods) == set(ALL_MODULES) and all(m.get('status') == 'COMPLETED' and isinstance(m.get('counts'), dict)
+          set(mods) == set(STANDARD_MODULES) and all(m.get('status') == 'COMPLETED' and isinstance(m.get('counts'), dict)
                                                                and m.get('version') for m in mods.values()),
           {k: v.get('status') for k, v in mods.items()})
     d = get('/api/jobs/analysis/modules', inv).json or {}
@@ -582,7 +584,7 @@ def t_modules():
     j = _analyse(inv, E, {'modules': ['yara']})
     s = j['result']['summary']
     check('output from before analysis modules existed is replaced as a whole',
-          j['status'] == 'COMPLETED' and s['plan'] == ALL_MODULES and s['counts'] == C['COUNTS']
+          j['status'] == 'COMPLETED' and s['plan'] == STANDARD_MODULES and s['counts'] == C['COUNTS']
           and db.fs_entries.count_documents({'evidence_id': E, 'pipeline_module': {'$exists': False}}) == 0, s.get('plan'))
 
     # The quick profile, and adding a module to it later.
@@ -1351,6 +1353,163 @@ def t_fileproc():
         check('the Sleuth Kit agrees the LUKS sample is encrypted', 'LUKS' in fs, fs[:200])
 
 
+# What make_artifacts.content_files() planted (published test values), and what must not be reported.
+CONTACTS_TXT = '/Users/alice/Documents/contacts.txt'
+HANDOVER_DOCX = '/Users/alice/Documents/handover.docx'
+RTF_NOTES = '/Users/alice/Documents/meeting-notes.rtf'
+UTF16_NOTES = '/Users/alice/Documents/notes-utf16.txt'
+BUDGET_ODT = '/Users/alice/Documents/budget.odt'
+PAYROLL_COPIES = ('/Users/alice/Pictures/holiday.jpg', '/Users/alice/Documents/payroll-export.csv',
+                  '/$Recycle.Bin/S-1-5-21-3623811015-3361044348-30300820-1001/$R3K9D2A.csv')
+
+
+def _xml_text(data: bytes, member: str) -> str:
+    """All text nodes of one XML member of a ZIP-based document (independent of DFIP's extractor)."""
+    import io
+    import xml.etree.ElementTree as ET
+    import zipfile
+    return ' '.join(t for t in ET.fromstring(zipfile.ZipFile(io.BytesIO(data)).read(member)).itertext() if t.strip())
+
+
+@section('12e Content search and found data (vs icat bytes, pdftotext, the XML in the documents and the planted values)')
+def t_content():
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    db = mongo()
+    j = _analyse(inv, E, {'modules': ['content', 'found_data']})
+    s = (j.get('result') or {}).get('summary') or {}
+    check('the content modules run on their own (file processing already done)',
+          j.get('status') == 'COMPLETED' and s.get('plan') == ['content', 'found_data'], (j.get('status'), s.get('plan'), j.get('error')))
+    index = (db.analysis_facts.find_one({'evidence_id': E}) or {}).get('content', {}).get('index', {})
+    import sqlite3
+    con = sqlite3.connect(f"file:{index.get('path')}?mode=ro", uri=True)
+    docs = {row[0]: row[1:] for row in con.execute('SELECT path, method, encoding, bom FROM docs')}
+    texts = {row[0]: row[1] for row in con.execute('SELECT d.path, b.text FROM docs d JOIN body b ON b.rowid = d.id')}
+    con.close()
+    want = {CONTACTS_TXT: ('text', 'utf-8', 0), UTF16_NOTES: ('text', 'utf-16-le', 2), HANDOVER_DOCX: ('ooxml', None, 0),
+            RTF_NOTES: ('rtf', None, 0), BUDGET_ODT: ('odf', None, 0), '/Users/alice/Documents/offer-letter.pdf': ('pdf', None, 0),
+            '/Windows/System32/config/SYSTEM': ('strings', None, 0),
+            '/Users/alice/AppData/Local/Google/Chrome/User Data/Default/History': ('sqlite', None, 0)}
+    check('each kind of file is indexed the right way (decoded text, Word, RTF, OpenDocument, PDF, SQLite values, strings of a hive)',
+          all(docs.get(p) == w for p, w in want.items()), {p: docs.get(p) for p in want})
+    skipped = ['/Users/alice/Documents/private.zip', '/Users/alice/Documents/salary-review.docx', '/Users/alice/Documents/vault.dat',
+               '/Users/alice/Pictures/whiteboard.png']
+    check('encrypted files and pictures are not indexed', not any(p in docs for p in skipped), [p for p in skipped if p in docs])
+    pdf = subprocess.run(['pdftotext', '-enc', 'UTF-8', '-', '-'], input=icat_bytes('/Users/alice/Documents/offer-letter.pdf'),
+                         capture_output=True, timeout=60).stdout.decode()
+    check('the PDF text equals pdftotext run directly', texts.get('/Users/alice/Documents/offer-letter.pdf', '').strip() == pdf.replace('\x0c', '').strip()
+          and 'Offer letter - Alice Example' in pdf, (texts.get('/Users/alice/Documents/offer-letter.pdf'), pdf))
+    check('the Word and OpenDocument text equals the text in their XML',
+          ' '.join(texts.get(HANDOVER_DOCX, '').split()) == _xml_text(icat_bytes(HANDOVER_DOCX), 'word/document.xml')
+          and ' '.join(texts.get(BUDGET_ODT, '').split()) == ' '.join(_xml_text(icat_bytes(BUDGET_ODT), 'content.xml').split()),
+          (texts.get(HANDOVER_DOCX), texts.get(BUDGET_ODT)))
+    check('the RTF text has no control words and decodes escaped characters',
+          'Meeting notes 1 September: the USB drive CRUZER holds the export. Café at 10:00.' in texts.get(RTF_NOTES, '')
+          and '\\' not in texts.get(RTF_NOTES, '') and 'Calibri' not in texts.get(RTF_NOTES, ''), texts.get(RTF_NOTES))
+
+    # Content search: every copy of the payroll data, at the exact byte offsets.
+    cs = lambda q, mode='text', who=inv, case=A: get(f'/api/forensics/content-search?case_id={case}&mode={mode}&q={urllib.parse.quote(q)}', who)
+    r = cs('DE89370400440532013').json
+    hits = {h['path']: h for h in r['files']}
+    check('searching an IBAN prefix finds the payroll data in the renamed copy, the Recycle Bin copy, the deleted original and the Word document',
+          set(hits) == set(PAYROLL_COPIES) | {HANDOVER_DOCX} and r['complete'], sorted(hits))
+    bad = []
+    for p in PAYROLL_COPIES:
+        data = icat_bytes(p)
+        truth = [i for i in range(len(data)) if data.startswith(b'DE89370400440532013', i)]
+        got = [m['byte_offset'] for m in hits.get(p, {}).get('matches', [])]
+        if hits.get(p, {}).get('match_count') != len(truth) or got != truth[:len(got)] or not got:
+            bad.append((p, hits.get(p, {}).get('match_count'), len(truth)))
+    check('...with every occurrence counted (60 per copy) and each byte offset equal to where the bytes are', not bad, bad)
+    check('...a deleted file is marked, and text taken out of a Word document has no byte offset',
+          hits[PAYROLL_COPIES[1]]['deleted'] and hits[HANDOVER_DOCX]['method'] == 'ooxml'
+          and all(m['byte_offset'] is None for m in hits[HANDOVER_DOCX]['matches']), hits.get(HANDOVER_DOCX))
+    first = hits[PAYROLL_COPIES[0]]['matches'][0]
+    page = get(f"/api/forensics/evidence/{E}/content?inode={hits[PAYROLL_COPIES[0]]['inode']}&offset=2048&start={first['byte_offset']}&length=19", inv).json
+    import base64
+    check('the file viewer at the reported offset shows the matched bytes', base64.b64decode(page['data_b64']) == b'DE89370400440532013', page)
+    r = cs('sandisk').json
+    hits = {h['path']: h for h in r['files']}
+    raw = icat_bytes(UTF16_NOTES)
+    m = (hits.get(UTF16_NOTES) or {}).get('matches', [{}])[0]
+    check('search is case-insensitive and finds UTF-16 text at its byte offset (2-byte characters after the byte-order mark)',
+          m.get('byte_offset') == raw.index('SanDisk'.encode('utf-16-le')) and m.get('byte_length') == 14 and m.get('match') == 'SanDisk', m)
+    setup = (hits.get('/Windows/INF/setupapi.dev.log') or {}).get('matches', [{}])[0]
+    check('...and in the CRLF text of setupapi.dev.log', setup.get('byte_offset') == icat_bytes('/Windows/INF/setupapi.dev.log').index(b'SanDisk'), setup)
+    lnk = '/Users/alice/AppData/Roaming/Microsoft/Windows/Recent/payroll-export.csv.lnk'
+    r = cs('payroll-export.csv').json
+    hl = next((h for h in r['files'] if h['path'] == lnk), {})
+    check('strings of a binary file (the shortcut) are searchable with their offsets',
+          hl and all(icat_bytes(lnk)[mm['byte_offset']:mm['byte_offset'] + mm['byte_length']].decode('utf-16-le' if mm['byte_length'] == 36 else 'latin-1').lower()
+                     == 'payroll-export.csv' for mm in hl['matches']), hl)
+    r = cs(r'emp05\d,DE\d{20}', 'regex').json
+    check('a regular expression (RE2) finds the ten emp05x rows in each copy',
+          {h['path'] for h in r['files']} == set(PAYROLL_COPIES) and all(h['match_count'] == 10 for h in r['files']), [(h['path'], h['match_count']) for h in r['files']])
+    r = cs(r'[A-Z]:\\[a-z]+-export\.csv', 'regex').json
+    check('a regular expression without a long literal scans every file (the drive path in the shortcut)', any(h['path'] == lnk for h in r['files']), [h['path'] for h in r['files']])
+    check('an invalid or unsupported regular expression is refused (400)', cs('(unclosed', 'regex').status == 400 and cs(r'(a)\1', 'regex').status == 400)
+    check('fewer than 3 characters and an unknown mode are refused (400)', cs('ab').status == 400 and cs('payroll', 'fuzzy').status == 400)
+    t0 = time.time()
+    slow = cs('(x+x+)+y', 'regex')
+    check('a pathological regular expression finishes quickly (RE2 runs in linear time)', slow.status == 200 and time.time() - t0 < 20, (slow.status, time.time() - t0))
+    check('another investigator gets 404', cs('payroll', who=C['INV2']).status == 404)
+    nb = cs('payroll', case=C['B']).json
+    check('evidence without a content index is listed as not indexed', C['B_E'] in [x['evidence_id'] for x in nb['not_indexed']] and nb['files'] == [], nb)
+    audit = list(db.audit_logs.find({'action': 'CONTENT_SEARCHED'}))
+    check('content searches are recorded in the audit log with the query', any(a.get('metadata', {}).get('query') == 'DE89370400440532013' for a in audit), len(audit))
+
+    # Found data.
+    fd = lambda qs='': get(f'/api/forensics/entities?case_id={A}&limit=500{qs}', inv).json
+    rows = fd()['data']
+    by_kind = {}
+    for x in rows:
+        by_kind.setdefault(x['kind'], {})[x.get('value') or x['display']] = x
+    check('email addresses: exactly the two planted ones', set(by_kind.get('email', {})) == {'zoe.martin@example.org', 'alice.personal@example.net'}, by_kind.get('email'))
+    zoe = get(f"/api/forensics/entities/{by_kind['email']['zoe.martin@example.org']['_id']}", inv).json
+    occ = zoe['occurrences'][0]
+    check('...each occurrence with its file and byte offset (Zoë: a 2-byte character earlier in the line)',
+          occ['path'] == CONTACTS_TXT and occ['byte_offset'] == icat_bytes(CONTACTS_TXT).index(b'zoe.martin@example.org'), occ)
+    check('IBANs: only the two with valid check digits (59 payroll IBANs fail mod-97)',
+          set(by_kind.get('iban', {})) == {'GB82WEST12345698765432', 'DE89370400440532013000'}
+          and by_kind['iban']['DE89370400440532013000']['count'] == 4 and by_kind['iban']['GB82WEST12345698765432']['file_count'] == 2,
+          {k: (v['count'], v['file_count']) for k, v in by_kind.get('iban', {}).items()})
+    cards = list(by_kind.get('card', {}).values())
+    check('card numbers: the Visa test card, masked; the mistyped one (Luhn fails) is not reported',
+          [c['display'] for c in cards] == ['Visa •••• 1111'] and 'value' not in cards[0], cards)
+    rv = post(f"/api/forensics/entities/{cards[0]['_id']}/reveal", inv)
+    check('showing the full card number returns it and is recorded in the audit log',
+          rv.status == 200 and rv.json['value'] == '4111111111111111'
+          and db.audit_logs.find_one({'action': 'SENSITIVE_VALUE_REVEALED', 'resource_id': cards[0]['_id']}), rv)
+    check('Aadhaar: the Verhoeff-valid number, masked', [x['display'] for x in by_kind.get('aadhaar', {}).values()] == ['•••• •••• 0124'], by_kind.get('aadhaar'))
+    check('cryptocurrency: the Bitcoin and EIP-55 Ethereum addresses',
+          set(by_kind.get('crypto', {})) == {'1BoatSLRHtKNngkdXEeobR76b53LETtpyT', '0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'}, set(by_kind.get('crypto', {})))
+    check('phone numbers: the two planted ones (text file and RTF)', set(by_kind.get('phone', {})) == {'+442079460958', '+12025550143'}, set(by_kind.get('phone', {})))
+    ips = set(by_kind.get('ip', {}))
+    check('IP addresses include the planted one and the interface in the SYSTEM hive, not its netmask',
+          {'10.20.30.40', '192.168.1.57'} <= ips and '255.255.255.0' not in ips, ips)
+    history = {u for _, u, *_ in CHROME_VISITS} | {'https://tools.example.org/securedelete'}  # visits and the download's page
+    urls = set(by_kind.get('url', {}))
+    check('web addresses are exactly the URLs of the browser history and the contacts file, each whole (database values read apart)',
+          urls == history, (sorted(urls - history), sorted(history - urls)))
+    kinds = fd()['kinds']
+    check('the count per kind matches the rows', all(kinds[k] == len(by_kind.get(k, {})) for k in kinds), (kinds, {k: len(v) for k, v in by_kind.items()}))
+    check('found data can be filtered by kind and searched by what is shown (not by a masked full number)',
+          fd('&kind=email')['total'] == 2 and fd('&q=1111')['total'] >= 1 and fd('&q=4111111111111111')['total'] == 0)
+    s = get(f'/api/forensics/search?case_id={A}&q=zoe.martin', inv).json
+    check('keyword search finds found data', s['totals'].get('found') == 1, s['totals'])
+    check('another investigator gets 404 for the list and a value',
+          get(f'/api/forensics/entities?case_id={A}', C['INV2']).status == 404 and get(f"/api/forensics/entities/{zoe['_id']}", C['INV2']).status == 404
+          and post(f"/api/forensics/entities/{cards[0]['_id']}/reveal", C['INV2']).status == 404)
+    t = post('/api/tags', inv, {'case_id': A, 'item_type': 'ENTITY', 'item_id': zoe['_id'], 'label': 'NOTABLE', 'note': 'personal contact'})
+    j = _analyse(inv, E, {'modules': ['found_data']})
+    check('a found value can be tagged, and the tag follows it when found data is rebuilt',
+          t.status == 200 and t.json['snapshot']['title'] == 'zoe.martin@example.org' and j['result']['summary'].get('tags') == {'relinked': 1, 'unresolved': 0},
+          (t, j.get('result', {}).get('summary', {}).get('tags')))
+    req('DELETE', f"/api/tags/{t.json['tag_id']}", inv)
+    ov = get(f'/api/cases/{A}/overview', inv).json['counts']
+    check('the overview counts found data', ov.get('found_data') == len(rows), (ov.get('found_data'), len(rows)))
+    C['CONTENT_INDEXED'] = True
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -1751,7 +1910,7 @@ def t_e01():
     eid = C['E01_E'] = r.json['evidence_id']
     pre = get(f'/api/forensics/evidence/{eid}/partitions', inv)
     check('before analysis, examining the E01 asks to run the analysis first (409)', pre.status == 409 and 'analysis' in pre.detail.lower(), pre)
-    j = wait_job(inv, post(f"/api/jobs/analysis/{eid}", inv).json['job_id'])
+    j = wait_job(inv, post(f"/api/jobs/analysis/{eid}", inv, {'profile': 'full'}).json['job_id'])  # as the raw image was analysed
     check('E01 analysis completes', j['status'] == 'COMPLETED', j.get('error'))
     wc = [c for c in get(f'/api/chain?case_id={case}', inv).json['data'] if c['action'] == 'WORKING_COPY_CREATED']
     check('the verified raw working copy is recorded in the chain of custody', wc and wc[0]['sha256'] == C['IMG_SHA256'],
@@ -1835,6 +1994,7 @@ def t_overview():
         'encrypted_files': q(f'/api/forensics/flagged?case_id={A}&kind=encrypted&limit=1')['total'],
         'known_bad_files': q(f'/api/forensics/flagged?case_id={A}&kind=known_bad&limit=1')['total'],
         'notable_files': q(f'/api/forensics/flagged?case_id={A}&kind=notable&limit=1')['total'],
+        'found_data': q(f'/api/forensics/entities?case_id={A}&limit=1')['total'],
     }
     diff = {k: (c.get(k), v) for k, v in exp.items() if c.get(k) != v}
     check('every overview count equals the matching list', not diff, diff)
@@ -1957,7 +2117,7 @@ def t_delete():
     eid, original = ev['evidence_id'], Path(ev['storage_path'])
     path = f'/api/evidence/{eid}'
     reason = 'Uploaded to the wrong case'
-    job = post(f'/api/jobs/analysis/{eid}', inv).json['job_id']
+    job = post(f'/api/jobs/analysis/{eid}', inv, {'profile': 'full'}).json['job_id']  # with a content index and found data
     busy = req('DELETE', path, inv, {'reason': 'Deleting during the analysis'})
     check('deletion is refused (409) while an analysis of the image is queued or running', busy.status == 409 and job in (busy.detail or ''), busy)
     wait_job(inv, job)
@@ -1968,9 +2128,11 @@ def t_delete():
     post('/api/findings', inv, {'case_id': case, 'title': 'Linked to the deleted image', 'description': 'x', 'evidence_ids': [eid]})
     tagged = post('/api/tags', inv, {'case_id': case, 'item_type': 'FILE', 'item_id': pay['_id'], 'note': 'on the image to delete'})
     rep = post(f'/api/reports?case_id={case}', inv).json
-    results = ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts')
+    results = ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts', 'entities')
     before = {c: db[c].count_documents({'evidence_id': eid}) for c in results}
     stored = [p for p in glob.glob(f'/app/storage/analysis/*/{eid}') if os.path.isdir(p)]
+    text_index = Path(f'/app/storage/analysis/text/{eid}.sqlite')
+    indexed = text_index.is_file()
     check('viewer cannot delete evidence (403)', req('DELETE', path, C['VIEWER'], {'reason': 'Not allowed here'}).status == 403)
     check('analyst cannot delete evidence (403)', req('DELETE', path, C['ANALYST'], {'reason': 'Not allowed here'}).status == 403)
     check('another investigator cannot delete it (404)', req('DELETE', path, C['INV2'], {'reason': 'Not my case'}).status == 404)
@@ -1987,6 +2149,7 @@ def t_delete():
           and not get(f'/api/tags?case_id={case}', inv).json['data'], (tagged, r.json.get('removed')))
     check('the stored image and its recovered, carved and pipeline files are removed',
           len(stored) >= 3 and not original.exists() and not any(os.path.exists(p) for p in stored), stored)
+    check('its content index is removed', indexed and not text_index.exists(), (indexed, text_index.exists()))
     fnd = next(x for x in get(f'/api/findings?case_id={case}', inv).json['data'] if x['title'] == 'Linked to the deleted image')
     check('a finding that cited it is kept, without the link', eid not in (fnd.get('evidence_ids') or []) and r.json['findings_unlinked'] == 1, fnd)
     cust = get(f'/api/chain?case_id={case}', inv).json['data']
@@ -2108,7 +2271,7 @@ def t_reg_disabled():
 PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
-             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

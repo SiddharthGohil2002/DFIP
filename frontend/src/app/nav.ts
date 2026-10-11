@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Monitor, Bookmark, Clock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen,
+  Activity, BarChart3, Monitor, Bookmark, Clock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen, ScanSearch,
   Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
@@ -96,8 +96,13 @@ export const NAV: NavGroup[] = [
         count: (c) => c.carved_files, countLabel: () => 'carved files',
       },
       {
+        to: '/app/found-data', label: 'Found data', icon: ScanSearch, tone: 'amber',
+        description: 'Email, web and IP addresses, phone, card, IBAN, crypto and Aadhaar numbers found in the file contents.',
+        count: (c) => c.found_data ?? 0, countLabel: () => 'values found',
+      },
+      {
         to: '/app/search', label: 'Keyword search', icon: Search,
-        description: 'Search file paths, timeline, browser records, USB devices, Windows activity and findings.',
+        description: 'Search names and records, or the text inside files (with regular expressions).',
       },
     ],
   },

@@ -332,7 +332,7 @@ def delete(eid, body: DeleteEvidence, u=Depends(require_write('EVIDENCE_DELETE')
     now = datetime.now(timezone.utc)
     q = {'evidence_id': eid}
     counts = {col: db[col].delete_many(q).deleted_count
-              for col in ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts')}
+              for col in ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts', 'entities')}
     counts['jobs'] = db['jobs'].delete_many({'payload.evidence_id': eid}).deleted_count
     counts['tags'] = db['tags'].delete_many({'evidence_id': eid}).deleted_count
     for col in ('analysis_facts', 'pipeline_warnings'):  # module bookkeeping, not counted as results
@@ -349,6 +349,8 @@ def delete(eid, body: DeleteEvidence, u=Depends(require_write('EVIDENCE_DELETE')
         _remove(p, storage, removed, problems)
     for area in ('recovered', 'carved', 'pipeline'):
         _remove(analysis / area / eid, storage, removed, problems)
+    for p in (analysis / 'text').glob(f'{eid}.*'):  # the content index (and an unfinished rebuild)
+        _remove(p, storage, removed, problems)
     db['evidence'].delete_one({'_id': x['_id']})
 
     # Patterns and anomalies are computed over the whole case timeline; recompute them without this image.

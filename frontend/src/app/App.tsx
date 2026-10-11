@@ -24,6 +24,7 @@ import { DashboardPage } from '../pages/Dashboard';
 import { IndicatorsPage } from '../pages/Indicators';
 import { CarvingPage } from '../pages/Carving';
 import { SearchPage } from '../pages/Search';
+import { FoundDataPage } from '../pages/FoundData';
 import { FindingsPage } from '../pages/Findings';
 import { ReportsPage } from '../pages/Reports';
 import { CustodyPage } from '../pages/Custody';
@@ -134,6 +135,7 @@ function Workspace() {
         <Route path="indicators" element={c(<IndicatorsPage />)} />
         <Route path="carving" element={c(<CarvingPage />)} />
         <Route path="search" element={c(<SearchPage />)} />
+        <Route path="found-data" element={c(<FoundDataPage />)} />
         <Route path="findings" element={c(<FindingsPage />)} />
         <Route path="reports" element={c(<ReportsPage />)} />
         <Route path="custody" element={c(<CustodyPage />)} />

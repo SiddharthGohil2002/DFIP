@@ -373,11 +373,15 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
         'findings':('findings',{'case_id':case_id,'$or':[{'title':rx},{'description':rx}]},[('created_at',-1)]),
         'accounts':('forensic_artifacts',{'case_id':case_id,'type':'USER_ACCOUNT','$or':[{'username':rx},{'full_name':rx},{'sid':rx},
                     {'profile_path':rx}]},[('rid',1)]),
+        # Found data by what is shown: masked card and Aadhaar numbers only by their visible digits.
+        'found':('entities',{'evidence_id':{'$in':eids},'$or':[{'display':rx},{'value':rx,'sensitive':False}]},[('kind',1),('count',-1)]),
     }
     results,totals={},{}
     for key,(col,query,sort) in queries.items():
         totals[key]=db[col].count_documents(query)
-        results[key]=[serial(dict(x,_id=str(x['_id']))) for x in db[col].find(query).sort(sort).limit(limit)]
+        results[key]=[serial(dict(x,_id=str(x['_id']))) for x in db[col].find(query,{'occurrences':0}).sort(sort).limit(limit)]
+    for x in results['found']:
+        if x.get('sensitive'): x.pop('value',None)
     return {'query':term,'results':results,'totals':totals}
 
 @r.get('/browser')

@@ -106,6 +106,13 @@ const COUNT_LABELS: [string, string, string][] = [
   ['known_bad_files', 'known-bad file', 'known-bad files'], ['notable_files', 'notable file', 'notable files'],
   ['known_good_files', 'known-good file', 'known-good files'],
   ['files_scanned', 'file scanned', 'files scanned'], ['yara_matches', 'YARA match', 'YARA matches'],
+  ['files_text_indexed', 'file indexed for content search', 'files indexed for content search'],
+  ['files_text_failed', 'file whose text could not be read', 'files whose text could not be read'],
+  ['files_text_truncated', 'file indexed in part', 'files indexed in part'],
+  ['found_emails', 'email address', 'email addresses'], ['found_urls', 'web address', 'web addresses'],
+  ['found_ip_addresses', 'IP address', 'IP addresses'], ['found_phone_numbers', 'phone number', 'phone numbers'],
+  ['found_card_numbers', 'card number', 'card numbers'], ['found_ibans', 'IBAN', 'IBANs'],
+  ['found_crypto_addresses', 'crypto address', 'crypto addresses'], ['found_aadhaar_numbers', 'Aadhaar number', 'Aadhaar numbers'],
   ['timeline_events', 'timeline event', 'timeline events'],
 ];
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added — content search and found data
+- **Search inside files** (Keyword search → File contents, or Regular expression): the text of documents, PDFs, text files, SQLite databases and the readable strings of every other file, deleted files included, in a per-evidence full-text index (new `content` module, Full profile). Case-insensitive substring search, or RE2 regular expressions; each hit shows a snippet and, where the text is stored in the file as such, **View at offset** opens the hex view at the match, highlighted. Every content search is recorded in the audit log.
+- **Found data** (new page and `found_data` module): email, web and IP addresses, phone numbers, card numbers (Luhn), IBANs (mod-97), Bitcoin and Ethereum addresses (checksums) and Aadhaar numbers (Verhoeff), with every occurrence's file and byte offset. Card and Aadhaar numbers are masked; showing one in full is audited. Found values can be tagged, are searchable by name, counted on the case desktop and listed in a new report section.
+- Text extraction: encodings detected (UTF-8, UTF-16 with or without a byte-order mark, Windows-1252), Word/Excel/PowerPoint and OpenDocument via defusedxml, RTF, PDF via pdftotext, SQLite tables read in a separate process. The backend image gains poppler-utils, google-re2 and defusedxml.
+- Test disk: a contacts file with published test identifiers (and a mistyped card number that must not be reported), a Word document, an RTF, a UTF-16 note and an OpenDocument text.
+
 ### Added — file hashes, types, encryption and hash sets
 - **Every file is hashed and typed** (new `fileproc` analysis module, standard profile): MD5, SHA-1 and SHA-256 of every file in the index, deleted ones included (as their content is on the disk now), its real type from its content (libmagic), a category, entropy, and encryption. One in-process read per file.
 - **Renamed files**: a file whose content contradicts its name is flagged with what the name suggests (for example the payroll CSV renamed `holiday.jpg`: "JPEG image").
