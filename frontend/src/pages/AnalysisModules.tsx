@@ -117,6 +117,14 @@ const COUNT_LABELS: [string, string, string][] = [
   ['members_found', 'file inside', 'files inside'], ['members_extracted', 'extracted', 'extracted'],
   ['members_encrypted', 'encrypted member', 'encrypted members'], ['members_not_extracted', 'member not extracted', 'members not extracted'],
   ['unallocated_text_blocks', 'block of unallocated text', 'blocks of unallocated text'],
+  ['registry_hives', 'registry hive', 'registry hives'], ['userassist_entries', 'UserAssist entry', 'UserAssist entries'],
+  ['folders_browsed', 'folder browsed', 'folders browsed'], ['explorer_searches', 'Explorer search', 'Explorer searches'],
+  ['typed_paths', 'typed path', 'typed paths'], ['typed_urls', 'typed address', 'typed addresses'],
+  ['recent_docs', 'recent document', 'recent documents'], ['run_dialog_entries', 'Run dialog command', 'Run dialog commands'],
+  ['persistence_entries', 'autostart entry', 'autostart entries'], ['persistence_flagged', 'flagged autostart entry', 'flagged autostart entries'],
+  ['installed_programs', 'installed program', 'installed programs'], ['amcache_entries', 'Amcache entry', 'Amcache entries'],
+  ['shimcache_entries', 'ShimCache entry', 'ShimCache entries'], ['bam_entries', 'BAM entry', 'BAM entries'],
+  ['rdp_connections', 'remote desktop connection', 'remote desktop connections'], ['network_drives', 'network drive', 'network drives'],
   ['timeline_events', 'timeline event', 'timeline events'],
 ];
 

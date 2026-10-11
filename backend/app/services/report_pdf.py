@@ -229,6 +229,54 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
                b.get('source_path')] for b in art.find(q).sort('deleted_time', -1).limit(MAX_ROWS)],
              [1.3, 2.8, 0.7, 0.9, 2.6], 'No Recycle Bin index files were found.', total=art.count_documents(q), heading=H3)
 
+    # Registry activity (module registry).
+    from ..forensic.execution import merge as merge_execution
+    reg = {t: list(art.find({'case_id': cid, 'type': t}, {'_id': 0}))
+           for t in ('PROGRAM_RUN', 'USERASSIST', 'BAM_ENTRY', 'AMCACHE_FILE', 'SHIMCACHE_ENTRY')}
+    for rows_ in reg.values():
+        for x in rows_:
+            for k, v in list(x.items()):
+                if hasattr(v, 'isoformat'):
+                    x[k] = v.isoformat()
+    execution = merge_execution(reg['PROGRAM_RUN'], reg['USERASSIST'], reg['BAM_ENTRY'], reg['AMCACHE_FILE'], reg['SHIMCACHE_ENTRY'])
+    _section(story, T('Execution evidence'), ['Program', 'Traces', 'Last run', 'First recorded', 'SHA-1 (Amcache)', 'Paths'],
+             [[x['program'], ', '.join({'prefetch': 'Prefetch', 'userassist': 'UserAssist', 'bam': 'BAM', 'amcache': 'Amcache',
+                                        'shimcache': 'ShimCache'}[s] for s in x['sources']),
+               x['last_run'], x['first_seen'], x['sha1'], '; '.join(x['paths'][:3])]
+              for x in execution[:MAX_ROWS]],
+             [1.4, 1.3, 1.3, 1.3, 1.7, 2.3], 'No Prefetch, UserAssist, BAM, Amcache or ShimCache records were found.',
+             mono_cols=(4,), total=len(execution))
+    q = {'case_id': cid, 'type': 'SHELLBAG'}
+    _section(story, T('Folders browsed (ShellBags)'), ['User', 'Folder', 'Last browsed', 'Created', 'Modified', 'Accessed'],
+             [[b.get('user'), b.get('path'), b.get('key_last_write') if b.get('mru_position') == 0 else None, b.get('created'),
+               b.get('modified'), b.get('accessed')] for b in art.find(q).sort([('user', 1), ('path', 1)]).limit(MAX_ROWS)],
+             [0.8, 2.8, 1.3, 1.2, 1.2, 1.2], 'No ShellBags were found.', total=art.count_documents(q))
+    kinds = {'EXPLORER_SEARCH': 'Explorer search', 'TYPED_PATH': 'Typed path', 'TYPED_URL': 'Typed address', 'RUN_MRU': 'Run dialog',
+             'RECENT_DOC': 'Recent document'}
+    q = {'case_id': cid, 'type': {'$in': list(kinds)}, 'extension': None}
+    _section(story, T('Searches and typed paths'), ['User', 'Kind', 'Value', 'Order', 'Key written'],
+             [[s.get('user'), kinds.get(s['type']), s.get('value'), s.get('order'), s.get('key_last_write')]
+              for s in art.find(q).sort([('user', 1), ('type', 1), ('order', 1)]).limit(MAX_ROWS)],
+             [0.8, 1.2, 3.8, 0.5, 1.5], 'No Explorer searches, typed paths, Run dialog commands or recent documents were found.',
+             total=art.count_documents(q))
+    q = {'case_id': cid, 'type': 'PERSISTENCE'}
+    pers = sorted(art.find(q), key=lambda p: (not p.get('flags'), p.get('kind') or '', p.get('name') or ''))[:MAX_ROWS]
+    _section(story, T('Persistence (autostart entries and services)'), ['Kind', 'Name', 'Runs', 'Written', 'Why it stands out'],
+             [[p.get('kind') + (f' ({p["user"]})' if p.get('user') else ''), p.get('name'), p.get('command'), p.get('key_last_write'),
+               '; '.join(p.get('flags') or []) or None] for p in pers],
+             [1.0, 1.2, 2.6, 1.3, 2.0], 'No Run keys, services, debuggers or Winlogon entries were found.', total=art.count_documents(q))
+    q = {'case_id': cid, 'type': 'INSTALLED_PROGRAM'}
+    _section(story, T('Installed programs'), ['Name', 'Version', 'Publisher', 'Installed', 'Location'],
+             [[p.get('name'), p.get('version'), p.get('publisher'), p.get('install_date'), p.get('install_location')]
+              for p in art.find(q).sort('name', 1).limit(MAX_ROWS)],
+             [2.2, 0.9, 1.4, 0.9, 2.4], 'No installed programs were found.', total=art.count_documents(q))
+    q = {'case_id': cid, 'type': {'$in': ['RDP_CONNECTION', 'NETWORK_DRIVE']}}
+    _section(story, T('Remote desktop and network drives'), ['User', 'Kind', 'Target', 'Detail', 'Written'],
+             [[x.get('user'), 'Remote desktop' if x['type'] == 'RDP_CONNECTION' else 'Network drive',
+               x.get('server') or x.get('remote_path'), x.get('username_hint') or (f'{x.get("drive")}:' if x.get('drive') else None),
+               x.get('key_last_write')] for x in art.find(q).sort('key_last_write', -1).limit(MAX_ROWS)],
+             [0.8, 1.2, 2.6, 1.6, 1.5], 'No remote desktop connections or mapped network drives were found.', total=art.count_documents(q))
+
     malware = list(db['forensic_artifacts'].find({'case_id': cid, 'type': 'MALWARE_INDICATOR'}))
     _section(story, T('Malware indicators (YARA)'), ['Evidence', 'Rule', 'File'],
              [[m.get('evidence_id'), m.get('rule'), (m.get('original_path') or m.get('path') or '') + (' (deleted)' if m.get('deleted') else '')]
@@ -276,7 +324,8 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     tag_order = {'EVIDENCE': 0, 'NOTABLE': 1, 'FOLLOW_UP': 2}
     tagged = sorted(db['tags'].find({'case_id': cid}), key=lambda t: (tag_order.get(t.get('label'), 9), str((t.get('snapshot') or {}).get('timestamp') or '')))
     item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
-                 'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file'}
+                 'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file', 'ENTITY': 'Found data',
+                 'REGISTRY': 'Registry activity'}
     _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
              [[(t.get('label') or '').replace('_', ' ').capitalize(),
                f'{(t.get("snapshot") or {}).get("title")}' + ('' if resolve(db, t) is not None else ' (not in the latest analysis)'),

@@ -502,9 +502,9 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
-STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'hash_match', 'yara']
+STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
-ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
                'unallocated', 'found_data']
 
 
@@ -566,11 +566,11 @@ def t_modules():
     j = _analyse(inv, E, {'modules': ['fs_index']})
     s = j['result']['summary']
     check('re-running the file system index also refreshes the modules built on it',
-          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
+          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
     j = _analyse(inv, E, {'modules': ['tz_probe']})
     s = j['result']['summary']
     check('re-reading the time zone re-indexes the file system and refreshes what is built on it (not the computer module)',
-          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara']
+          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara']
           and s['counts'] == C['COUNTS'], s.get('plan'))
 
     # A broker redelivery of a finished job must not run it again.
@@ -596,7 +596,7 @@ def t_modules():
     s = j['result']['summary']
     same = lambda counts: all(counts.get(k) == C['COUNTS'][k] for k in ('files', 'deleted_files', 'browser_history', 'usb_devices', 'programs_run'))
     check('the quick profile runs the file system index and artifacts only (no file hashing or YARA)',
-          s['plan'] == ['tz_probe', 'fs_index', 'computer', 'artifacts'] and 'yara_matches' not in s['counts']
+          s['plan'] == ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry'] and 'yara_matches' not in s['counts']
           and 'files_hashed' not in s['counts'] and same(s['counts']),
           (s.get('plan'), s.get('counts')))
     j = _analyse(inv, qe, {'modules': ['yara']})
@@ -1097,7 +1097,7 @@ def t_computer():
     after = db.fs_entries.find_one({'evidence_id': E, 'path': '/Users/alice/Documents/payroll-export.csv'})
     tz = get(f'/api/evidence/{E}', inv).json.get('time_zone') or {}
     check('setting the time zone re-indexes with it (FAT times as recorded: 05:41:02 = local time read as UTC)',
-          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara']
+          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara']
           and after['mtime'] == utc(2026, 9, 1, 5, 41, 2) and tz.get('source') == 'override' and tz.get('zone') == 'UTC', (j.get('status'), after.get('mtime'), tz.get('source')))
     check('...and tags still follow their items after the times changed', j.get('result', {}).get('summary', {}).get('tags') == {'relinked': 2, 'unresolved': 0},
           j.get('result', {}).get('summary', {}).get('tags'))
@@ -1648,6 +1648,198 @@ def t_containers():
     C['ARCHIVE_MEMBERS'] = len(members)
 
 
+NTUSER = '/Users/alice/NTUSER.DAT'
+USRCLASS = '/Users/alice/AppData/Local/Microsoft/Windows/UsrClass.dat'
+AMCACHE = '/Windows/AppCompat/Programs/Amcache.hve'
+SECUREDELETE_SHA1 = hashlib.sha1(b'SecureDelete.exe 1.4.0 test binary').hexdigest()  # make_hives.py
+
+
+def _rr(path_or_local, plugin):
+    """RegRipper (rip.pl) output for one plugin, on a hive from the image or a local file."""
+    local = path_or_local
+    if str(path_or_local).startswith('/') and not Path(path_or_local).is_file():
+        local = Path(tempfile.mkdtemp()) / str(path_or_local).rsplit('/', 1)[-1]
+        local.write_bytes(icat_bytes(path_or_local))
+    out = sh('regripper', '-r', str(local), '-p', plugin, timeout=300)
+    return out.stdout.decode('utf-8', 'replace')
+
+
+def _rr_time(text):
+    return datetime.strptime(text.strip().rstrip('Z'), '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+
+
+def _close(a, b, seconds=1):
+    """RegRipper converts FILETIMEs through floating point and can print a second early."""
+    return a is not None and b is not None and abs((iso(a) if isinstance(a, str) else a) - b) <= timedelta(seconds=seconds)
+
+
+@section('12g Registry activity (vs RegRipper and libregf on the hives, and the generator)')
+def t_registry():
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    rows = lambda t, extra='': get(f'/api/forensics/registry?case_id={A}&type={t}{extra}', inv).json['data']
+    mods = get(f'/api/evidence/{E}', inv).json['modules']
+    check('the registry module ran with the standard analysis', (mods.get('registry') or {}).get('status') == 'COMPLETED', mods.get('registry'))
+    hives = {h['path']: h for h in get(f'/api/forensics/registry/hives?case_id={A}', inv).json['data']}
+    want = {NTUSER: 'NTUSER', USRCLASS: 'USRCLASS', AMCACHE: 'AMCACHE', '/Windows/System32/config/SYSTEM': 'SYSTEM',
+            '/Windows/System32/config/SOFTWARE': 'SOFTWARE'}
+    check('every hive is found, with its SHA-256, owner and transaction-log state (clean)',
+          all(hives.get(p, {}).get('kind') == k and hives[p]['sha256'] == hashlib.sha256(icat_bytes(p)).hexdigest()
+              and hives[p]['state'].startswith('clean') for p, k in want.items())
+          and hives[NTUSER]['user'] == 'alice' and hives[NTUSER]['sid'] == ALICE_SID and hives[USRCLASS]['sid'] == ALICE_SID,
+          {p: (h.get('kind'), h.get('user'), h.get('sid'), h.get('state')) for p, h in hives.items()})
+    dirty = _rr(NTUSER, 'userassist')
+    local_nt = Path(tempfile.mkdtemp()) / 'NTUSER.DAT'
+    local_nt.write_bytes(icat_bytes(NTUSER))
+    rr_dirty = (sh('regripper', '-r', str(local_nt), '-d').stdout + sh('regripper', '-r', str(local_nt), '-d').stderr).decode().lower()
+    check('RegRipper agrees the user hive is not dirty (no transaction logs needed)', 'not dirty' in rr_dirty, rr_dirty[:200])
+
+    # NTUSER.DAT, against RegRipper.
+    ua = {r['program'].rsplit('\\', 1)[-1]: r for r in rows('USERASSIST')}
+    truth = {}
+    cur = None
+    for line in dirty.splitlines():
+        if re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z$', line.strip()):
+            cur = _rr_time(line)
+        m = re.match(r'^\s+(\S.*)\s\((\d+)\)$', line)
+        if m and cur:
+            truth[m.group(1).rsplit('\\', 1)[-1]] = (int(m.group(2)), cur)
+    check('UserAssist: programs, run counts and last-run times equal RegRipper (ROT13 decoded, each entry once)',
+          set(ua) == set(truth) and all(ua[k]['run_count'] == c and _close(ua[k]['last_run'], t) for k, (c, t) in truth.items()),
+          ({k: (v['run_count'], v['last_run']) for k, v in ua.items()}, truth))
+    check("UserAssist: known folders resolved with alice's profile", ua.get('SecureDelete.exe', {}).get('program') == 'C:\\Users\\alice\\Downloads\\SecureDelete.exe'
+          and ua.get('notepad.exe', {}).get('program') == 'C:\\Windows\\System32\\notepad.exe', [r['program'] for r in ua.values()])
+    ww = sorted(rows('EXPLORER_SEARCH'), key=lambda r: r['order'])
+    rr_ww = re.findall(r'^(\d+)\s+(\S.*?)\s*$', _rr(NTUSER, 'wordwheelquery').split('MRUListEx order', 1)[-1], re.M)
+    rr_ww_time = _rr_time(re.search(r'LastWrite Time (\S+ \S+)', _rr(NTUSER, 'wordwheelquery')).group(1))
+    check('Explorer searches: the terms in most-recent-first order and the key time equal RegRipper ("payroll" last)',
+          [r['value'] for r in ww] == [t for _, t in rr_ww] == ['payroll', 'usb wipe'] and _close(ww[0]['key_last_write'], rr_ww_time), (ww, rr_ww))
+    tp = [r['value'] for r in sorted(rows('TYPED_PATH'), key=lambda r: r['order'])]
+    check('typed paths equal RegRipper', tp == re.findall(r'^url\d+\s+(\S.*?)\s*$', _rr(NTUSER, 'typedpaths'), re.M) == ['E:\\Exports', 'C:\\Users\\alice\\Documents'], tp)
+    rd = [r['value'] for r in sorted(rows('RECENT_DOC'), key=lambda r: r['order']) if not r.get('extension')]
+    rr_rd = re.findall(r'^\s+(\d+) = (\S.*)$', _rr(NTUSER, 'recentdocs').split('RecentDocs\\.', 1)[0], re.M)
+    check('recent documents (RecentDocs) in order equal RegRipper', rd == [n for _, n in rr_rd] == ['payroll-export.csv', 'q3-payroll.docx'], (rd, rr_rd))
+    mru = [r['value'] for r in sorted(rows('RUN_MRU'), key=lambda r: r['order'])]
+    rr_mru = dict(re.findall(r'^([a-z])\s+(\S.*?)\\1\s*$', _rr(NTUSER, 'runmru'), re.M))
+    order = re.search(r'MRUList = (\w+)', _rr(NTUSER, 'runmru')).group(1)
+    check('Run dialog commands in order equal RegRipper (most recent: the PowerShell cleanup)', mru == [rr_mru[x] for x in order] and 'cleanup.ps1' in mru[0], (mru, rr_mru))
+    pers = rows('PERSISTENCE')
+    upd = next((p for p in pers if p['name'] == 'Updater'), {})
+    check('the user Run key (Updater, from a user profile) equals RegRipper and is flagged',
+          'Updater - C:\\Users\\alice\\AppData\\Roaming\\updater.exe -silent' in _rr(NTUSER, 'run') and upd.get('user') == 'alice'
+          and upd.get('command') == 'C:\\Users\\alice\\AppData\\Roaming\\updater.exe -silent' and upd.get('flags'), upd)
+    rdp = rows('RDP_CONNECTION')
+    ts = _rr(NTUSER, 'tsclient')
+    check('remote desktop: server, user hint and key time equal RegRipper',
+          [(r['server'], r['username_hint']) for r in rdp] == [('fileserver.corp.example', 'CORP\\alice')] and 'UsernameHint: CORP\\alice' in ts
+          and _close(rdp[0]['key_last_write'], _rr_time(re.search(r'fileserver\.corp\.example\s+LastWrite time: (\S+ \S+)', ts).group(1))), rdp)
+    f, _ = _hive(NTUSER)
+    nd = rows('NETWORK_DRIVE')
+    check('the mapped network drive equals the value read with libregf',
+          [(r['drive'], r['remote_path']) for r in nd] == [('Z', _regval(f, 'Network\\Z', 'RemotePath'))], nd)
+
+    # UsrClass.dat ShellBags, against RegRipper.
+    sb = {r['path']: r for r in rows('SHELLBAG')}
+    rr_sb = [[c.strip() for c in line.split('|')] for line in _rr(USRCLASS, 'shellbags').splitlines() if line.count('|') >= 6 and re.match(r'^\d{4}', line)]
+    rr_paths = {re.sub(r'^My Computer\\', '', re.sub(r'\s*\[Desktop.*$', '', r[6])): r for r in rr_sb}
+    check('folders browsed equal RegRipper (This PC > E:\\ > Exports)', set(sb) == set(rr_paths) and 'E:\\Exports' in sb, (sorted(sb), sorted(rr_paths)))
+    ex, rex = sb.get('E:\\Exports', {}), rr_paths.get('E:\\Exports', [''] * 7)
+    check("E:\\Exports: created, modified, accessed and MFT reference from the shell item equal RegRipper",
+          _close(ex.get('created'), _rr_time(rex[3])) and _close(ex.get('modified'), _rr_time(rex[1])) and _close(ex.get('accessed'), _rr_time(rex[2]))
+          and rex[5] == '41/2', (ex, rex))
+
+    # Amcache, ShimCache, BAM, against RegRipper.
+    am = rows('AMCACHE_FILE')
+    rr_am = _rr(AMCACHE, 'amcache')
+    check('Amcache: path, SHA-1 and first-recorded time equal RegRipper',
+          [(r['path'], r['sha1']) for r in am] == [('c:\\users\\alice\\downloads\\securedelete.exe', SECUREDELETE_SHA1)]
+          and f'Hash: {SECUREDELETE_SHA1}' in rr_am and _close(am[0]['key_last_write'], _rr_time(re.search(r'LastWrite: (\S+ \S+)', rr_am).group(1))), am)
+    shim = {r['path']: r for r in rows('SHIMCACHE_ENTRY')}
+    rr_shim = {m[0]: _rr_time(m[1]) for m in re.findall(r'^(\S.*?)\s{2}(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', _rr('/Windows/System32/config/SYSTEM', 'appcompatcache'), re.M)}
+    check('ShimCache: paths and file modification times equal RegRipper', set(shim) == set(rr_shim) and all(_close(shim[p]['last_modified'], t) for p, t in rr_shim.items()),
+          ({p: r['last_modified'] for p, r in shim.items()}, rr_shim))
+    bam_rows = {r['device_path']: r for r in rows('BAM_ENTRY')}
+    rr_bam = {m[1]: _rr_time(m[0]) for m in re.findall(r'^\s+(\S+ \S+Z) - (\S.*)$', _rr('/Windows/System32/config/SYSTEM', 'bam'), re.M)}
+    check("BAM: programs, last-run times and the user (from the SID) equal RegRipper",
+          set(bam_rows) == set(rr_bam) and all(_close(bam_rows[p]['last_run'], t) for p, t in rr_bam.items())
+          and all(r['user'] == 'alice' and r['sid'] == ALICE_SID for r in bam_rows.values()), bam_rows)
+
+    # Persistence and installed programs, against RegRipper.
+    svc = {p['name']: p for p in pers if p['kind'] == 'Service'}
+    rr_svc = {row[1]: row for row in csv_rows(_rr('/Windows/System32/config/SYSTEM', 'svc')) if len(row) > 6 and row[5] in ('Auto Start', 'Boot Start', 'System Start')}
+    check('auto-start services equal RegRipper; the one running from a user profile is flagged, the spooler is not',
+          set(svc) == set(rr_svc) and svc['SecureDeleteSvc']['command'] == rr_svc['SecureDeleteSvc'][3] and svc['SecureDeleteSvc']['flags']
+          and not svc['Spooler']['flags'] and svc['Spooler']['start_type'] == 'Automatic', ({k: (v['command'], v['flags']) for k, v in svc.items()}, rr_svc))
+    rr_run = _rr('/Windows/System32/config/SOFTWARE', 'run')
+    machine = {(p['kind'], p['name']): p for p in pers if p['scope'] == 'computer' and p['kind'] != 'Service'}
+    check('computer Run and RunOnce entries equal RegRipper; the encoded PowerShell RunOnce is flagged',
+          'SecurityHealth - %windir%\\system32\\SecurityHealthSystray.exe' in rr_run and 'Cleanup - powershell.exe -NoProfile -EncodedCommand' in rr_run
+          and machine.get(('RunOnce', 'Cleanup'), {}).get('flags') and not machine.get(('Run', 'SecurityHealth'), {}).get('flags'), machine)
+    ifeo = machine.get(('IFEO debugger', 'sethc.exe'), {})
+    check('the sticky-keys debugger (Image File Execution Options) is found and flagged, as RegRipper shows',
+          ifeo.get('command') == 'C:\\Windows\\System32\\cmd.exe' and ifeo.get('flags') and 'cmd.exe' in _rr('/Windows/System32/config/SOFTWARE', 'imagefile'), ifeo)
+    inst = {p['name'] for p in rows('INSTALLED_PROGRAM')}
+    rr_inst = set(re.findall(r'^\s+(\S.*?) v\.\S+$', _rr('/Windows/System32/config/SOFTWARE', 'uninstall'), re.M))
+    check('installed programs equal RegRipper', inst == rr_inst == {'SecureDelete 1.4', '7-Zip 23.01 (x64)'}, (inst, rr_inst))
+
+    # Execution evidence, the timeline and the rest.
+    exe = {r['program']: r for r in get(f'/api/forensics/execution?case_id={A}', inv).json['data']}
+    sd = exe.get('SecureDelete.exe', {})
+    check('execution evidence merges every trace of SecureDelete.exe: Prefetch, UserAssist, BAM, Amcache and ShimCache',
+          sd.get('sources') == ['prefetch', 'userassist', 'bam', 'amcache', 'shimcache'] and sd.get('sha1') == SECUREDELETE_SHA1
+          and iso(sd.get('last_run')) == utc(2026, 9, 1, 14, 18, 31) and iso(sd.get('first_seen')) == utc(2026, 9, 1, 10, 6, 2), sd)
+    np_ = exe.get('notepad.exe', {})
+    check('notepad.exe: UserAssist, BAM and ShimCache, no Prefetch or Amcache; every row with a trace of running is marked as run',
+          np_.get('sources') == ['userassist', 'bam', 'shimcache'] and np_.get('ran') is True
+          and get(f'/api/forensics/execution?case_id={A}&ran=false', inv).json['total'] == 0, np_)
+    tl = {(e['type'], e['description']) for e in get(f'/api/forensics/timeline?case_id={A}&limit=1000', inv).json['data']}
+    expected = [('EXPLORER_SEARCH', 'Explorer search (alice): "payroll"'), ('FOLDER_BROWSED', 'Folder browsed (ShellBags, alice): E:\\Exports'),
+                ('PROGRAM_RUN_BAM', 'Program run (BAM): \\Users\\alice\\Downloads\\SecureDelete.exe'),
+                ('RUN_DIALOG', 'Run dialog command (alice): powershell -ExecutionPolicy Bypass -File C:\\Users\\alice\\Downloads\\cleanup.ps1')]
+    check('the timeline gains the user activity (search, folder, program runs, Run dialog)', all(x in tl for x in expected),
+          [x for x in expected if x not in tl])
+    s = get(f'/api/forensics/search?case_id={A}&q=payroll', inv).json
+    check('keyword search finds registry activity ("payroll" search, recent document)', (s['totals'].get('registry') or 0) >= 2, s['totals'])
+    check('an unknown type is refused (400); another investigator gets 404',
+          get(f'/api/forensics/registry?case_id={A}&type=NOPE', inv).status == 400 and get(f'/api/forensics/registry?case_id={A}&type=USERASSIST', C['INV2']).status == 404
+          and get(f'/api/forensics/execution?case_id={A}', C['INV2']).status == 404)
+    t = post('/api/tags', inv, {'case_id': A, 'item_type': 'REGISTRY', 'item_id': ww[0]['_id'], 'label': 'NOTABLE', 'note': 'searched for payroll'})
+    j = _analyse(inv, E, {'modules': ['registry']})
+    check('a registry record can be tagged and the tag follows it when the registry is read again',
+          t.status == 200 and j['result']['summary'].get('tags') == {'relinked': 1, 'unresolved': 0}, (t, j.get('result', {}).get('summary', {}).get('tags')))
+    req('DELETE', f"/api/tags/{t.json['tag_id']}", inv)
+    ov = get(f'/api/cases/{A}/overview', inv).json['counts']
+    check('the overview counts executed programs, folders, searches, persistence (flagged) and installed programs',
+          ov.get('folders_browsed') == 3 and ov.get('persistence_flagged') == 4 and ov.get('installed_programs') == 2 and ov.get('user_searches') == 6, ov)
+
+    # Real hives (Plaso test data), against RegRipper.
+    sys.path.insert(0, '/app')
+    from app.forensic import user_registry as ur
+    nt = sample('plaso', 'NTUSER.DAT')
+    if nt:
+        ours = {(r['raw_name'], r['run_count']) for r in ur.userassist(nt, None)}
+        rr_text = _rr(nt, 'userassist')
+        rr_set = {(m[0], int(m[1])) for m in re.findall(r'^\s+(\S.*)\s\((\d+)\)$', rr_text, re.M)}
+        check(f'real Windows XP NTUSER.DAT: UserAssist entries equal RegRipper ({len(rr_set)} entries)', ours and ours == rr_set,
+              (sorted(ours - rr_set)[:5], sorted(rr_set - ours)[:5]))
+    sysh = sample('plaso', 'SYSTEM')
+    if sysh:
+        ours = [r['path'] for r in ur.shimcache(sysh)]
+        rr_paths = re.findall(r'^(\S.*?)\s{2}\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', _rr(sysh, 'appcompatcache'), re.M)
+        check(f'real Windows 7 SYSTEM: ShimCache paths equal RegRipper ({len(rr_paths)} entries)', ours and sorted(ours) == sorted(rr_paths),
+              (len(ours), len(rr_paths)))
+    soft = sample('plaso', 'SOFTWARE')
+    if soft:
+        ours = {r['name'] for r in ur.installed_programs(soft)}
+        rr_names = set(re.findall(r'^\s+(\S.*?)(?: v\.\S+)?$', _rr(soft, 'uninstall').split('Uninstall', 2)[-1], re.M))
+        check(f'real SOFTWARE: installed programs equal RegRipper ({len(ours)} programs)', ours and ours <= rr_names, sorted(ours - rr_names)[:5])
+
+
+def csv_rows(text):
+    import csv
+    import io
+    return list(csv.reader(io.StringIO(text)))
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -2140,7 +2332,8 @@ def t_overview():
     check('overview lists recent jobs', len(o['jobs']) >= 1)
 
 
-ACTIVITY_EVENT_TYPES = 'BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY,PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN'
+ACTIVITY_EVENT_TYPES = ('BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY,PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN,'
+                        'PROGRAM_RUN_USERASSIST,PROGRAM_RUN_BAM,FOLDER_BROWSED,EXPLORER_SEARCH,TYPED_PATH,RECENT_DOC_OPENED,RUN_DIALOG,RDP_CONNECTION')
 
 
 @section('28b Activity dashboard')
@@ -2410,7 +2603,7 @@ def t_reg_disabled():
 PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
-             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

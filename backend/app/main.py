@@ -3,12 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from .core.config import settings
 from .database import get_db
 from .repositories.users import seed_users
-from .api import auth,cases,evidence,notifications,reports,admin,forensics,findings,chain,jobs,threatintel,tags,hashsets,content,desktop as desktop_module
+from .api import auth,cases,evidence,notifications,reports,admin,forensics,findings,chain,jobs,threatintel,tags,hashsets,content,registry,desktop as desktop_module
 from .ws import r as ws_router
 from datetime import datetime,timezone
 app=FastAPI(title='DFIP API',version='2.1.0',description='Digital Forensics Investigation Platform')
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in settings.cors_origins.split(',') if x.strip()],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
-for router in [auth.r,cases.r,evidence.r,notifications.r,reports.r,admin.r,forensics.r,content.r,findings.r,chain.r,jobs.r,threatintel.r,tags.r,hashsets.r,desktop_module.r]:app.include_router(router,prefix='/api')
+for router in [auth.r,cases.r,evidence.r,notifications.r,reports.r,admin.r,forensics.r,content.r,registry.r,findings.r,chain.r,jobs.r,threatintel.r,tags.r,hashsets.r,desktop_module.r]:app.include_router(router,prefix='/api')
 app.include_router(ws_router)
 @app.on_event('startup')
 async def startup():

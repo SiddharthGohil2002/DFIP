@@ -74,9 +74,10 @@ export const NAV: NavGroup[] = [
       },
       {
         to: '/app/activity', label: 'Windows activity', icon: Activity, tone: 'teal',
-        description: 'Programs run (Prefetch), files opened (Recent shortcuts) and the Recycle Bin.',
-        count: (c) => c.programs_run + c.recent_files + c.recycle_bin_items,
-        countLabel: (c) => `${n(c.programs_run)} programs · ${n(c.recent_files)} opened · ${n(c.recycle_bin_items)} recycled`,
+        description: 'Programs run, files opened, the Recycle Bin, folders browsed, searches, autostart entries and installed programs.',
+        count: (c) => c.programs_run + c.recent_files + c.recycle_bin_items + (c.programs_executed ?? 0) + (c.folders_browsed ?? 0),
+        alert: (c) => (c.persistence_flagged ?? 0) > 0,
+        countLabel: (c) => `${n(c.programs_run)} Prefetch · ${n(c.folders_browsed ?? 0)} folders · ${n(c.persistence_flagged ?? 0)} autostart entries flagged`,
       },
       {
         to: '/app/computer', label: 'Computer and users', icon: Monitor, tone: 'teal',

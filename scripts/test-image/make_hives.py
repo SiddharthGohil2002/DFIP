@@ -17,9 +17,15 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+import codecs
+import hashlib
+
 import hivex
 
-from regf_base import empty_hive
+from regf_base import empty_hive, set_key_times
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend' / 'tests' / 'fixtures'))
+import winfmt  # noqa: E402  (shell items, shared with the backend unit tests)
 
 REG_NONE, REG_SZ, REG_EXPAND_SZ, REG_BINARY, REG_DWORD, REG_MULTI_SZ, REG_QWORD = 0, 1, 2, 3, 4, 7, 11
 MACHINE = (3623811015, 3361044348, 30300820)          # S-1-5-21-3623811015-3361044348-30300820
@@ -44,7 +50,8 @@ def dword(n):
 
 
 def filetime_int(dt):
-    return int((dt - EPOCH_1601).total_seconds() * 10_000_000)
+    d = dt - EPOCH_1601  # integer arithmetic: a float would land a fraction short of the second
+    return (d.days * 86_400 + d.seconds) * 10_000_000 + d.microseconds * 10
 
 
 def filetime(dt):
@@ -61,8 +68,8 @@ def binary_sid(*subs, authority=5):
 
 
 class Hive:
-    def __init__(self, path: Path):
-        path.write_bytes(empty_hive())
+    def __init__(self, path: Path, file_name: str = ''):
+        path.write_bytes(empty_hive(file_name=file_name))
         self.path = path
         self.h = hivex.Hivex(str(path), write=True)
 
@@ -101,7 +108,7 @@ class Hive:
 
 
 def system_hive(path: Path, real_system: Path):
-    hv = Hive(path)
+    hv = Hive(path, '\\SystemRoot\\System32\\Config\\SYSTEM')
     with tempfile.NamedTemporaryFile(suffix='.hive') as t:
         t.write(lzma.decompress(real_system.read_bytes()))
         t.flush()
@@ -134,7 +141,7 @@ def system_hive(path: Path, real_system: Path):
 
 
 def software_hive(path: Path):
-    hv = Hive(path)
+    hv = Hive(path, '\\SystemRoot\\System32\\Config\\SOFTWARE')
     cv = 'Microsoft\\Windows NT\\CurrentVersion'
     installed = utc(2024, 3, 2, 9, 15)
     hv.set(cv, ProductName=(REG_SZ, sz('Windows 10 Pro')), EditionID=(REG_SZ, sz('Professional')),
@@ -195,7 +202,7 @@ USERS = [  # (rid, name, full name, comment, ACB flags, logons, last logon, pass
 
 
 def sam_hive(path: Path):
-    hv = Hive(path)
+    hv = Hive(path, '\\SystemRoot\\System32\\Config\\SAM')
     hv.set('SAM\\Domains\\Account', F=(REG_BINARY, bytes(0x50)),
            V=(REG_BINARY, bytes(0x40) + binary_sid(21, *MACHINE)))  # the machine SID ends the domain V record
     for rid, name, full, comment, acb, logons, last, pwd in USERS:
@@ -205,13 +212,194 @@ def sam_hive(path: Path):
     hv.commit()
 
 
+# ---------------------------------------------------------------- Phase 5: user activity, programs and persistence
+# Everything below tells the same story as the rest of the test disk (2026-09-01, all times UTC): alice downloads and
+# runs SecureDelete.exe, browses the SanDisk drive (E:\Exports), searches Explorer for "payroll", opens the export, and
+# sets up persistence for an "updater".
+SECUREDELETE_SHA1 = hashlib.sha1(b'SecureDelete.exe 1.4.0 test binary').hexdigest()
+CS = 'ControlSet001'
+EXPLORER = 'Software\\Microsoft\\Windows\\CurrentVersion\\Explorer'
+UA_EXE = f'{EXPLORER}\\UserAssist\\{{CEBFF5CD-ACE2-4F4F-9178-9926F41749EA}}\\Count'
+DOWNLOADS = '{374DE290-123F-4565-9164-39C4925E467B}'   # KnownFolderID of the user's Downloads folder
+SYSTEM32 = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}'    # KnownFolderID of System32
+USERASSIST = [  # (name as stored before ROT13, run count, focus count, focus time ms, last run)
+    (f'{DOWNLOADS}\\SecureDelete.exe', 2, 3, 41_000, utc(2026, 9, 1, 14, 18, 30)),
+    (f'{SYSTEM32}\\notepad.exe', 5, 7, 312_000, utc(2026, 9, 1, 14, 13, 40)),
+]
+TYPED_PATHS = ['E:\\Exports', 'C:\\Users\\alice\\Documents']           # url1 is the most recent
+WORDWHEEL = {0: 'usb wipe', 1: 'payroll'}                               # value name -> search term
+WORDWHEEL_ORDER = [1, 0]                                                # most recent first
+RECENT_DOCS = {0: 'payroll-export.csv', 1: 'q3-payroll.docx'}
+RECENT_ORDER = [0, 1]
+RUN_MRU = {'a': 'cmd', 'b': 'powershell -ExecutionPolicy Bypass -File C:\\Users\\alice\\Downloads\\cleanup.ps1'}
+RUN_MRU_ORDER = 'ba'
+NTUSER_RUN = {'Updater': 'C:\\Users\\alice\\AppData\\Roaming\\updater.exe -silent'}
+RDP_SERVER, RDP_USER = 'fileserver.corp.example', 'CORP\\alice'
+NETWORK_DRIVE = ('Z', '\\\\fileserver.corp.example\\finance')
+BAM = [('\\Device\\HarddiskVolume3\\Users\\alice\\Downloads\\SecureDelete.exe', utc(2026, 9, 1, 14, 18, 31)),
+       ('\\Device\\HarddiskVolume3\\Windows\\System32\\notepad.exe', utc(2026, 9, 1, 14, 13, 41))]
+SHIMCACHE = [('C:\\Users\\alice\\Downloads\\SecureDelete.exe', utc(2026, 8, 14, 9, 12, 33)),
+             ('C:\\Windows\\System32\\notepad.exe', utc(2024, 3, 2, 9, 30, 10))]
+SERVICES = {  # name -> (ImagePath, Start, DisplayName)
+    'SecureDeleteSvc': ('C:\\Users\\alice\\AppData\\Roaming\\sdsvc.exe', 2, 'Secure Delete Helper'),
+    'Spooler': ('%SystemRoot%\\System32\\spoolsv.exe', 2, 'Print Spooler'),
+}
+SOFTWARE_RUN = {'SecurityHealth': '%windir%\\system32\\SecurityHealthSystray.exe'}
+SOFTWARE_RUNONCE = {'Cleanup': 'powershell.exe -NoProfile -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAKQA='}
+UNINSTALL = {  # key -> values
+    'SecureDelete': {'DisplayName': 'SecureDelete 1.4', 'DisplayVersion': '1.4.0', 'Publisher': 'Example Tools',
+                     'InstallDate': '20260901', 'InstallLocation': 'C:\\Program Files\\SecureDelete',
+                     'UninstallString': '"C:\\Program Files\\SecureDelete\\uninstall.exe"'},
+    '7-Zip': {'DisplayName': '7-Zip 23.01 (x64)', 'DisplayVersion': '23.01', 'Publisher': 'Igor Pavlov', 'InstallDate': '20240305',
+              'InstallLocation': 'C:\\Program Files\\7-Zip\\', 'UninstallString': '"C:\\Program Files\\7-Zip\\Uninstall.exe"'},
+}
+IFEO = {'sethc.exe': 'C:\\Windows\\System32\\cmd.exe'}  # the "sticky keys" backdoor
+SHELLBAG_E = utc(2026, 9, 1, 14, 13, 2)                  # E:\ and E:\Exports last browsed
+
+
+def mru_list_ex(order):
+    return b''.join(struct.pack('<I', i) for i in order) + b'\xff\xff\xff\xff'
+
+
+def userassist_value(run_count, focus_count, focus_ms, last_run):
+    """Windows 7+ UserAssist data (72 bytes): session, run count, focus count, focus time, ..., last run FILETIME at 60."""
+    b = bytearray(72)
+    struct.pack_into('<IIII', b, 0, 0, run_count, focus_count, focus_ms)
+    struct.pack_into('<Q', b, 60, filetime_int(last_run))
+    return bytes(b)
+
+
+def appcompatcache_win10(entries):
+    """Windows 10 (Creators Update and later) AppCompatCache: a 0x34-byte header, then '10ts' entries."""
+    header = bytearray(0x34)
+    struct.pack_into('<I', header, 0, 0x34)
+    out = bytes(header)
+    for path, modified in entries:
+        p = path.encode('utf-16-le')
+        data = struct.pack('<H', len(p)) + p + struct.pack('<QI', filetime_int(modified), 0)
+        out += b'10ts' + struct.pack('<II', 0, len(data)) + data
+    return out
+
+
+def add_system_activity(path: Path):
+    """BAM, ShimCache and services on the SYSTEM hive written by system_hive()."""
+    h = hivex.Hivex(str(path), write=True)
+    hv = Hive.__new__(Hive)
+    hv.path, hv.h = path, h
+    for exe, when in BAM:
+        hv.set(f'{CS}\\Services\\bam\\State\\UserSettings\\{ALICE_SID}', **{exe: (REG_BINARY, filetime(when) + bytes(16))})
+    hv.set(f'{CS}\\Services\\bam\\State\\UserSettings\\{ALICE_SID}', Version=(REG_DWORD, dword(1)), SequenceNumber=(REG_DWORD, dword(9)))
+    hv.set(f'{CS}\\Control\\Session Manager\\AppCompatCache', AppCompatCache=(REG_BINARY, appcompatcache_win10(SHIMCACHE)))
+    for name, (image, start, display) in SERVICES.items():
+        hv.set(f'{CS}\\Services\\{name}', ImagePath=(REG_EXPAND_SZ, sz(image)), Start=(REG_DWORD, dword(start)),
+               Type=(REG_DWORD, dword(0x10)), DisplayName=(REG_SZ, sz(display)), ObjectName=(REG_SZ, sz('LocalSystem')))
+    hv.commit()
+    set_key_times(path, {f'{CS}\\Services\\bam\\State\\UserSettings\\{ALICE_SID}': utc(2026, 9, 1, 14, 18, 31),
+                         f'{CS}\\Control\\Session Manager\\AppCompatCache': utc(2026, 9, 1, 18, 42, 9),
+                         f'{CS}\\Services\\SecureDeleteSvc': utc(2026, 9, 1, 10, 7, 30),
+                         f'{CS}\\Services\\Spooler': utc(2024, 3, 2, 9, 20)})
+
+
+def add_software_activity(path: Path):
+    """Run keys, installed programs and an Image File Execution Options debugger on the SOFTWARE hive."""
+    h = hivex.Hivex(str(path), write=True)
+    hv = Hive.__new__(Hive)
+    hv.path, hv.h = path, h
+    hv.set('Microsoft\\Windows\\CurrentVersion\\Run', **{k: (REG_SZ, sz(v)) for k, v in SOFTWARE_RUN.items()})
+    hv.set('Microsoft\\Windows\\CurrentVersion\\RunOnce', **{k: (REG_SZ, sz(v)) for k, v in SOFTWARE_RUNONCE.items()})
+    for key, vals in UNINSTALL.items():
+        hv.set(f'Microsoft\\Windows\\CurrentVersion\\Uninstall\\{key}', **{k: (REG_SZ, sz(v)) for k, v in vals.items()})
+    for exe, debugger in IFEO.items():
+        hv.set(f'Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\{exe}', Debugger=(REG_SZ, sz(debugger)))
+    hv.commit()
+    set_key_times(path, {'Microsoft\\Windows\\CurrentVersion\\Run': utc(2024, 3, 2, 9, 25),
+                         'Microsoft\\Windows\\CurrentVersion\\RunOnce': utc(2026, 9, 1, 10, 7, 10),
+                         'Microsoft\\Windows\\CurrentVersion\\Uninstall\\SecureDelete': utc(2026, 9, 1, 10, 5, 40),
+                         'Microsoft\\Windows\\CurrentVersion\\Uninstall\\7-Zip': utc(2024, 3, 5, 11, 0),
+                         'Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\sethc.exe': utc(2026, 9, 1, 10, 8, 15)})
+
+
+def utf16z(s):
+    return s.encode('utf-16-le') + b'\0\0'
+
+
+def ntuser_hive(path: Path):
+    hv = Hive(path, '\\??\\C:\\Users\\alice\\ntuser.dat')
+    hv.set(UA_EXE, **{codecs.encode(name, 'rot13'): (REG_BINARY, userassist_value(rc, fc, fms, last))
+                      for name, rc, fc, fms, last in USERASSIST})
+    hv.set(f'{EXPLORER}\\TypedPaths', **{f'url{i}': (REG_SZ, sz(p)) for i, p in enumerate(TYPED_PATHS, 1)})
+    hv.set(f'{EXPLORER}\\WordWheelQuery', MRUListEx=(REG_BINARY, mru_list_ex(WORDWHEEL_ORDER)),
+           **{str(i): (REG_BINARY, utf16z(t)) for i, t in WORDWHEEL.items()})
+    # RecentDocs values: the file name (UTF-16), then the shell item of its shortcut, which DFIP does not need.
+    recent = {str(i): (REG_BINARY, utf16z(n) + b'\x14\x00\x32\x00' + bytes(16)) for i, n in RECENT_DOCS.items()}
+    hv.set(f'{EXPLORER}\\RecentDocs', MRUListEx=(REG_BINARY, mru_list_ex(RECENT_ORDER)), **recent)
+    hv.set(f'{EXPLORER}\\RecentDocs\\.csv', MRUListEx=(REG_BINARY, mru_list_ex([0])), **{'0': recent['0']})
+    hv.set(f'{EXPLORER}\\RecentDocs\\.docx', MRUListEx=(REG_BINARY, mru_list_ex([0])), **{'0': recent['1']})
+    hv.set(f'{EXPLORER}\\RunMRU', MRUList=(REG_SZ, sz(RUN_MRU_ORDER)), **{k: (REG_SZ, sz(v + '\\1')) for k, v in RUN_MRU.items()})
+    hv.set('Software\\Microsoft\\Windows\\CurrentVersion\\Run', **{k: (REG_SZ, sz(v)) for k, v in NTUSER_RUN.items()})
+    hv.set('Software\\Microsoft\\Terminal Server Client\\Default', MRU0=(REG_SZ, sz(RDP_SERVER)))
+    hv.set(f'Software\\Microsoft\\Terminal Server Client\\Servers\\{RDP_SERVER}', UsernameHint=(REG_SZ, sz(RDP_USER)))
+    letter, remote = NETWORK_DRIVE
+    hv.set(f'Network\\{letter}', RemotePath=(REG_SZ, sz(remote)), UserName=(REG_SZ, sz(RDP_USER)),
+           ProviderName=(REG_SZ, sz('Microsoft Windows Network')), ConnectionType=(REG_DWORD, dword(1)))
+    hv.commit()
+    set_key_times(path, {UA_EXE: utc(2026, 9, 1, 14, 18, 30), f'{EXPLORER}\\TypedPaths': utc(2026, 9, 1, 14, 12, 50),
+                         f'{EXPLORER}\\WordWheelQuery': utc(2026, 9, 1, 14, 12, 55), f'{EXPLORER}\\RecentDocs': utc(2026, 9, 1, 14, 14, 6),
+                         f'{EXPLORER}\\RecentDocs\\.csv': utc(2026, 9, 1, 14, 14, 6), f'{EXPLORER}\\RecentDocs\\.docx': utc(2026, 8, 31, 16, 50),
+                         f'{EXPLORER}\\RunMRU': utc(2026, 9, 1, 10, 6, 10), 'Software\\Microsoft\\Windows\\CurrentVersion\\Run': utc(2026, 9, 1, 10, 7),
+                         f'Software\\Microsoft\\Terminal Server Client\\Servers\\{RDP_SERVER}': utc(2026, 9, 1, 13, 40),
+                         f'Network\\{letter}': utc(2026, 9, 1, 13, 35)},
+                  default=utc(2026, 9, 1, 13, 28, 45))  # other keys: the logon
+
+
+def usrclass_hive(path: Path):
+    """ShellBags: This PC > E:\\ > Exports."""
+    hv = Hive(path, '\\??\\C:\\Users\\alice\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat')
+    bags = 'Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU'
+    hv.set(bags, MRUListEx=(REG_BINARY, mru_list_ex([0])), **{'0': (REG_BINARY, winfmt.id_list(winfmt.shell_item_root()))},
+           NodeSlots=(REG_BINARY, b'\x02'))
+    hv.set(f'{bags}\\0', MRUListEx=(REG_BINARY, mru_list_ex([0])), **{'0': (REG_BINARY, winfmt.id_list(winfmt.shell_item_volume('E:\\')))},
+           NodeSlot=(REG_DWORD, dword(1)))
+    hv.set(f'{bags}\\0\\0', MRUListEx=(REG_BINARY, mru_list_ex([0])), NodeSlot=(REG_DWORD, dword(2)),
+           **{'0': (REG_BINARY, winfmt.id_list(winfmt.shell_item_directory('Exports', 'EXPORTS', utc(2026, 9, 1, 9, 41, 2),
+                                                                         utc(2026, 8, 30, 9, 0), SHELLBAG_E, 41, 2)))})
+    hv.set(f'{bags}\\0\\0\\0', NodeSlot=(REG_DWORD, dword(3)))
+    hv.commit()
+    set_key_times(path, {bags: SHELLBAG_E, f'{bags}\\0': SHELLBAG_E, f'{bags}\\0\\0': SHELLBAG_E, f'{bags}\\0\\0\\0': SHELLBAG_E},
+                  default=utc(2026, 9, 1, 13, 28, 45))
+
+
+def amcache_hive(path: Path):
+    """Windows 10 Amcache: Root\\InventoryApplicationFile entries with SHA-1 (FileId), path, size and link date."""
+    hv = Hive(path, '\\??\\C:\\Windows\\AppCompat\\Programs\\Amcache.hve')
+    files = 'Root\\InventoryApplicationFile'
+    hv.set(f'{files}\\securedelete.exe|5b3c8f2a9d1e4c70', ProgramId=(REG_SZ, sz('0006f1a2b3c4d5e6f708192a3b4c5d6e7f800000ffff')),
+           FileId=(REG_SZ, sz('0000' + SECUREDELETE_SHA1)), LowerCaseLongPath=(REG_SZ, sz('c:\\users\\alice\\downloads\\securedelete.exe')),
+           LongPathHash=(REG_SZ, sz('securedelete.exe|5b3c8f2a9d1e4c70')), Name=(REG_SZ, sz('SecureDelete.exe')),
+           OriginalFileName=(REG_SZ, sz('securedelete.exe')), Publisher=(REG_SZ, sz('example tools')), Version=(REG_SZ, sz('1.4.0')),
+           BinFileVersion=(REG_SZ, sz('1.4.0.0')), BinaryType=(REG_SZ, sz('pe32_i386')), ProductName=(REG_SZ, sz('securedelete')),
+           ProductVersion=(REG_SZ, sz('1.4.0')), LinkDate=(REG_SZ, sz('08/14/2026 09:12:33')), BinProductVersion=(REG_SZ, sz('1.4.0.0')),
+           Size=(REG_QWORD, struct.pack('<Q', 482_304)), Language=(REG_DWORD, dword(0)), IsPeFile=(REG_DWORD, dword(1)),
+           IsOsComponent=(REG_DWORD, dword(0)))
+    hv.commit()
+    set_key_times(path, {f'{files}\\securedelete.exe|5b3c8f2a9d1e4c70': utc(2026, 9, 1, 10, 6, 2)}, default=utc(2026, 9, 1, 10, 6, 2))
+
+
 def main():
     tree, real_system = Path(sys.argv[1]), Path(sys.argv[2])
     config = tree / 'Windows' / 'System32' / 'config'
     config.mkdir(parents=True, exist_ok=True)
     system_hive(config / 'SYSTEM', real_system)
+    add_system_activity(config / 'SYSTEM')
     software_hive(config / 'SOFTWARE')
+    add_software_activity(config / 'SOFTWARE')
     sam_hive(config / 'SAM')
+    alice = tree / 'Users' / 'alice'
+    ntuser_hive(alice / 'NTUSER.DAT')
+    (alice / 'AppData' / 'Local' / 'Microsoft' / 'Windows').mkdir(parents=True, exist_ok=True)
+    usrclass_hive(alice / 'AppData' / 'Local' / 'Microsoft' / 'Windows' / 'UsrClass.dat')
+    (tree / 'Windows' / 'AppCompat' / 'Programs').mkdir(parents=True, exist_ok=True)
+    amcache_hive(tree / 'Windows' / 'AppCompat' / 'Programs' / 'Amcache.hve')
     print('Hives:', ', '.join(f'{p.name} ({p.stat().st_size:,} bytes)' for p in sorted(config.iterdir())))
 
 

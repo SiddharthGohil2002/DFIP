@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added — registry evidence
+- **Registry activity** (new `registry` module, every profile) from each user's NTUSER.DAT and UsrClass.dat, Amcache.hve, SYSTEM and SOFTWARE: programs started from Explorer (UserAssist), folders browsed including on USB and network drives (ShellBags), Explorer searches, typed paths and addresses, recent documents, Run dialog commands, remote desktop connections, mapped network drives, Amcache (with SHA-1), ShimCache, BAM, autostart entries (Run/RunOnce, services, Image File Execution Options debuggers, Winlogon) and installed programs. Dirty hives have their transaction logs applied first.
+- **Windows activity** gains tabs: Execution evidence (one row per program merging Prefetch, UserAssist, BAM, Amcache and ShimCache), Folders browsed, Searches and typed paths, Persistence (entries that stand out flagged with the reason), Installed programs, Remote desktop and drives. Registry records can be tagged, are on the timeline and the activity dashboard, are searchable, and have report sections.
+- The backend image gains libfwsi, libfwps (shell items) and RegRipper (used by the tests as an independent reader). Test disk: alice's NTUSER.DAT and UsrClass.dat, an Amcache.hve, and BAM, ShimCache, services, autostart, IFEO and Uninstall entries, written with hivex, with real key write times and hive header names.
+
+### Fixed — found while testing registry evidence
+- Windows XP UserAssist control values were reported as a program with a negative run count; ShimCache was read from every control set (each entry listed twice); ShimCache paths kept the `\??\` prefix.
+- Tabs scroll sideways instead of overflowing on narrow windows; tags on found data were labelled "ENTITY" in the report.
+
 ### Added — archives, embedded files and unallocated space
 - **Archive contents** (new `containers` module and Files tab): members of ZIP, 7z, RAR, tar, gzip and other archives, pictures and objects embedded in Word, Excel, PowerPoint and OpenDocument files, packages embedded in legacy Office (OLE) files and PDF attachments, two levels deep. Members are hashed, typed, matched with hash sets, scanned with YARA, searchable and scanned for found data like any file; they can be viewed and recovered (with a chain-of-custody record). Encrypted members are listed and flagged, not extracted.
 - **Archive-bomb and path safety:** members are stored under generated names; 7-Zip unpacks into an empty folder from which only regular files are taken, under a file-size limit; per-member size, expansion-ratio and per-container and per-evidence limits.

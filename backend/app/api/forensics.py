@@ -465,6 +465,8 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
         'findings':('findings',{'case_id':case_id,'$or':[{'title':rx},{'description':rx}]},[('created_at',-1)]),
         'accounts':('forensic_artifacts',{'case_id':case_id,'type':'USER_ACCOUNT','$or':[{'username':rx},{'full_name':rx},{'sid':rx},
                     {'profile_path':rx}]},[('rid',1)]),
+        'registry':('forensic_artifacts',{'case_id':case_id,'source':'REGISTRY','$or':[{f:rx} for f in ('program','path','value','command','name','server','remote_path','publisher')]},
+                    [('type',1),('key_last_write',-1)]),
         # Found data by what is shown: masked card and Aadhaar numbers only by their visible digits.
         'found':('entities',{'evidence_id':{'$in':eids},'$or':[{'display':rx},{'value':rx,'sensitive':False}]},[('kind',1),('count',-1)]),
     }

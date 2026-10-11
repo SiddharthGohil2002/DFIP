@@ -74,7 +74,7 @@ def test_order_respects_requirements():
 
 def test_profiles_and_requests():
     assert resolve_request() == PROFILES['standard']
-    assert resolve_request('quick') == ['tz_probe', 'fs_index', 'computer', 'artifacts']
+    assert resolve_request('quick') == ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry']
     # Standard adds file processing (hashes, types, hash sets, YARA) on every file; full also indexes file contents.
     assert PROFILES['standard'] == [m for m in ORDER if m not in ('containers', 'content', 'unallocated', 'found_data')]
     assert PROFILES['full'] == ORDER
@@ -108,14 +108,14 @@ def test_plan_reruns_only_what_is_needed():
     assert plan(['unallocated'], status) == ['unallocated', 'found_data']
     assert plan(['content'], status) == ['content', 'found_data']
     # Dependents are refreshed.
-    assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
+    assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'registry', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
                                           'unallocated', 'found_data']
     # A new time zone re-indexes the file system (FAT times) and refreshes what was built on the index.
-    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'fileproc', 'containers', 'hash_match', 'yara',
+    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'fileproc', 'containers', 'hash_match', 'yara',
                                           'content', 'unallocated', 'found_data']
     # On evidence analysed with the standard profile, the content modules are not added by a re-run.
     standard = _done(*PROFILES['standard'])
-    assert plan(['fs_index'], standard) == ['fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara']
+    assert plan(['fs_index'], standard) == ['fs_index', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara']
     assert plan(['fs_index'], _done('tz_probe', 'fs_index')) == ['fs_index']  # dependents that never ran are not added
 
 

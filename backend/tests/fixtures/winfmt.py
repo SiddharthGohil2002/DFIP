@@ -223,3 +223,46 @@ def ole10native(filename: str, data: bytes) -> bytes:
     body = (struct.pack('<H', 2) + filename.encode('latin-1') + b'\0' + src + struct.pack('<II', 0x00030000, len(tmp)) + tmp
             + struct.pack('<I', len(data)) + data)
     return struct.pack('<I', len(body)) + body
+
+
+# ---------------------------------------------------------------- shell items ([MS-SHLLINK] IDList items, libfwsi notes)
+def fat_datetime(dt: datetime) -> bytes:
+    """FAT date then FAT time (2 seconds resolution), as shell items store them."""
+    date = ((dt.year - 1980) << 9) | (dt.month << 5) | dt.day
+    time = (dt.hour << 11) | (dt.minute << 5) | (dt.second // 2)
+    return struct.pack('<HH', date, time)
+
+
+def _item(body: bytes) -> bytes:
+    return struct.pack('<H', len(body) + 2) + body
+
+
+def shell_item_root(guid: str = '20D04FE0-3AEA-1069-A2D8-08002B30309D', sort_index: int = 0x50) -> bytes:
+    """A root folder item (class 0x1F) for a shell folder; the default is My Computer ("This PC")."""
+    import uuid
+    return _item(struct.pack('<BB', 0x1F, sort_index) + uuid.UUID(guid).bytes_le)
+
+
+def shell_item_volume(path: str = 'E:\\') -> bytes:
+    """A volume item (class 0x2F) naming a drive, for example E:\\."""
+    return _item(struct.pack('<B', 0x2F) + path.encode('ascii').ljust(22, b'\0'))
+
+
+def shell_item_directory(name: str, short_name: str, modified: datetime, created: datetime, accessed: datetime,
+                         mft_entry: int = 0, mft_sequence: int = 0) -> bytes:
+    """A directory file-entry item (class 0x31) with its 0xBEEF0004 extension block (version 9, Windows 8 and later):
+    the 8.3 name and modification time, then the creation and access times, NTFS reference and long name."""
+    primary = short_name.encode('ascii') + b'\0'
+    primary += b'\0' * (len(primary) % 2)
+    head = struct.pack('<BBI', 0x31, 0, 0) + fat_datetime(modified) + struct.pack('<H', 0x10) + primary
+    ext = (struct.pack('<HI', 9, 0xBEEF0004) + fat_datetime(created) + fat_datetime(accessed) + struct.pack('<H', 0x2E)
+           + struct.pack('<HQQ', 0, mft_entry | (mft_sequence << 48), 0) + struct.pack('<HII', 0, 0, 0)
+           + name.encode('utf-16-le') + b'\0\0')
+    first_ext = 2 + len(head)  # where this extension block starts within the item
+    ext_block = struct.pack('<H', 2 + len(ext) + 2) + ext + struct.pack('<H', first_ext)
+    return _item(head + ext_block)
+
+
+def id_list(*items: bytes) -> bytes:
+    """Shell items followed by the 2-byte terminator, as stored in ShellBags (BagMRU) values."""
+    return b''.join(items) + b'\0\0'

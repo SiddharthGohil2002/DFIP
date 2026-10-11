@@ -9,11 +9,14 @@ import type { Artifact } from '../lib/types';
 import { TagButton } from '../lib/tags';
 import { ViewButton } from '../ui/FileViewer';
 import { Badge, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, Tabs, useToast } from '../ui';
+import { REGISTRY_COUNT, RegistryActivity, type RegistryTab } from './RegistryActivity';
 
 const LIMIT = 100;
-type Kind = 'PROGRAM_RUN' | 'RECENT_FILE' | 'RECYCLE_BIN_ITEM';
+type FileKind = 'PROGRAM_RUN' | 'RECENT_FILE' | 'RECYCLE_BIN_ITEM';
+type Kind = FileKind | RegistryTab;
+const REGISTRY_TABS: RegistryTab[] = ['EXECUTION', 'SHELLBAG', 'SEARCHES', 'PERSISTENCE', 'INSTALLED', 'REMOTE'];
 
-const EMPTY: Record<Kind, string> = {
+const EMPTY: Record<FileKind, string> = {
   PROGRAM_RUN: 'No Prefetch files (C:\\Windows\\Prefetch) were found in the analyzed images.',
   RECENT_FILE: 'No shortcuts were found in the users\' Recent folders.',
   RECYCLE_BIN_ITEM: 'No Recycle Bin index ($I) files were found.',
@@ -22,6 +25,7 @@ const EMPTY: Record<Kind, string> = {
 export function ActivityPage() {
   const { caseId, overview } = useCase();
   const [kind, setKind] = useState<Kind>('PROGRAM_RUN');
+  const isRegistry = (REGISTRY_TABS as string[]).includes(kind);
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
   const [skip, setSkip] = useState(0);
@@ -29,17 +33,18 @@ export function ActivityPage() {
 
   const params = new URLSearchParams({ case_id: caseId, kind, limit: String(LIMIT), skip: String(skip) });
   if (search) params.set('search', search);
-  const res = useApi<{ data: Artifact[]; total: number }>(`/forensics/activity?${params}`);
+  const res = useApi<{ data: Artifact[]; total: number }>(isRegistry ? null : `/forensics/activity?${params}`);
   const { error, loading } = res;
   // Until the new tab's rows arrive, the previous tab's are still loaded: never draw them under this tab's columns.
   const data = res.dataPath && new URLSearchParams(res.dataPath.split('?')[1]).get('kind') === kind ? res.data : null;
   const counts = overview?.counts;
+  const reg = REGISTRY_COUNT(counts);
 
   return (
     <div className="stack">
       <PageHeader
         title="Windows activity"
-        subtitle="What the user did on the computer, from Windows' own records: programs run (Prefetch), files opened (shortcuts in the Recent folder) and files moved to the Recycle Bin."
+        subtitle="What the user did on the computer, from Windows' own records: programs run (Prefetch, UserAssist, BAM, Amcache, ShimCache), files opened (Recent shortcuts, RecentDocs), files moved to the Recycle Bin, folders browsed, searches, autostart entries, installed programs and remote connections."
       />
       <Card flush>
         <Tabs<Kind>
@@ -47,10 +52,17 @@ export function ActivityPage() {
           onChange={setKind}
           tabs={[
             { id: 'PROGRAM_RUN', label: 'Programs run', count: counts?.programs_run },
+            { id: 'EXECUTION', label: 'Execution evidence', count: reg.EXECUTION },
             { id: 'RECENT_FILE', label: 'Recently opened files', count: counts?.recent_files },
             { id: 'RECYCLE_BIN_ITEM', label: 'Recycle Bin', count: counts?.recycle_bin_items },
+            { id: 'SHELLBAG', label: 'Folders browsed', count: reg.SHELLBAG },
+            { id: 'SEARCHES', label: 'Searches and typed paths', count: reg.SEARCHES },
+            { id: 'PERSISTENCE', label: 'Persistence', count: reg.PERSISTENCE },
+            { id: 'INSTALLED', label: 'Installed programs', count: reg.INSTALLED },
+            { id: 'REMOTE', label: 'Remote desktop and drives' },
           ]}
         />
+        {isRegistry ? <RegistryActivity tab={kind as RegistryTab} /> : (<>
         <div className="row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
           <input className="input sm" style={{ maxWidth: 320 }} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setSearch(q.trim())} placeholder="Search programs, paths, volume labels" aria-label="Search" />
           <Button size="sm" icon={<Search size={13} />} onClick={() => setSearch(q.trim())}>Search</Button>
@@ -61,7 +73,7 @@ export function ActivityPage() {
         {loading && !data ? (
           <Loading />
         ) : !data?.data.length ? (
-          <Empty title="No records" text={search ? 'Nothing matches this search.' : EMPTY[kind]} />
+          <Empty title="No records" text={search ? 'Nothing matches this search.' : EMPTY[kind as FileKind]} />
         ) : kind === 'PROGRAM_RUN' ? (
           <Programs rows={data.data} />
         ) : kind === 'RECENT_FILE' ? (
@@ -70,6 +82,7 @@ export function ActivityPage() {
           <RecycleBin rows={data.data} />
         )}
         {data && <Pager skip={skip} limit={LIMIT} total={data.total} onChange={setSkip} />}
+        </>)}
       </Card>
       <p className="small muted" style={{ margin: 0 }}>
         Times come from Windows' own records. Prefetch is written about ten seconds after a program starts; a shortcut's

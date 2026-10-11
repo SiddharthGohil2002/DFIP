@@ -31,3 +31,6 @@ libluksde-python==20260902
 # Content search: user regular expressions (RE2, linear time) and safe XML parsing of Office/OpenDocument files
 google-re2==1.1.20251105
 defusedxml==0.7.1
+# Shell items (ShellBags) for regipy, libyal
+libfwsi-python==20260522
+libfwps-python==20260522

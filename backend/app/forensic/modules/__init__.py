@@ -22,19 +22,20 @@ from .found import FoundDataModule
 from .fs_index import FsIndexModule
 from .hash_match import HashMatchModule
 from .members import MembersModule
+from .registry import RegistryModule
 from .tz_probe import TzProbeModule
 from .unallocated import UnallocatedModule
 from .yara_scan import YaraModule
 
-MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), FileProcModule(),
+MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), RegistryModule(), FileProcModule(),
                          MembersModule(), HashMatchModule(), YaraModule(), ContentModule(), UnallocatedModule(), FoundDataModule()]
 REGISTRY: dict[str, Module] = {m.name: m for m in MODULES}
 ORDER = [m.name for m in MODULES]
 
 PROFILES = {
-    'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts'],
-    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'hash_match', 'yara'],
-    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
+    'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry'],
+    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara'],
+    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
              'unallocated', 'found_data'],
 }
 DEFAULT_PROFILE = 'standard'

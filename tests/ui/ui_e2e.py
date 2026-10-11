@@ -248,6 +248,25 @@ with sync_playwright() as p:
     expect(page.locator('main table tbody tr').first.get_by_text('alice', exact=True)).to_be_visible()  # SID resolved to the user
     shot(page, '11c-recycle-bin')
 
+    step['v'] = 'registry activity'
+    page.get_by_role('tab', name='Execution evidence').click()
+    sd = page.locator('main table tbody tr', has_text='SecureDelete.exe').first
+    for source in ('Prefetch', 'UserAssist', 'BAM', 'Amcache', 'ShimCache'):
+        expect(sd.get_by_text(source, exact=True)).to_be_visible()
+    sd.get_by_role('button', name='Traces of SecureDelete.exe').click()
+    expect(page.get_by_text('c:\\users\\alice\\downloads\\securedelete.exe', exact=True)).to_be_visible()  # the Amcache path
+    shot(page, '11d-execution-evidence')
+    page.get_by_role('tab', name='Folders browsed').click()
+    expect(page.locator('main table tbody tr', has_text='E:\\Exports')).to_have_count(1)
+    page.get_by_role('tab', name='Searches and typed paths').click()
+    expect(page.get_by_text('payroll', exact=True)).to_be_visible()
+    page.get_by_role('tab', name='Persistence').click()
+    sethc = page.locator('main table tbody tr', has_text='sethc.exe')
+    expect(sethc.get_by_text('a debugger set for a program runs instead of it', exact=False)).to_be_visible()
+    page.get_by_label('Only entries that stand out').check()
+    expect(page.locator('main table tbody tr', has_text='Spooler')).to_have_count(0)
+    shot(page, '11e-persistence')
+
     step['v'] = 'indicators'
     page.get_by_role('link', name='Indicators').first.click()
     expect(page.get_by_text('Suspicious_PowerShell_EncodedCommand')).to_be_visible()

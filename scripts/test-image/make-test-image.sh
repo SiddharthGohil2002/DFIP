@@ -30,6 +30,9 @@ python3 scripts/test-image/make_artifacts.py "$TREE"
 # Give files distinct, known modification times (always stated in UTC) so the timeline is meaningful.
 stamp() { touch -d "$1 UTC" "$TREE/$2"; }
 for hive in SYSTEM SOFTWARE SAM; do stamp '2026-09-01 18:42:10' "Windows/System32/config/$hive"; done  # last shutdown
+stamp '2026-09-01 18:42:08' 'Users/alice/NTUSER.DAT'                                   # written at logoff
+stamp '2026-09-01 18:42:08' 'Users/alice/AppData/Local/Microsoft/Windows/UsrClass.dat'
+stamp '2026-09-01 10:06:04' 'Windows/AppCompat/Programs/Amcache.hve'
 stamp '2026-09-01 14:12:46' 'Windows/INF/setupapi.dev.log'
 stamp '2026-08-28 16:04:10' 'Users/alice/Documents/project-notes.txt'
 stamp '2026-09-01 09:41:02' 'Users/alice/Documents/payroll-export.csv'

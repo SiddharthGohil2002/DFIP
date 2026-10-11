@@ -166,6 +166,12 @@ export interface CaseCounts {
   recent_files: number;
   recycle_bin_items: number;
   user_accounts?: number;
+  programs_executed?: number;
+  folders_browsed?: number;
+  user_searches?: number;
+  persistence_entries?: number;
+  persistence_flagged?: number;
+  installed_programs?: number;
   renamed_files?: number;
   encrypted_files?: number;
   known_bad_files?: number;

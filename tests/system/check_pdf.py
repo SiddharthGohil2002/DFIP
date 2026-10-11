@@ -16,7 +16,8 @@ import re
 # Section titles in order; the numbers are checked to run 1, 2, 3, ... rather than listed, so adding a section
 # does not need every later number edited here.
 titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer and users', 'Deleted files', 'Recovered files',
-          'USB device history', 'Browser history', 'Browser downloads', 'Windows activity', 'Malware indicators',
+          'USB device history', 'Browser history', 'Browser downloads', 'Windows activity', 'Execution evidence', 'Folders browsed',
+          'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives', 'Malware indicators',
           'Hash set matches', 'Renamed and encrypted files', 'Found data',
           'Investigator findings', 'Tagged evidence', 'Timeline of notable events', 'Audit trail integrity']
 found = [(int(m.group(1)), m.group(2)) for m in re.finditer(r'^\s*(\d+)\. (' + '|'.join(map(re.escape, titles)) + r')', a, re.M)]
@@ -34,6 +35,9 @@ check('USB serials listed', 'AA951D0000007252' in flat and '4C530001230518109141
 check('browser visits and downloads listed', all(x in flat for x in ('filetransfer.example.net', 'pastebin.example.com', 'SecureDelete.exe', 'archiver.zip')))
 check('YARA hit on cleanup.ps1 listed', 'cleanup.ps1' in flat)
 check('hash set matches listed: the payroll copies as notable', 'Payroll exports' in flat and 'holiday.jpg' in flat)
+check('registry activity listed: execution evidence, folders, searches, flagged persistence, programs, remote desktop',
+      all(x in flat for x in ('SecureDelete.exe', 'UserAssist', 'ShimCache', '23854be75a', 'E:\\Exports', 'usb wipe', 'sethc.exe',
+                              'SecureDelete 1.4', 'fileserver.corp.example')))
 check('found data listed, the card number masked and never in full',
       all(x in flat for x in ('zoe.martin@example.org', 'GB82 WEST 1234 5698 7654 32', '1111')) and '4111 1111 1111 1111' not in flat
       and '4111111111111111' not in flat.replace(' ', ''))

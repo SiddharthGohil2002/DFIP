@@ -170,7 +170,8 @@ button { font: inherit; }
 .table .cell-source { min-width: 140px; max-width: 240px; overflow-wrap: anywhere; }
 
 /* ---------- tabs ---------- */
-.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); padding: 0 6px; }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); padding: 0 6px; overflow-x: auto; scrollbar-width: thin; }
+.tabs .tab { flex: none; white-space: nowrap; }
 .tab {
   display: inline-flex; align-items: center; gap: 7px; padding: 10px 12px; margin-bottom: -1px;
   border: none; border-bottom: 2px solid transparent; background: none; color: var(--muted);
