@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Monitor, Bookmark, Clock, FileText, FileX, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen,
+  Activity, BarChart3, Monitor, Bookmark, Clock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen,
   Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
@@ -52,9 +52,10 @@ export const NAV: NavGroup[] = [
     title: 'Analysis',
     items: [
       {
-        to: '/app/files', label: 'Deleted files', icon: FileX, tone: 'red',
-        description: 'Browse the Sleuth Kit file index and recover deleted files with icat.',
-        count: (c) => c.deleted_files, countLabel: (c) => `${n(c.files)} files indexed · ${n(c.recovered_files)} recovered`,
+        to: '/app/files', label: 'Files', icon: FileX, tone: 'red',
+        description: 'Every file with its hashes and real type, renamed and encrypted files, and deleted files recovered with icat.',
+        count: (c) => c.files,
+        countLabel: (c) => `${n(c.deleted_files)} deleted · ${n(c.recovered_files)} recovered · ${n((c.renamed_files ?? 0) + (c.encrypted_files ?? 0))} renamed or encrypted`,
       },
       {
         to: '/app/timeline', label: 'Timeline', icon: Clock,
@@ -84,9 +85,10 @@ export const NAV: NavGroup[] = [
       },
       {
         to: '/app/indicators', label: 'Indicators', icon: ShieldAlert, tone: 'red',
-        description: 'YARA matches, activity patterns and statistical anomalies.',
-        count: (c) => c.malware_indicators + c.patterns, alert: (c) => c.malware_indicators > 0,
-        countLabel: (c) => `${n(c.malware_indicators)} YARA · ${n(c.patterns)} patterns · ${n(c.anomalies_flagged)} anomalies`,
+        description: 'YARA matches, hash-set matches, renamed and encrypted files, activity patterns and statistical anomalies.',
+        count: (c) => c.malware_indicators + (c.known_bad_files ?? 0) + (c.notable_files ?? 0) + c.patterns,
+        alert: (c) => c.malware_indicators > 0 || (c.known_bad_files ?? 0) > 0,
+        countLabel: (c) => `${n(c.malware_indicators)} YARA · ${n(c.known_bad_files ?? 0)} known bad · ${n(c.notable_files ?? 0)} notable · ${n(c.patterns)} patterns`,
       },
       {
         to: '/app/carving', label: 'File carving', icon: Layers,
@@ -129,6 +131,7 @@ export const NAV: NavGroup[] = [
     items: [
       { to: '/app/admin/users', label: 'Users', icon: Users, permission: 'USER_MANAGE', noTile: true },
       { to: '/app/admin/audit', label: 'Audit log', icon: ListChecks, permission: 'AUDIT_READ', noTile: true },
+      { to: '/app/admin/hashsets', label: 'Hash sets', icon: Fingerprint, permission: 'HASHSET_MANAGE', noTile: true },
       { to: '/app/admin/system', label: 'System & tools', icon: Wrench, noTile: true },
     ],
   },

@@ -94,11 +94,19 @@ def istat(eid:str,inode:str,offset:int=0,u=Depends(require_write('ANALYSIS_RUN')
     return serial(inode_stat(tsk_image(e),inode,offset))
 
 @r.get('/evidence/{eid}/files')
-def files(eid:str,deleted:bool|None=None,q:str|None=None,offset:int|None=None,volume_id:str|None=None,skip:int=0,limit:int=200,u=Depends(current_user)):
-    """Filesystem index built by the analysis pipeline (Sleuth Kit fls)."""
+def files(eid:str,deleted:bool|None=None,q:str|None=None,offset:int|None=None,volume_id:str|None=None,category:str|None=None,
+          renamed:bool|None=None,encrypted:bool|None=None,hash_status:str|None=None,hide_known:bool=False,sha256:str|None=None,
+          skip:int=0,limit:int=200,u=Depends(current_user)):
+    """Filesystem index built by the analysis pipeline (Sleuth Kit fls), with each file's hashes, type and flags."""
     e=auth_evidence(eid,u)
     query={'evidence_id':e['evidence_id'],'is_virtual':False}
     if deleted is not None: query['deleted']=deleted
+    if category: query['file_category']=category
+    if renamed is not None: query['ext_mismatch']=True if renamed else {'$ne':True}
+    if encrypted is not None: query['encryption']={'$ne':None,'$exists':True} if encrypted else {'$in':[None]}
+    if hash_status: query['hash_status']=hash_status
+    if hide_known: query['hash_status']={'$ne':'KNOWN_GOOD'} if not hash_status else hash_status
+    if sha256: query['sha256']=sha256.strip().lower()
     if volume_id is not None: offset=_volume_offset(0,volume_id)
     if offset is not None: query['partition_offset']=offset
     if q: query['path']={'$regex':re.escape(q),'$options':'i'}
@@ -107,6 +115,47 @@ def files(eid:str,deleted:bool|None=None,q:str|None=None,offset:int|None=None,vo
     rows=[serial(dict(x,_id=str(x['_id']))) for x in col.find(query).sort([('deleted',-1),('path',1)]).skip(max(0,skip)).limit(limit)]
     return {'data':rows,'total':col.count_documents(query),'skip':skip,'limit':limit,
             'analysis_status':e.get('analysis_status'),'summary':e.get('analysis_summary')}
+
+_HASH_FIELD={32:'md5',40:'sha1',64:'sha256'}
+
+
+def _hash_query(term:str):
+    """{field: digest} when the term is an MD5, SHA-1 or SHA-256 in hex, else None."""
+    t=term.strip().lower()
+    return {_HASH_FIELD[len(t)]:t} if len(t) in _HASH_FIELD and re.fullmatch(r'[0-9a-f]+',t) else None
+
+
+@r.get('/hash')
+def hash_occurrences(case_id:str,digest:str,u=Depends(current_user)):
+    """Every file in the case with this content (MD5, SHA-1 or SHA-256), in the file index and among recovered and carved files."""
+    if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
+    hq=_hash_query(digest)
+    if not hq: raise HTTPException(400,'Give an MD5, SHA-1 or SHA-256 in hexadecimal')
+    db=get_db()
+    eids=[x['evidence_id'] for x in db['evidence'].find({'case_id':case_id},{'evidence_id':1})]
+    files=[serial(dict(x,_id=str(x['_id']))) for x in db['fs_entries'].find({'evidence_id':{'$in':eids},**hq},
+           {'path':1,'evidence_id':1,'inode':1,'volume_id':1,'partition_offset':1,'deleted':1,'size':1,'md5':1,'sha1':1,'sha256':1}).limit(500)]
+    arts=[] if 'sha256' not in hq else [serial(dict(x,_id=str(x['_id']))) for x in db['forensic_artifacts'].find(
+           {'case_id':case_id,'sha256':hq['sha256'],'type':{'$in':['RECOVERED_FILE','CARVED_FILE','EXTRACTED_FILE']}},
+           {'artifact_id':1,'type':1,'filename':1,'original_path':1,'evidence_id':1,'size':1}).limit(500)]
+    return {'digest':digest.lower(),'algorithm':next(iter(hq)),'files':files,'artifacts':arts}
+
+
+FLAG_QUERIES={'renamed':{'ext_mismatch':True},'encrypted':{'encryption':{'$ne':None,'$exists':True}},
+              'known_bad':{'hash_status':'KNOWN_BAD'},'notable':{'hash_status':'NOTABLE'}}
+
+
+@r.get('/flagged')
+def flagged(case_id:str,kind:str,limit:int=500,u=Depends(current_user)):
+    """Files of the case flagged as renamed (content does not match the name), encrypted, known-bad or notable."""
+    if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
+    if kind not in FLAG_QUERIES: raise HTTPException(400,f'kind must be one of {", ".join(FLAG_QUERIES)}')
+    db=get_db()
+    eids=[x['evidence_id'] for x in db['evidence'].find({'case_id':case_id},{'evidence_id':1})]
+    q={'evidence_id':{'$in':eids},'is_virtual':False,**FLAG_QUERIES[kind]}
+    rows=[serial(dict(x,_id=str(x['_id']))) for x in db['fs_entries'].find(q).sort('path',1).limit(max(1,min(limit,2000)))]
+    return {'data':rows,'total':db['fs_entries'].count_documents(q)}
+
 
 @r.post('/evidence/{eid}/recover')
 def recover(eid:str,inode:str,offset:int=0,volume_id:str|None=None,u=Depends(require_write('ANALYSIS_RUN'))):
@@ -314,7 +363,8 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
     db=get_db(); rx={'$regex':re.escape(term),'$options':'i'}; limit=max(1,min(limit,200))
     eids=[e['evidence_id'] for e in db['evidence'].find({'case_id':case_id},{'evidence_id':1})]
     queries={
-        'files':('fs_entries',{'evidence_id':{'$in':eids},'is_virtual':False,'path':rx},[('deleted',-1),('path',1)]),
+        'files':('fs_entries',{'evidence_id':{'$in':eids},'is_virtual':False,**({'$or':[{'path':rx},_hash_query(term)]} if _hash_query(term) else {'path':rx})},
+                 [('deleted',-1),('path',1)]),
         'timeline':('timeline_events',{'case_id':case_id,'description':rx},[('timestamp',1)]),
         'browser':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['BROWSER_HISTORY','BROWSER_DOWNLOAD']},
                    '$or':[{'url':rx},{'title':rx},{'target_path':rx},{'tab_url':rx}]},[('timestamp',-1)]),

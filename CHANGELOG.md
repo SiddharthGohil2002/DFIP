@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added — file hashes, types, encryption and hash sets
+- **Every file is hashed and typed** (new `fileproc` analysis module, standard profile): MD5, SHA-1 and SHA-256 of every file in the index, deleted ones included (as their content is on the disk now), its real type from its content (libmagic), a category, entropy, and encryption. One in-process read per file.
+- **Renamed files**: a file whose content contradicts its name is flagged with what the name suggests (for example the payroll CSV renamed `holiday.jpg`: "JPEG image").
+- **Encrypted files and volumes**: password-protected ZIPs (AES and ZipCrypto), encrypted Office documents (new and 97-2003 formats), encrypted PDFs, and headerless high-entropy files that look like encrypted containers (VeraCrypt); BitLocker (including To Go) and LUKS volumes are recognised and reported as needing their key.
+- **Hash sets** (new Administration → Hash sets page, `HASHSET_MANAGE`): import known-good, known-bad and notable sets from a plain list, a CSV or the NIST NSRL RDS v3 SQLite, uploaded or placed on the server for large sets. Each set is stored in its own SQLite lookup file, not in MongoDB. Every analysed evidence item is re-matched when a set is imported or deleted (new `hash_match` module). Known-good files are hidden by default; known-bad and notable files are indicators, and a known-bad match notifies the case's investigator.
+- **Files page** (renamed from Deleted files): Type column, Renamed / Encrypted / hash-set badges, filters (type, flag, hide known-good files) and a details dialog with all hashes, type, entropy, encryption, hash sets and every other place in the case with the same content (`GET /api/forensics/hash`). Keyword search accepts a hash.
+- **Indicators**: Hash set matches, and Renamed and encrypted files. Report sections "Hash set matches" and "Renamed and encrypted files"; overview counts and the case desktop show them.
+- **YARA now uses yara-python in-process** and picks programs, scripts, documents and archives anywhere on the disk by their real type (was: scripts and executables under user profiles, by extension), deleted files included.
+- Test disk: the renamed payroll copy, an AES-encrypted ZIP, a password-protected Word document, a random-data container and the EICAR test file.
+
+### Fixed — found while testing file processing
+- Plain-text and CSV hash-set imports failed as soon as progress was reported (a text file's position can't be read while iterating over it).
+- INI-style text (libmagic's `application/x-wine-extension-ini`, such as `setupapi.dev.log`) counts as text, not as a renamed file.
+- The Reports page lists the report's current sections.
+
 ### Added — time zone, computer and users
 - **The computer's time zone is read from the SYSTEM hive** before the file system is indexed (Windows zone name mapped to IANA with Unicode CLDR; a custom zone is used exactly as the hive's own daylight-saving rules). FAT file times, which Windows stores in local time, are now converted to true UTC (`fls -z`), daylight saving applied per date; access times on FAT are flagged as date-only. `setupapi.dev.log` uses the same rule (it used one fixed offset before). Fixes the documented limitation that FAT times were local time shown as UTC.
 - **Set the time zone by hand** on the evidence page (with a reason, audited): the file system index and what is built on it are re-run; tags follow their items. `PUT /api/evidence/{id}/time-zone`.

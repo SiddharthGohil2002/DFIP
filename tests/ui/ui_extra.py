@@ -2,7 +2,7 @@
 switching, top-bar search, user administration, password change, bad sessions and narrow windows.
 Runs against a DFIP stack at http://host.docker.internal; it first creates and analyses its own case
 from the test image mounted at /img."""
-import json, sys, time, urllib.error, urllib.request, uuid
+import hashlib, json, sys, time, urllib.error, urllib.request, uuid
 from playwright.sync_api import sync_playwright, expect
 
 BASE = 'http://host.docker.internal'
@@ -182,6 +182,34 @@ with sync_playwright() as p:
     sign_in(page, email, 'Changed-Password-88')
     expect(page.locator('.topbar')).to_be_visible()
     check('new password works', True)
+    ctx.close()
+
+    print('== hash sets (administrator)')
+    ctx = b.new_context(viewport={'width': 1440, 'height': 900})
+    page = ctx.new_page()
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    sign_in(page, 'admin@dfip.local')
+    expect(page.get_by_text('Investigation functions').or_(page.get_by_text('No case selected'))).to_be_visible()
+    page.locator('a.nav-link[href$="/admin/hashsets"]').click()
+    expect(page.get_by_role('heading', name='Hash sets', exact=True)).to_be_visible()
+    set_name = f'UI test notable {uuid.uuid4().hex[:4]}'
+    payroll = ('employee,iban,salary\n' + ''.join(f'emp{i:03d},DE89370400440532013{i:03d},{50000 + i * 1000}\n' for i in range(60))).encode()
+    page.get_by_role('button', name='Import a hash set').click()
+    d = page.get_by_role('dialog')
+    d.locator('input[type=file]').set_input_files({'name': 'notable.txt', 'mimeType': 'text/plain',
+                                                    'buffer': (hashlib.sha256(payroll).hexdigest() + '  payroll-export.csv\n').encode()})
+    d.get_by_label('Name').fill(set_name)
+    d.get_by_label('Kind').select_option('NOTABLE')
+    d.get_by_role('button', name='Import').click()
+    row = page.locator('tbody tr', has_text=set_name)
+    expect(row.get_by_text('READY')).to_be_visible(timeout=60000)
+    expect(row.get_by_text('1 SHA256')).to_be_visible()
+    check('an administrator imports a hash set and sees it ready with its counts', True)
+    page.screenshot(path=f'{OUT}/x4-hash-sets.png', full_page=True)
+    row.get_by_role('button', name=f'Delete {set_name}').click()
+    page.get_by_role('dialog').get_by_role('button', name='Delete set').click()
+    expect(page.locator('tbody tr', has_text=set_name)).to_have_count(0)
+    check('...and deletes it', True)
     ctx.close()
 
     print('== narrower windows')

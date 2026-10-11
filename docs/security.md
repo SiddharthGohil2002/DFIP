@@ -21,6 +21,8 @@
 - Deleting evidence needs `EVIDENCE_DELETE` (administrators and investigators) and a reason, is refused while an analysis of the image runs, and is recorded in the chain of custody and the audit log; the item's history is kept.
 - A case under legal hold (`LEGAL_HOLD_MANAGE`, administrators and investigators; a reason is required to place and to release it) blocks evidence deletion for everyone, administrators included (HTTP 423). Case edits and offline sync cannot change the hold.
 - Tags need `FINDING_CREATE` and case access; adding, changing and removing them is audited.
+- Hash sets are imported and deleted only with `HASHSET_MANAGE` (administrators); both are audited (`HASHSET_IMPORTED` with the source's SHA-256, `HASHSET_DELETED`). Server-side imports take a plain file name in `storage/hashsets/incoming` (no folders, no hidden files, no symbolic links). Every user can see which sets exist.
+- File processing reads evidence files in-process and never executes them or opens them with their own application: types come from libmagic, Office containers are parsed with olefile, ZIPs only have their central directory read, and YARA scans the bytes with a timeout per file. Encrypted files are flagged, never decrypted.
 - File content shown in the viewer is read without writing a copy, typed from its first bytes (never from the name), never rendered as HTML, and served with `nosniff`, `attachment` and a sandbox CSP; each view is audited as `FILE_CONTENT_VIEWED`.
 
 For production, add TLS, encrypted storage, secrets management, network segmentation, MFA/SSO, rate limiting at the edge, malware sandboxing, SIEM integration, backups, retention controls and periodic security assessment.

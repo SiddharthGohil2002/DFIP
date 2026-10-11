@@ -22,3 +22,9 @@ liblnk-python==20260525
 pytsk3==20260715
 # Independent registry reader (libyal), used by the system tests as ground truth next to regipy
 libregf-python==20260526
+# File types from content (libmagic), YARA in-process, Office containers, encrypted volume signatures (libyal)
+python-magic==0.4.27
+yara-python==4.5.4
+olefile==0.47
+libbde-python==20260916
+libluksde-python==20260902

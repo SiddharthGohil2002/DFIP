@@ -231,8 +231,26 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
 
     malware = list(db['forensic_artifacts'].find({'case_id': cid, 'type': 'MALWARE_INDICATOR'}))
     _section(story, T('Malware indicators (YARA)'), ['Evidence', 'Rule', 'File'],
-             [[m.get('evidence_id'), m.get('rule'), m.get('original_path')] for m in malware],
-             [1, 2.5, 4], 'No YARA rule matches in scanned user-profile scripts and executables.')
+             [[m.get('evidence_id'), m.get('rule'), (m.get('original_path') or m.get('path') or '') + (' (deleted)' if m.get('deleted') else '')]
+              for m in malware],
+             [1, 2.5, 4], 'No YARA rule matches in the executables, scripts, documents and archives scanned.')
+
+    sets_q = {'evidence_id': {'$in': eids}, 'hash_status': {'$in': ['KNOWN_BAD', 'NOTABLE']}}
+    in_sets = list(db['fs_entries'].find(sets_q).sort([('hash_status', 1), ('path', 1)]).limit(MAX_ROWS))
+    _section(story, T('Hash set matches'), ['Evidence', 'Status', 'File', 'SHA-256', 'Hash sets'],
+             [[f['evidence_id'], (f.get('hash_status') or '').replace('_', ' ').capitalize(),
+               f['path'] + (' (deleted)' if f.get('deleted') else ''), f.get('sha256'),
+               ', '.join(m['name'] for m in f.get('hash_sets') or [])] for f in in_sets],
+             [0.9, 0.9, 2.2, 2.2, 1.4], 'No file matches a known-bad or notable hash set (or no hash sets are imported).',
+             mono_cols=(3,), total=db['fs_entries'].count_documents(sets_q))
+
+    flag_q = {'evidence_id': {'$in': eids}, '$or': [{'ext_mismatch': True}, {'encryption': {'$ne': None, '$exists': True}}]}
+    flagged = list(db['fs_entries'].find(flag_q).sort('path', 1).limit(MAX_ROWS))
+    _section(story, T('Renamed and encrypted files'), ['Evidence', 'File', 'Content', 'Name suggests', 'Encryption'],
+             [[f['evidence_id'], f['path'] + (' (deleted)' if f.get('deleted') else ''), f.get('mime'), f.get('expected_type'),
+               (f.get('encryption') or {}).get('detail')] for f in flagged],
+             [0.8, 2.6, 1.3, 1.1, 1.8], 'No file whose content contradicts its name, and no encrypted file, was found.',
+             total=db['fs_entries'].count_documents(flag_q))
 
     story.append(Paragraph(T('Investigator findings'), H2))
     findings = list(db['findings'].find({'case_id': cid}).sort('created_at', 1))

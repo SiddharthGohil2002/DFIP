@@ -120,7 +120,7 @@ with sync_playwright() as p:
     shot(page, '06d-computer-and-users')
 
     step['v'] = 'deleted files'
-    page.get_by_role('link', name='Deleted files').first.click()
+    page.locator('a.nav-link[href$="/app/files"]').click()
     expect(page.get_by_text('/Users/alice/Documents/payroll-export.csv')).to_be_visible()
     page.get_by_role('button', name='Recover').first.click()
     expect(page.get_by_role('button', name='Download').first).to_be_visible()
@@ -155,6 +155,29 @@ with sync_playwright() as p:
         expect(page.get_by_role('dialog').locator(media)).to_have_count(1)
         shot(page, f'07c-preview-{name}')
         page.keyboard.press('Escape')
+
+    step['v'] = 'file hashes and types'
+    page.get_by_placeholder('Filter by path, e.g. payroll or .docx').fill('holiday')
+    page.get_by_role('button', name='Filter').click()
+    row = page.locator('main table tbody tr', has_text='holiday.jpg')
+    expect(row.get_by_text('RENAMED', exact=True)).to_be_visible()
+    expect(row.get_by_text('text/csv')).to_be_visible()
+    row.get_by_role('button', name='Details of /Users/alice/Pictures/holiday.jpg').click()
+    dialog = page.get_by_role('dialog')
+    expect(dialog.get_by_text('The name suggests JPEG image')).to_be_visible()
+    holiday = api_get(page, f'/forensics/evidence/{eid}/files?q=holiday.jpg')['data'][0]
+    expect(dialog.get_by_text(holiday['sha256'])).to_be_visible()
+    # The same content elsewhere: the deleted original and the Recycle Bin copy.
+    expect(dialog.get_by_text('/Users/alice/Documents/payroll-export.csv').first).to_be_visible()
+    expect(dialog.get_by_text('$R3K9D2A.csv').first).to_be_visible()
+    shot(page, '07d-file-details')
+    page.keyboard.press('Escape')
+    page.get_by_role('button', name='Clear').click()
+    page.get_by_label('Flag').select_option('encrypted')
+    for name in ('private.zip', 'salary-review.docx', 'vault.dat'):
+        expect(page.locator('main table tbody tr', has_text=name).get_by_text('ENCRYPTED', exact=True)).to_be_visible()
+    expect(page.locator('main table tbody tr')).to_have_count(3)
+    shot(page, '07e-encrypted-files')
 
     step['v'] = 'timeline'
     page.get_by_role('link', name='Timeline').first.click()
@@ -211,6 +234,9 @@ with sync_playwright() as p:
     step['v'] = 'indicators'
     page.get_by_role('link', name='Indicators').first.click()
     expect(page.get_by_text('Suspicious_PowerShell_EncodedCommand')).to_be_visible()
+    flagged = page.locator('.card', has=page.get_by_role('heading', name='Renamed and encrypted files'))
+    expect(flagged.get_by_text('the name suggests JPEG image')).to_be_visible()
+    expect(flagged.locator('tbody tr')).to_have_count(5)  # 2 renamed + 3 encrypted
     shot(page, '12-indicators')
 
     step['v'] = 'search'

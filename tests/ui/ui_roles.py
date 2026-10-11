@@ -3,7 +3,7 @@ from playwright.sync_api import sync_playwright, expect
 
 BASE = 'http://host.docker.internal'
 PAGES = ['', 'cases', 'evidence', 'files', 'timeline', 'browser', 'usb', 'indicators', 'carving', 'search', 'findings',
-         'reports', 'custody', 'admin/users', 'admin/audit', 'admin/system']
+         'reports', 'custody', 'admin/users', 'admin/audit', 'admin/system', 'admin/hashsets']
 problems = []
 
 with sync_playwright() as p:
@@ -32,7 +32,7 @@ with sync_playwright() as p:
             for label in ['New case', 'Add evidence', 'Generate report', 'Re-run', 'Analyze']:
                 if page.get_by_role('button', name=label).count():
                     problems.append(f'[viewer] write action visible: {label}')
-            if 'Users' in nav or 'Audit log' in nav:
+            if 'Users' in nav or 'Audit log' in nav or 'Hash sets' in nav:
                 problems.append('[viewer] admin nav visible')
         if role in ('viewer', 'analyst'):
             page.goto(BASE + '/app/evidence')

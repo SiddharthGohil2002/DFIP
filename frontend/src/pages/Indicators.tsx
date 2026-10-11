@@ -1,12 +1,14 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { post } from '../lib/api';
 import { humanize, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
-import type { Artifact } from '../lib/types';
-import { Badge, Button, Card, Empty, Loading, PageHeader, StatusBadge, useToast } from '../ui';
+import type { Artifact, FsEntry } from '../lib/types';
+import { Badge, Button, Card, Empty, Hash, Loading, PageHeader, StatusBadge, useToast } from '../ui';
+import { FileDetails, HASH_KIND } from './Files';
 
 export function IndicatorsPage() {
   const { caseId, reloadOverview } = useCase();
@@ -17,7 +19,14 @@ export function IndicatorsPage() {
   const yara = useApi<{ data: Artifact[] }>(`/forensics/artifacts?case_id=${enc}&artifact_type=MALWARE_INDICATOR`);
   const patterns = useApi<{ data: any[] }>(`/forensics/patterns?case_id=${enc}`);
   const anomalies = useApi<{ data: any[] }>(`/forensics/anomalies?case_id=${enc}`);
+  const hashHits = useApi<{ data: Artifact[] }>(`/forensics/artifacts?case_id=${enc}&artifact_type=HASH_SET_MATCH&limit=500`);
+  const renamed = useApi<{ data: FsEntry[]; total: number }>(`/forensics/flagged?case_id=${enc}&kind=renamed&limit=200`);
+  const encrypted = useApi<{ data: FsEntry[]; total: number }>(`/forensics/flagged?case_id=${enc}&kind=encrypted&limit=200`);
   const [busy, setBusy] = useState('');
+  const [details, setDetails] = useState<FsEntry | null>(null);
+  const hits = [...(hashHits.data?.data || [])].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'KNOWN_BAD' ? -1 : 1));
+  const flagged = [...(renamed.data?.data || []), ...(encrypted.data?.data || []).filter((e) => !e.ext_mismatch)]
+    .sort((a, b) => a.path.localeCompare(b.path));
 
   async function recompute(kind: 'patterns' | 'anomalies') {
     setBusy(kind);
@@ -40,10 +49,64 @@ export function IndicatorsPage() {
     <div className="stack">
       <PageHeader
         title="Indicators"
-        subtitle="Leads for the investigator to review, not conclusions: YARA signature matches in user-profile scripts and executables, rule-based activity patterns, and statistically unusual events."
+        subtitle="Leads for the investigator to review, not conclusions: YARA signature matches, files in known-bad or notable hash sets, files whose name hides what they are or whose content is encrypted, rule-based activity patterns, and statistically unusual events."
       />
 
-      <Card title="Malware signature matches (YARA)" subtitle="Scripts and executables under user profiles are extracted and scanned with the server's YARA rules during analysis." flush>
+      <Card title="Hash set matches" subtitle="Files whose MD5, SHA-1 or SHA-256 is in a known-bad or notable hash set (Administration → Hash sets). Every copy is listed, deleted ones too." flush>
+        {hashHits.loading && !hashHits.data ? <Loading /> : !hits.length ? (
+          <Empty title="No hash set matches" text="No file is in a known-bad or notable hash set, or no such set has been imported." />
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Status</th><th>File in image</th><th>SHA-256</th><th>Hash sets</th><th>Evidence</th></tr></thead>
+              <tbody>
+                {hits.map((h) => (
+                  <tr key={h._id}>
+                    <td><Badge tone={HASH_KIND[h.kind as keyof typeof HASH_KIND]?.tone}>{HASH_KIND[h.kind as keyof typeof HASH_KIND]?.label.toUpperCase()}</Badge></td>
+                    <td className="cell-path mono small">{h.original_path}{h.deleted && <div><Badge tone="danger">DELETED</Badge></div>}</td>
+                    <td><Hash value={h.sha256} short={16} /></td>
+                    <td className="small">{(h.sets || []).map((x: any) => x.name).join(', ')}</td>
+                    <td className="mono small">{h.evidence_id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card
+        title="Renamed and encrypted files"
+        subtitle="Files whose content contradicts their name (for example a CSV named holiday.jpg), and files that are encrypted or look like an encrypted container. Found from the content, not the name."
+        actions={<Link className="btn sm" to="/app/files?flag=renamed">Open in Files</Link>}
+        flush
+      >
+        {(renamed.loading && !renamed.data) || (encrypted.loading && !encrypted.data) ? <Loading /> : !flagged.length ? (
+          <Empty title="Nothing hidden or encrypted" text="No file's content contradicts its name and no encrypted file was recognised." />
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>File in image</th><th>Content</th><th>Finding</th><th /></tr></thead>
+              <tbody>
+                {flagged.map((f) => (
+                  <tr key={f._id} className={f.deleted ? 'is-deleted' : ''}>
+                    <td className="cell-path mono small">{f.path}<div className="tiny muted">{f.evidence_id}</div></td>
+                    <td className="small mono">{f.mime}</td>
+                    <td className="small">
+                      {f.ext_mismatch && <div><Badge tone="warn">RENAMED</Badge> the name suggests {f.expected_type}</div>}
+                      {f.encryption && <div><Badge tone="warn">ENCRYPTED</Badge> {f.encryption.detail}</div>}
+                    </td>
+                    <td className="right"><Button size="sm" variant="ghost" onClick={() => setDetails(f)} aria-label={`Details of ${f.path}`}>Details</Button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      <FileDetails caseId={caseId} file={details} onClose={() => setDetails(null)} />
+
+      <Card title="Malware signature matches (YARA)" subtitle="Programs, scripts, documents and archives anywhere on the disk, chosen by their real type, are scanned with the server's YARA rules during analysis." flush>
         {yara.loading && !yara.data ? <Loading /> : !yara.data?.data.length ? (
           <Empty title="No YARA matches" text="No scanned file matched the rule set." />
         ) : (
@@ -53,7 +116,7 @@ export function IndicatorsPage() {
               {yara.data.data.map((m) => (
                 <tr key={m._id}>
                   <td><Badge tone="danger">{m.rule}</Badge></td>
-                  <td className="cell-path mono small">{m.original_path}</td>
+                  <td className="cell-path mono small">{m.original_path}{m.deleted && <div><Badge tone="danger">DELETED</Badge></div>}</td>
                   <td className="mono small">{m.inode}</td>
                   <td className="mono small">{m.evidence_id}</td>
                 </tr>

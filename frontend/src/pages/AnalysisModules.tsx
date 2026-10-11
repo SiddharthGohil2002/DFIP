@@ -100,6 +100,11 @@ const COUNT_LABELS: [string, string, string][] = [
   ['browser_history', 'browser visit', 'browser visits'], ['browser_downloads', 'download', 'downloads'],
   ['usb_devices', 'USB device', 'USB devices'], ['programs_run', 'program run', 'programs run'],
   ['recent_files', 'recently opened file', 'recently opened files'], ['recycle_bin_items', 'Recycle Bin item', 'Recycle Bin items'],
+  ['files_hashed', 'file hashed', 'files hashed'], ['files_unreadable', 'unreadable file', 'unreadable files'],
+  ['renamed_files', 'renamed file', 'renamed files'], ['encrypted_files', 'encrypted file', 'encrypted files'],
+  ['encrypted_volumes', 'encrypted volume', 'encrypted volumes'],
+  ['known_bad_files', 'known-bad file', 'known-bad files'], ['notable_files', 'notable file', 'notable files'],
+  ['known_good_files', 'known-good file', 'known-good files'],
   ['files_scanned', 'file scanned', 'files scanned'], ['yara_matches', 'YARA match', 'YARA matches'],
   ['timeline_events', 'timeline event', 'timeline events'],
 ];

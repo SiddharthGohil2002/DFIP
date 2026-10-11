@@ -13,6 +13,7 @@ from ..filesystem import iter_bodyfile
 from ..source import volume_id
 from ..timeline import macb_events
 from ..tools import TOOLS, filesystem_stats, parse_mmls
+from ..volumes import volume_encryption
 from .base import Module
 
 BATCH = 5000
@@ -36,7 +37,7 @@ class FsIndexModule(Module):
     name = 'fs_index'
     label = 'File system index'
     description = 'Partition table, every file and folder including deleted entries, and the file timeline (MACB).'
-    version = '2'  # 2: local-time file systems converted with the computer's time zone
+    version = '3'  # 2: local-time file systems converted with the computer's time zone; 3: encrypted volumes recognised
     requires = ('tz_probe',)
     weight = 45
     collections = ('fs_entries', 'timeline_events')
@@ -53,16 +54,23 @@ class FsIndexModule(Module):
             ctx.progress(i / len(offsets), str(offset))
             filesystems.append(self._index(ctx, offset, i, len(offsets)))
         ctx.set_fact('filesystems', filesystems)
-        for key in ('files', 'deleted_files', 'timeline_events'):
+        for key in ('files', 'deleted_files', 'timeline_events', 'encrypted_volumes'):
             ctx.count(key, 0)
 
     def _index(self, ctx, offset: int, i: int, n: int) -> dict:
+        encrypted = volume_encryption(ctx.image, offset)
         stats = filesystem_stats(ctx.image, offset)
+        if encrypted:
+            ctx.count('encrypted_volumes')
+            readable = stats.get('status') == 'COMPLETED'
+            ctx.warn(f'{encrypted}-encrypted volume at sector offset {offset}: '
+                     + ('only its unencrypted part (for example a BitLocker To Go discovery volume) could be read; ' if readable else '')
+                     + 'its contents need the recovery key or password to be analysed.')
         fs_type = filesystem_type(stats.get('stdout', ''))
         vid = volume_id(offset)
         local_time = any((fs_type or '').upper().startswith(t) for t in LOCAL_TIME_FS)
         info = {'partition_offset': offset, 'volume_id': vid, 'filesystem_type': fs_type, 'fsstat_status': stats.get('status'),
-                'local_time': local_time, 'time_zone': self.zone if local_time else 'UTC'}
+                'local_time': local_time, 'time_zone': self.zone if local_time else 'UTC', 'encryption': encrypted}
         if stats.get('status') != 'COMPLETED':
             info['error'] = (stats.get('stderr') or '').strip()[:500]
             ctx.warn(f'No readable filesystem at sector offset {offset}')

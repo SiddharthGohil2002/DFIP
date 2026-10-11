@@ -3,9 +3,12 @@
 Everything here is fabricated test data for exercising the parsers. The registry hives are written
 separately by make_hives.py (with hivex).
 """
+import io
+import random
 import sqlite3
 import struct
 import sys
+import zipfile
 import zlib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -179,6 +182,68 @@ def pdf(text='Offer letter - Alice Example - Senior Analyst') -> bytes:
     return out + b'trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n' % (len(objects) + 1, xref)
 
 
+def docx(text) -> bytes:
+    """A minimal Word document (Office Open XML): one paragraph of text."""
+    w = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    parts = {
+        '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+        '_rels/.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="word/document.xml"/></Relationships>',
+        'word/document.xml': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="{w}">'
+        f'<w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>',
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name, xml in parts.items():
+            z.writestr(name, xml)
+    return buf.getvalue()
+
+
+def encrypted_docx(text, password) -> bytes:
+    """The document above, password-protected the way Word does it (an OLE container with EncryptedPackage)."""
+    from msoffcrypto.format.ooxml import OOXMLFile
+    out = io.BytesIO()
+    OOXMLFile(io.BytesIO(docx(text))).encrypt(password, out)
+    return out.getvalue()
+
+
+def encrypted_zip(members, password) -> bytes:
+    """A ZIP whose entries are AES-encrypted (WinZip AE-2, as 7-Zip and WinZip write them)."""
+    import pyzipper
+    buf = io.BytesIO()
+    with pyzipper.AESZipFile(buf, 'w', compression=pyzipper.ZIP_DEFLATED, encryption=pyzipper.WZ_AES) as z:
+        z.setpassword(password)
+        for name, data in members.items():
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
+# The EICAR anti-virus test file, assembled at run time so this source file is not itself detected.
+EICAR = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$' + 'EICAR-STANDARD-' + 'ANTIVIRUS-TEST-FILE!$H+H*'
+
+
+def hidden_files():
+    """Files whose names hide what they are, or whose content is encrypted (file processing, Phase 2)."""
+    # The payroll export, copied and renamed to look like a photo.
+    write('Users/alice/Pictures/holiday.jpg', PAYROLL)
+    # A password-protected ZIP holding another copy (entries AES-encrypted).
+    write('Users/alice/Documents/private.zip', encrypted_zip({'payroll-export.csv': PAYROLL}, b'summer2026'))
+    # A password-protected Word document.
+    write('Users/alice/Documents/salary-review.docx',
+          encrypted_docx('Salary review 2026 - confidential - Alice Example', 'summer2026'))
+    # 2 MiB of random bytes with no header: what an encrypted container (for example VeraCrypt) looks like.
+    write('Users/alice/Documents/vault.dat', random.Random(2026).randbytes(2 << 20))
+    # A known-bad test file with a misleading extension.
+    write('Users/alice/Downloads/eicar.com', EICAR)
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     write('Windows/INF/setupapi.dev.log', SETUPAPI.replace('\n', '\r\n'))
@@ -195,6 +260,7 @@ def main():
     windows_activity()
     write('Users/alice/Pictures/whiteboard.png', png())
     write('Users/alice/Documents/offer-letter.pdf', pdf())
+    hidden_files()
     print(PREFETCH_NAME)
 
 

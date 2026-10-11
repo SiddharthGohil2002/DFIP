@@ -501,7 +501,7 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
-ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'yara']
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'hash_match', 'yara']
 
 
 def _ids(db, col, q):
@@ -562,11 +562,12 @@ def t_modules():
     j = _analyse(inv, E, {'modules': ['fs_index']})
     s = j['result']['summary']
     check('re-running the file system index also refreshes the modules built on it',
-          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
+          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
     j = _analyse(inv, E, {'modules': ['tz_probe']})
     s = j['result']['summary']
     check('re-reading the time zone re-indexes the file system and refreshes what is built on it (not the computer module)',
-          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'yara'] and s['counts'] == C['COUNTS'], s.get('plan'))
+          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara']
+          and s['counts'] == C['COUNTS'], s.get('plan'))
 
     # A broker redelivery of a finished job must not run it again.
     sys.path.insert(0, '/app')
@@ -590,13 +591,14 @@ def t_modules():
     j = _analyse(inv, qe, {'profile': 'quick'})
     s = j['result']['summary']
     same = lambda counts: all(counts.get(k) == C['COUNTS'][k] for k in ('files', 'deleted_files', 'browser_history', 'usb_devices', 'programs_run'))
-    check('the quick profile runs the file system index and artifacts only',
-          s['plan'] == ['tz_probe', 'fs_index', 'computer', 'artifacts'] and 'yara_matches' not in s['counts'] and same(s['counts']),
+    check('the quick profile runs the file system index and artifacts only (no file hashing or YARA)',
+          s['plan'] == ['tz_probe', 'fs_index', 'computer', 'artifacts'] and 'yara_matches' not in s['counts']
+          and 'files_hashed' not in s['counts'] and same(s['counts']),
           (s.get('plan'), s.get('counts')))
     j = _analyse(inv, qe, {'modules': ['yara']})
     s = j['result']['summary']
-    check('a module can be added later without re-running the others',
-          s['plan'] == ['yara'] and s['counts'].get('yara_matches') == C['COUNTS']['yara_matches'] and same(s['counts']), (s.get('plan'), s.get('counts')))
+    check('a module can be added later without re-running the others (only its missing prerequisite, file hashing, is added)',
+          s['plan'] == ['fileproc', 'yara'] and s['counts'].get('yara_matches') == C['COUNTS']['yara_matches'] and same(s['counts']), (s.get('plan'), s.get('counts')))
 
     # Tags made with the older natural keys move to the new ones and still follow their item.
     ev = next(e for e in get(f"/api/forensics/timeline?case_id={C['A']}&limit=500", inv).json['data'] if e['type'] == 'RECENT_FILE_OPENED')
@@ -1091,7 +1093,7 @@ def t_computer():
     after = db.fs_entries.find_one({'evidence_id': E, 'path': '/Users/alice/Documents/payroll-export.csv'})
     tz = get(f'/api/evidence/{E}', inv).json.get('time_zone') or {}
     check('setting the time zone re-indexes with it (FAT times as recorded: 05:41:02 = local time read as UTC)',
-          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'yara']
+          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara']
           and after['mtime'] == utc(2026, 9, 1, 5, 41, 2) and tz.get('source') == 'override' and tz.get('zone') == 'UTC', (j.get('status'), after.get('mtime'), tz.get('source')))
     check('...and tags still follow their items after the times changed', j.get('result', {}).get('summary', {}).get('tags') == {'relinked': 2, 'unresolved': 0},
           j.get('result', {}).get('summary', {}).get('tags'))
@@ -1106,6 +1108,247 @@ def t_computer():
         req('DELETE', f"/api/tags/{t['tag_id']}", inv)
     # Later sections use the payroll entry's database ID: the re-analysis replaced it.
     C['PAY'] = next(x for x in get(f'/api/forensics/evidence/{E}/files?deleted=true&q=payroll-export.csv', inv).json['data'])
+
+
+def form(method, path, token, fields, filename=None, data=None):
+    """A multipart/form-data request: text fields and at most one file."""
+    b = uuid.uuid4().hex
+    parts = [f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in fields.items()]
+    if filename is not None:
+        parts += [f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+                  f'Content-Type: application/octet-stream\r\n\r\n'.encode(), data, b'\r\n']
+    return req(method, path, token, raw=b''.join(parts) + f'--{b}--\r\n'.encode(), ctype=f'multipart/form-data; boundary={b}')
+
+
+def icat_bytes(path):
+    e = next(x for x in C['TRUTH'] if x['path'] == path and not x['virtual'])
+    return sh('icat', '-o', '2048', str(IMG), e['inode']).stdout
+
+
+def _wait_jobs(token, ids):
+    return [wait_job(token, j) for j in ids]
+
+
+# What the generator hid on the disk (make_artifacts.hidden_files), and what each file must be flagged as.
+RENAMED = {'/Users/alice/Pictures/holiday.jpg': 'JPEG image', '/Users/alice/Downloads/eicar.com': 'executable program'}
+ENCRYPTED = {'/Users/alice/Documents/private.zip': 'ZIP', '/Users/alice/Documents/salary-review.docx': 'OFFICE',
+             '/Users/alice/Documents/vault.dat': 'HIGH_ENTROPY'}
+OOXML_OR_ODF = ('application/vnd.openxmlformats-officedocument.', 'application/vnd.oasis.opendocument.', 'application/epub+zip')
+
+
+@section('12d File hashes, types, encryption and hash sets (vs icat + hashlib, the file command and the manifest)')
+def t_fileproc():
+    inv, A, E, admin = C['INVESTIGATOR'], C['A'], C['E'], C['ADMIN']
+    db = mongo()
+    stored = {(x['path'], x['inode']): x for x in db.fs_entries.find({'evidence_id': E, 'is_virtual': False, 'is_dir': False})}
+    files = [e for e in C['TRUTH'] if not e['virtual'] and e['mode'].startswith('r')]
+
+    # Hashes and types, every file (deleted ones too), against icat + hashlib and the file command.
+    bad_hash, bad_type, refined = [], [], []
+    with tempfile.TemporaryDirectory() as tmp:
+        for e in files:
+            data = sh('icat', '-o', '2048', str(IMG), e['inode']).stdout
+            x = stored.get((e['path'], e['inode'])) or {}
+            if (x.get('md5'), x.get('sha1'), x.get('sha256')) != (hashlib.md5(data).hexdigest(), hashlib.sha1(data).hexdigest(), hashlib.sha256(data).hexdigest()):
+                bad_hash.append(e['path'])
+            p = Path(tmp) / 'f'
+            p.write_bytes(data)
+            truth = sh('file', '-b', '--mime-type', str(p)).stdout.decode().strip()
+            if x.get('mime') != truth:
+                # The file command reports OOXML/ODF documents as ZIP when they lack its marker members: finer is fine.
+                if truth == 'application/zip' and (x.get('mime') or '').startswith(OOXML_OR_ODF):
+                    refined.append(e['path'])
+                else:
+                    bad_type.append((e['path'], x.get('mime'), truth))
+    check(f'MD5, SHA-1 and SHA-256 of all {len(files)} files (deleted ones included) equal hashlib over icat', files and not bad_hash, bad_hash[:5])
+    check('every file type equals the file command run on the extracted file', not bad_type, bad_type[:5])
+    if refined:
+        note('types refined beyond the file command (ZIP-based documents)', refined)
+    deleted = [x for x in stored.values() if x.get('deleted')]
+    check('deleted files are hashed as their content is on the disk now (labelled)',
+          deleted and all(x.get('hash_basis', '').startswith('deleted') and x.get('sha256') for x in deleted), [x.get('hash_basis') for x in deleted])
+    manifest = {f['path']: f for f in json.loads(IMG.with_suffix('.manifest.json').read_text())['files']}
+    by_path = {x['path']: x for x in stored.values()}
+    check('every generated file has the SHA-256 the generator recorded',
+          all(by_path.get(p, {}).get('sha256') == f['sha256'] for p, f in manifest.items()),
+          [p for p, f in manifest.items() if by_path.get(p, {}).get('sha256') != f['sha256']][:5])
+
+    # Names that hide the content, and encryption.
+    renamed = {x['path']: x.get('expected_type') for x in stored.values() if x.get('ext_mismatch')}
+    check('exactly the renamed files are flagged, with what their name suggests (holiday.jpg is the payroll CSV, eicar.com is text)',
+          renamed == RENAMED and by_path['/Users/alice/Pictures/holiday.jpg']['mime'] == 'text/csv'
+          and by_path['/Users/alice/Pictures/holiday.jpg']['sha256'] == hashlib.sha256(PAYROLL).hexdigest(), renamed)
+    enc = {x['path']: (x.get('encryption') or {}).get('kind') for x in stored.values() if x.get('encryption')}
+    check('exactly the encrypted files are flagged: AES ZIP, password-protected Word document, random-data container',
+          enc == ENCRYPTED and 'AES' in by_path['/Users/alice/Documents/private.zip']['encryption']['detail']
+          and by_path['/Users/alice/Documents/vault.dat']['entropy'] > 7.99, enc)
+    pz = by_path['/Users/alice/Documents/private.zip']
+    check('private.zip is typed as a ZIP archive although libmagic cannot tell from its first bytes',
+          pz['mime'] == 'application/zip' and pz['file_category'] == 'archive', (pz.get('mime'), pz.get('file_category')))
+    zp = subprocess.run(['python3', '-c', 'import zipfile,sys,io; z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));'
+                         'print(",".join(f"{i.filename}:{i.flag_bits & 1}:{i.compress_type}" for i in z.infolist()))'],
+                        input=icat_bytes('/Users/alice/Documents/private.zip'), capture_output=True, timeout=60).stdout.decode().strip()
+    check('...and its entry is really encrypted with AES (zipfile: flag bit 0, method 99)', zp == 'payroll-export.csv:1:99', zp)
+    ole = subprocess.run(['python3', '-c', 'import olefile,sys,io; o=olefile.OleFileIO(io.BytesIO(sys.stdin.buffer.read()));'
+                          'print(",".join(sorted("/".join(s) for s in o.listdir())))'],
+                         input=icat_bytes('/Users/alice/Documents/salary-review.docx'), capture_output=True, timeout=60).stdout.decode()
+    check('...and salary-review.docx really is an encrypted package (EncryptionInfo + EncryptedPackage streams)',
+          'EncryptedPackage' in ole and 'EncryptionInfo' in ole, ole[:200])
+    cats = {x['path']: x.get('file_category') for x in stored.values()}
+    check('file categories: script, image, document, database, registry, shortcut',
+          cats.get('/Users/alice/Downloads/cleanup.ps1') == 'script' and cats.get('/Users/alice/Pictures/whiteboard.png') == 'image'
+          and cats.get('/Users/alice/Documents/offer-letter.pdf') == 'document'
+          and cats.get('/Users/alice/AppData/Local/Google/Chrome/User Data/Default/History') == 'database'
+          and cats.get('/Windows/System32/config/SYSTEM') == 'registry'
+          and cats.get('/Users/alice/AppData/Roaming/Microsoft/Windows/Recent/payroll-export.csv.lnk') == 'shortcut', cats)
+    counts = get(f'/api/evidence/{E}', inv).json['modules']['fileproc']['counts']
+    check('the module counts hashed, renamed and encrypted files', counts == {'files_hashed': len(files), 'files_unreadable': 0,
+                                                                             'renamed_files': len(RENAMED), 'encrypted_files': len(ENCRYPTED)}, counts)
+
+    # The Files page filters, and finding the same content anywhere in the case.
+    fl = lambda qs: get(f'/api/forensics/evidence/{E}/files?limit=1000&{qs}', inv).json
+    check('files can be filtered by category, renamed and encrypted',
+          {x['path'] for x in fl('category=archive')['data']} == {'/Users/alice/Documents/private.zip'}
+          and {x['path'] for x in fl('renamed=true')['data']} == set(RENAMED)
+          and {x['path'] for x in fl('encrypted=true')['data']} == set(ENCRYPTED)
+          and fl('encrypted=false')['total'] == fl('')['total'] - len(ENCRYPTED))
+    pay_sha = hashlib.sha256(PAYROLL).hexdigest()
+    same = get(f'/api/forensics/hash?case_id={A}&digest={pay_sha.upper()}', inv).json
+    want = {'/Users/alice/Pictures/holiday.jpg', '/Users/alice/Documents/payroll-export.csv',
+            '/$Recycle.Bin/S-1-5-21-3623811015-3361044348-30300820-1001/$R3K9D2A.csv'}
+    check('the payroll content is found under every name: the renamed copy, the Recycle Bin copy, the deleted original and the recovered file',
+          {x['path'] for x in same['files']} == want and any(a['type'] == 'RECOVERED_FILE' for a in same['artifacts']), same)
+    md5 = get(f'/api/forensics/hash?case_id={A}&digest={hashlib.md5(PAYROLL).hexdigest()}', inv).json
+    check('...also by MD5', md5['algorithm'] == 'md5' and {x['path'] for x in md5['files']} == want, md5.get('files'))
+    check('a value that is not a hash is refused (400); another investigator gets 404',
+          get(f'/api/forensics/hash?case_id={A}&digest=xyz', inv).status == 400
+          and get(f'/api/forensics/hash?case_id={A}&digest={pay_sha}', C['INV2']).status == 404)
+    s = get(f'/api/forensics/search?case_id={A}&q={pay_sha}', inv).json
+    check('keyword search with a SHA-256 finds the files', s['totals'].get('files') == len(want), s['totals'])
+    check('flagged lists: renamed and encrypted', {x['path'] for x in get(f'/api/forensics/flagged?case_id={A}&kind=renamed', inv).json['data']} == set(RENAMED)
+          and get(f'/api/forensics/flagged?case_id={A}&kind=encrypted', inv).json['total'] == len(ENCRYPTED)
+          and get(f'/api/forensics/flagged?case_id={A}&kind=other', inv).status == 400)
+    mal = list(db.forensic_artifacts.find({'evidence_id': E, 'type': 'MALWARE_INDICATOR'}))
+    check('YARA now picks files by their real type and still matches only cleanup.ps1',
+          [m.get('original_path') or m.get('path') for m in mal] == ['/Users/alice/Downloads/cleanup.ps1'] and mal[0].get('file_category') == 'script',
+          [(m.get('original_path'), m.get('rule')) for m in mal])
+
+    # Hash sets: administrators import, everyone can see.
+    eicar_sha = by_path['/Users/alice/Downloads/eicar.com']['sha256']
+    check('an investigator cannot import a hash set (403)',
+          form('POST', '/api/hashsets', inv, {'name': 'Mine', 'kind': 'KNOWN_BAD'}, 'x.txt', eicar_sha.encode()).status == 403)
+    check('a bad kind or an empty file is refused (400)',
+          form('POST', '/api/hashsets', admin, {'name': 'Bad kind', 'kind': 'EVIL'}, 'x.txt', eicar_sha.encode()).status == 400
+          and form('POST', '/api/hashsets', admin, {'name': 'Empty', 'kind': 'KNOWN_BAD'}, 'x.txt', b'').status == 400)
+    good_sha1 = {p: hashlib.sha1(icat_bytes(p)).hexdigest() for p in ('/Users/alice/Documents/project-notes.txt',
+                                                                       '/Users/alice/Pictures/whiteboard.png', '/Users/alice/Documents/offer-letter.pdf')}
+    sets = {}
+    # Known bad: a plain list (sha256sum output) with a comment and a line that is not a hash.
+    bad_list = f'# demo known-bad list\n{eicar_sha}  eicar.com\nnot-a-hash\n'.encode()
+    r = form('POST', '/api/hashsets', admin, {'name': 'Demo known-bad', 'kind': 'KNOWN_BAD', 'description': 'EICAR test file'}, 'bad.txt', bad_list)
+    sets['bad'] = r.json or {}
+    # Notable: CSV with an MD5 column (the payroll export).
+    notable_csv = f'FileName,MD5\npayroll-export.csv,{hashlib.md5(PAYROLL).hexdigest()}\n'.encode()
+    sets['notable'] = form('POST', '/api/hashsets', admin, {'name': 'Payroll exports', 'kind': 'NOTABLE'}, 'notable.csv', notable_csv).json or {}
+    # Known good: an NSRL RDS v3-style SQLite (SHA-1), placed on the server for an import by name. It also lists the
+    # payroll export, so that file is both notable and known good: notable must win.
+    incoming = Path('/app/storage/hashsets/incoming')
+    incoming.mkdir(parents=True, exist_ok=True)
+    nsrl = incoming / 'RDS_demo.db'
+    nsrl.unlink(missing_ok=True)
+    import sqlite3
+    con = sqlite3.connect(nsrl)
+    con.execute('CREATE TABLE FILE (sha256 TEXT, sha1 TEXT, md5 TEXT, file_name TEXT, file_size INTEGER, package_id INTEGER)')
+    con.executemany('INSERT INTO FILE VALUES (NULL,?,NULL,?,0,1)', [(h.upper(), p.rsplit('/', 1)[-1]) for p, h in good_sha1.items()]
+                    + [(hashlib.sha1(PAYROLL).hexdigest().upper(), 'payroll-export.csv')])
+    con.commit()
+    con.close()
+    check('the server folder for large sets is listed for administrators only',
+          any(f['filename'] == 'RDS_demo.db' for f in get('/api/hashsets/incoming', admin).json['data'])
+          and get('/api/hashsets/incoming', inv).status == 403)
+    check('import by name refuses folders and unknown files (400, 404)',
+          post('/api/hashsets/import-local', admin, {'filename': '../RDS_demo.db', 'name': 'x', 'kind': 'KNOWN_GOOD'}).status == 400
+          and post('/api/hashsets/import-local', admin, {'filename': 'missing.db', 'name': 'x', 'kind': 'KNOWN_GOOD'}).status == 404)
+    sets['good'] = post('/api/hashsets/import-local', admin, {'filename': 'RDS_demo.db', 'name': 'Demo NSRL', 'kind': 'KNOWN_GOOD'}).json or {}
+    imports = {k: wait_job(admin, v.get('job_id')) for k, v in sets.items()}
+    check('the three imports complete', all(j.get('status') == 'COMPLETED' for j in imports.values()), {k: (j.get('status'), j.get('error')) for k, j in imports.items()})
+    listed = {x['set_id']: x for x in get('/api/hashsets', C['VIEWER']).json['data']}
+    hs = {k: listed.get(v.get('set_id'), {}) for k, v in sets.items()}
+    check('sets are listed (to every user) with format, counts and invalid lines',
+          (hs['bad'].get('format'), hs['bad'].get('counts', {}).get('sha256'), hs['bad'].get('invalid_lines')) == ('text', 1, 1)
+          and (hs['notable'].get('format'), hs['notable'].get('counts', {}).get('md5')) == ('CSV', 1)
+          and (hs['good'].get('format'), hs['good'].get('counts', {}).get('sha1')) == ('NSRL RDS v3 (SQLite)', 4)
+          and all(h.get('status') == 'READY' for h in hs.values()) and hs['bad'].get('source_sha256') == hashlib.sha256(bad_list).hexdigest(),
+          hs)
+    check('the uploaded file is not kept once imported (the set store holds the hashes); a server-side file is left alone',
+          not list(Path('/app/storage/hashsets/uploads').glob('*')) and nsrl.exists())
+    rematch = [jid for j in imports.values() for jid in (j.get('result') or {}).get('rematch_jobs', [])]
+    done = _wait_jobs(admin, rematch)
+    check('each import re-matched the analysed evidence (only the hash-set module ran)',
+          rematch and all(j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['hash_match'] for j in done),
+          [(j.get('status'), (j.get('result') or {}).get('summary', {}).get('plan')) for j in done])
+    _analyse(inv, E, {'modules': ['hash_match']})  # settle: the last re-match sees all three sets
+
+    status = {x['path']: (x.get('hash_status'), [s['name'] for s in x.get('hash_sets') or []])
+              for x in db.fs_entries.find({'evidence_id': E, 'hash_status': {'$exists': True, '$ne': None}})}
+    check('eicar.com is known bad', status.get('/Users/alice/Downloads/eicar.com') == ('KNOWN_BAD', ['Demo known-bad']), status)
+    check('every copy of the payroll export is notable, and notable outranks known good',
+          all(status.get(p, (None,))[0] == 'NOTABLE' and status[p][1] == ['Payroll exports', 'Demo NSRL'] for p in want), {p: status.get(p) for p in want})
+    check('the known-good files are known good', all(status.get(p, (None,))[0] == 'KNOWN_GOOD' for p in good_sha1), {p: status.get(p) for p in good_sha1})
+    check('no other file matches a set', set(status) == set(want) | set(good_sha1) | {'/Users/alice/Downloads/eicar.com'}, sorted(status))
+    total = fl('')['total']
+    check('known-good files can be hidden; filtering by status works',
+          fl('hide_known=true')['total'] == total - len(good_sha1) and fl('hash_status=KNOWN_BAD')['total'] == 1
+          and {x['path'] for x in get(f'/api/forensics/flagged?case_id={A}&kind=notable', inv).json['data']} == want)
+    hits = get(f'/api/forensics/artifacts?case_id={A}&artifact_type=HASH_SET_MATCH&limit=100', inv).json['data']
+    check('known-bad and notable files become hash-set indicators (known good do not)',
+          sorted((h['kind'], h['original_path']) for h in hits) == sorted([('KNOWN_BAD', '/Users/alice/Downloads/eicar.com')] + [('NOTABLE', p) for p in want]),
+          [(h.get('kind'), h.get('original_path')) for h in hits])
+    n = [x for x in get('/api/notifications', inv).json['data'] if x.get('title') == 'Known-bad files found']
+    check("the case's investigator is told about the known-bad file", n and E in n[0]['message'], [x.get('title') for x in get('/api/notifications', inv).json['data'][:5]])
+    ov = get(f'/api/cases/{A}/overview', inv).json['counts']
+    check('the overview counts known-bad, notable, renamed and encrypted files',
+          (ov.get('known_bad_files'), ov.get('notable_files'), ov.get('renamed_files'), ov.get('encrypted_files')) == (1, len(want), len(RENAMED), len(ENCRYPTED)), ov)
+    C['HASHSETS'] = {k: v.get('set_id') for k, v in sets.items()}
+
+    # Deleting a set.
+    bad_id = sets['bad']['set_id']
+    check('an investigator cannot delete a set (403)', req('DELETE', f'/api/hashsets/{bad_id}', inv).status == 403)
+    db.hash_sets.update_one({'set_id': bad_id}, {'$set': {'status': 'IMPORTING'}})
+    check('a set still importing cannot be deleted (409)', req('DELETE', f'/api/hashsets/{bad_id}', admin).status == 409)
+    db.hash_sets.update_one({'set_id': bad_id}, {'$set': {'status': 'READY'}})
+    d = req('DELETE', f'/api/hashsets/{bad_id}', admin)
+    _wait_jobs(admin, (d.json or {}).get('rematch_jobs', []))
+    eicar = db.fs_entries.find_one({'evidence_id': E, 'path': '/Users/alice/Downloads/eicar.com'})
+    check('deleting a set removes its store and re-matches: eicar.com is no longer known bad',
+          d.status == 200 and not eicar.get('hash_status') and not Path(f'/app/storage/hashsets/{bad_id}.sqlite').exists()
+          and get(f'/api/forensics/flagged?case_id={A}&kind=known_bad', inv).json['total'] == 0, (d, eicar.get('hash_status')))
+    audit = {a['action'] for a in db.audit_logs.find({'action': {'$in': ['HASHSET_IMPORTED', 'HASHSET_DELETED']}})}
+    check('imports and deletions are in the audit log', audit == {'HASHSET_IMPORTED', 'HASHSET_DELETED'}, audit)
+    check('an unknown set is 404', req('DELETE', '/api/hashsets/HS-9999', admin).status == 404)
+
+    # Encrypted volumes (dfVFS samples): recognised, and reported as needing a key.
+    # Independent markers: the BitLocker boot-sector signature, or the BitLocker To Go discovery-volume GUID at 0x1A8.
+    to_go = uuid.UUID('4967d63b-2e29-4ad8-8399-f6a339e3d001').bytes_le
+    for name, kind, truth in (('bdetogo.raw', 'BitLocker', lambda d: d[3:11] == b'-FVE-FS-' or d[0x1A8:0x1B8] == to_go),
+                              ('luks1.raw', 'LUKS', lambda d: d[:6] == b'LUKS\xba\xbe')):
+        p = sample('dfvfs', name)
+        if not p:
+            note(f'{kind} volume detection', 'dfVFS sample not downloaded; skipped')
+            continue
+        head = p.read_bytes()[:4096]
+        q = post('/api/cases', inv, {'name': f'{kind} volume sample', 'priority': 'LOW'}).json['case_id']
+        ev = upload(inv, q, p.read_bytes(), name.replace('.raw', '.dd')).json['evidence_id']
+        j = _analyse(inv, ev, {'profile': 'quick'})
+        s = (j.get('result') or {}).get('summary') or {}
+        warned = [w for w in s.get('warnings', []) if kind in w and 'recovery key or password' in w]
+        fact = (db.analysis_facts.find_one({'evidence_id': ev}) or {}).get('fs_index', {}).get('filesystems', [])
+        check(f'{name}: the {kind} volume is recognised and reported as needing its key',
+              truth(head) and j.get('status') == 'COMPLETED' and s.get('counts', {}).get('encrypted_volumes') == 1 and warned
+              and [f.get('encryption') for f in fact] == [kind], (j.get('status'), s.get('counts'), s.get('warnings'), fact))
+    if sample('dfvfs', 'luks1.raw'):
+        fs = sh('fsstat', str(sample('dfvfs', 'luks1.raw'))).stdout.decode() + sh('fsstat', str(sample('dfvfs', 'luks1.raw'))).stderr.decode()
+        check('the Sleuth Kit agrees the LUKS sample is encrypted', 'LUKS' in fs, fs[:200])
 
 
 @section('13 Indicators, patterns and anomalies')
@@ -1517,7 +1760,8 @@ def t_e01():
     check('partitions can be examined after the analysis', get(f'/api/forensics/evidence/{eid}/partitions', inv).status == 200)
     if j['status'] == 'COMPLETED':
         c = j['result']['summary']['counts']
-        same = {k: (c.get(k), C['COUNTS'].get(k)) for k in C['COUNTS'] if c.get(k) != C['COUNTS'].get(k)}
+        raw = get(f"/api/evidence/{C['E']}", inv).json['analysis_summary']  # now, with the hash sets imported since
+        same = {k: (c.get(k), raw.get(k)) for k in raw if c.get(k) != raw.get(k)}
         check('E01 analysis finds exactly what the raw image analysis found', not same, same)
         dele = get(f"/api/forensics/evidence/{r.json['evidence_id']}/files?deleted=true", inv).json['data']
         pay = next((d for d in dele if d['path'].endswith('payroll-export.csv')), None)
@@ -1587,6 +1831,10 @@ def t_overview():
         'tags': q(f'/api/tags?case_id={A}')['total'],
         'reports': len(q(f'/api/reports?case_id={A}')['data']),
         'custody_events': len(q(f'/api/chain?case_id={A}')['data']),
+        'renamed_files': q(f'/api/forensics/flagged?case_id={A}&kind=renamed&limit=1')['total'],
+        'encrypted_files': q(f'/api/forensics/flagged?case_id={A}&kind=encrypted&limit=1')['total'],
+        'known_bad_files': q(f'/api/forensics/flagged?case_id={A}&kind=known_bad&limit=1')['total'],
+        'notable_files': q(f'/api/forensics/flagged?case_id={A}&kind=notable&limit=1')['total'],
     }
     diff = {k: (c.get(k), v) for k, v in exp.items() if c.get(k) != v}
     check('every overview count equals the matching list', not diff, diff)
@@ -1860,7 +2108,7 @@ def t_reg_disabled():
 PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
-             t_browser, t_usb, t_activity, t_computer, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

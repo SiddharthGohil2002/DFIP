@@ -190,7 +190,14 @@ def forensic_analysis_task(self, job_id: str, evidence_id: str, created_by: str)
         summary = {'evidence_id': e['evidence_id'], 'case_id': e['case_id'], 'summary': result}
         _set_job(job_id, status='COMPLETED', progress=100, stage='complete',
                   result=summary, finished_at=datetime.now(timezone.utc))
-        _notify(created_by, 'Forensic job completed', f'{job_id} (FORENSIC_ANALYSIS) completed successfully.')
+        if not payload.get('rematch'):  # re-matching after a hash set changed runs unasked; only new known-bad files are news
+            _notify(created_by, 'Forensic job completed', f'{job_id} (FORENSIC_ANALYSIS) completed successfully.')
+        bad = (result.get('counts') or {}).get('known_bad_files') or 0
+        before = (((e.get('modules') or {}).get('hash_match') or {}).get('counts') or {}).get('known_bad_files') or 0
+        if bad and (bad > before or not payload.get('rematch')):
+            case = db['cases'].find_one({'case_id': e['case_id']}, {'investigator_id': 1}) or {}
+            for user in {created_by, case.get('investigator_id')} - {None}:
+                _notify(user, 'Known-bad files found', f'{e["evidence_id"]} ({e["case_id"]}): {bad} file(s) match a known-bad hash set.', 'WARNING')
         return summary
     except Exception as exc:
         _set_job(job_id, status='FAILED', stage='failed', error=str(exc),
@@ -199,7 +206,58 @@ def forensic_analysis_task(self, job_id: str, evidence_id: str, created_by: str)
         raise
 
 
+@celery_app.task(bind=True, name='dfip.hashset_import', max_retries=0)
+def hashset_import_task(self, job_id: str, set_id: str, created_by: str):
+    """Builds a hash set's lookup store from the uploaded file, then re-matches every processed evidence item."""
+    from .forensic.hashsets import import_set, store_path
+    job, _ = _claim(job_id)
+    if not job:
+        return {'job_id': job_id, 'status': 'DUPLICATE_IGNORED'}
+    db = get_db()
+    hs = db['hash_sets'].find_one({'set_id': set_id})
+    try:
+        if not hs:
+            raise ValueError('Hash set not found')
+        source = Path(hs['source_path'])
+        dest = store_path(set_id)
+        result = import_set(source, dest, progress=lambda f: _set_job(job_id, progress=int(5 + 85 * f), stage='importing'))
+        total = sum(result['counts'].values())
+        if not total:
+            raise ValueError('No MD5, SHA-1 or SHA-256 hashes were found in the file')
+        db['hash_sets'].update_one({'set_id': set_id}, {'$set': {
+            'status': 'READY', 'path': str(dest), 'format': result['format'], 'counts': result['counts'], 'count': total,
+            'invalid_lines': result['invalid'], 'algorithms': [a for a, n in result['counts'].items() if n],
+            'ready_at': datetime.now(timezone.utc), 'error': None}})
+        if hs.get('source_uploaded'):
+            source.unlink(missing_ok=True)  # the store holds every hash; the upload is not kept
+        _set_job(job_id, progress=92, stage='matching')
+        rematched = _rematch_all(created_by)
+        summary = {'set_id': set_id, 'format': result['format'], 'counts': result['counts'], 'invalid_lines': result['invalid'],
+                   'rematch_jobs': rematched}
+        _set_job(job_id, status='COMPLETED', progress=100, stage='complete', result=summary, finished_at=datetime.now(timezone.utc))
+        _notify(created_by, 'Hash set imported', f'{hs["name"]}: {total:,} hashes ({result["format"]}).')
+        return summary
+    except Exception as exc:
+        db['hash_sets'].update_one({'set_id': set_id}, {'$set': {'status': 'FAILED', 'error': str(exc)[:500]}})
+        _set_job(job_id, status='FAILED', stage='failed', error=str(exc), traceback=traceback.format_exc(limit=5),
+                 finished_at=datetime.now(timezone.utc))
+        _notify(created_by, 'Hash set import failed', f'{set_id}: {exc}', 'ERROR')
+        raise
+
+
+def _rematch_all(user_id: str) -> list[str]:
+    """Queues the hash-set module for every evidence item whose files were hashed (and that is not being analysed)."""
+    from .services.jobs import active_analysis, queue
+    jobs = []
+    for e in get_db()['evidence'].find({'modules.fileproc.status': 'COMPLETED'}, {'evidence_id': 1}):
+        if not active_analysis(e['evidence_id']):
+            jobs.append(queue.enqueue('FORENSIC_ANALYSIS', {'evidence_id': e['evidence_id'], 'profile': None,
+                                                             'modules': ['hash_match'], 'rematch': True}, user_id))
+    return jobs
+
+
 TASKS_BY_TYPE = {
     'HASH_VERIFY': hash_verify_task,
     'FORENSIC_ANALYSIS': forensic_analysis_task,
+    'HASHSET_IMPORT': hashset_import_task,
 }

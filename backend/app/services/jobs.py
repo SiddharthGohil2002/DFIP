@@ -44,8 +44,8 @@ class JobQueue:
         })
 
         task = TASKS_BY_TYPE[job_type]
-        evidence_id = payload['evidence_id']
-        async_result = task.delay(job_id, evidence_id, str(user_id))
+        subject = payload.get('evidence_id') or payload.get('set_id')  # the evidence analysed, or the hash set imported
+        async_result = task.delay(job_id, subject, str(user_id))
         db['jobs'].update_one({'job_id': job_id}, {'$set': {'celery_task_id': async_result.id}})
         return job_id
 

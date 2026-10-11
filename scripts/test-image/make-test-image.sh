@@ -13,6 +13,8 @@
 set -eu
 
 apt-get update -qq >/dev/null && apt-get install -y -qq mtools dosfstools fdisk tzdata python3-hivex >/dev/null
+# Encrypted ZIP and Office test files.
+pip install -q --root-user-action=ignore pyzipper==0.4.0 msoffcrypto-tool==6.0.0
 
 WORK=$(mktemp -d)
 TREE="$WORK/tree"
@@ -42,6 +44,12 @@ stamp '2026-09-01 09:41:02' '$Recycle.Bin/S-1-5-21-3623811015-3361044348-3030082
 touch -d '2026-09-01 14:18:40 UTC' "$TREE"/Windows/Prefetch/SECUREDELETE.EXE-*.pf
 stamp '2026-08-31 17:22:00' 'Users/alice/Pictures/whiteboard.png'
 stamp '2026-08-30 11:00:00' 'Users/alice/Documents/offer-letter.pdf'
+# Hidden and encrypted files: the renamed copy keeps the export's own time, as a copy does.
+stamp '2026-09-01 09:41:02' 'Users/alice/Pictures/holiday.jpg'
+stamp '2026-09-01 14:16:40' 'Users/alice/Documents/private.zip'
+stamp '2026-08-29 15:12:00' 'Users/alice/Documents/salary-review.docx'
+stamp '2026-08-31 20:05:00' 'Users/alice/Documents/vault.dat'
+stamp '2026-09-01 10:40:00' 'Users/alice/Downloads/eicar.com'
 # Standard time (EST, UTC-5): proves the conversion follows daylight saving by date, not one fixed offset.
 stamp '2026-01-15 15:30:00' 'Users/alice/Documents/q1-forecast.txt'
 stamp '2025-11-02 14:00:00' 'Users/alice/Documents/year-end-checklist.txt'

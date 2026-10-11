@@ -17,6 +17,7 @@ import re
 # does not need every later number edited here.
 titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer and users', 'Deleted files', 'Recovered files',
           'USB device history', 'Browser history', 'Browser downloads', 'Windows activity', 'Malware indicators',
+          'Hash set matches', 'Renamed and encrypted files',
           'Investigator findings', 'Tagged evidence', 'Timeline of notable events', 'Audit trail integrity']
 found = [(int(m.group(1)), m.group(2)) for m in re.finditer(r'^\s*(\d+)\. (' + '|'.join(map(re.escape, titles)) + r')', a, re.M)]
 check(f'all {len(titles)} sections present, in order and numbered 1 to {len(titles)} {[t for t in titles if t not in [f[1] for f in found]] or ""}',
@@ -32,6 +33,8 @@ check('deleted payroll export listed', 'payroll-export.csv' in flat)
 check('USB serials listed', 'AA951D0000007252' in flat and '4C530001230518109141' in flat)
 check('browser visits and downloads listed', all(x in flat for x in ('filetransfer.example.net', 'pastebin.example.com', 'SecureDelete.exe', 'archiver.zip')))
 check('YARA hit on cleanup.ps1 listed', 'cleanup.ps1' in flat)
+check('hash set matches listed: the payroll copies as notable', 'Payroll exports' in flat and 'holiday.jpg' in flat)
+check('renamed and encrypted files listed', all(x in flat for x in ('text/csv', 'private.zip', 'salary-review', 'vault.dat', 'Encrypted ZIP entries (AES)')))
 check('Windows activity listed: program run, file opened from E:, Recycle Bin original path',
       all(x in flat for x in ('SECUREDELETE.EXE', r'E:\payroll-export.csv', r'C:\Users\alice\Documents\payroll-export.csv')))
 check('finding listed', 'Payroll export deleted after USB activity' in flat)

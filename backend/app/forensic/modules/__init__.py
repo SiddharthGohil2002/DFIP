@@ -14,18 +14,21 @@ from __future__ import annotations
 from .artifacts import ArtifactsModule
 from .base import Cancelled, Module, ModuleContext, run_tool
 from .computer import ComputerModule
+from .fileproc import FileProcModule
 from .fs_index import FsIndexModule
+from .hash_match import HashMatchModule
 from .tz_probe import TzProbeModule
 from .yara_scan import YaraModule
 
-MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), YaraModule()]
+MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), FileProcModule(),
+                         HashMatchModule(), YaraModule()]
 REGISTRY: dict[str, Module] = {m.name: m for m in MODULES}
 ORDER = [m.name for m in MODULES]
 
 PROFILES = {
     'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts'],
-    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'yara'],
-    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'yara'],
+    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'hash_match', 'yara'],
+    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'hash_match', 'yara'],
 }
 DEFAULT_PROFILE = 'standard'
 PROFILE_LABELS = {

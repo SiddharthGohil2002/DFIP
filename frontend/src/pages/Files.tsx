@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Download, File, FileSearch, Folder, RotateCcw, Search } from 'lucide-react';
+import { Download, File, FileSearch, Folder, Info, RotateCcw, Search } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { api, downloadFile, post } from '../lib/api';
@@ -8,25 +8,49 @@ import { formatBytes, formatNumber, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import { ViewButton } from '../ui/FileViewer';
-import type { Artifact, FsEntry } from '../lib/types';
-import { Badge, Banner, Button, Card, Empty, ErrorBanner, Hash, Loading, Modal, PageHeader, Pager, Tabs, useToast } from '../ui';
+import type { Artifact, FsEntry, HashKind } from '../lib/types';
+import { Badge, Banner, Button, Card, Empty, ErrorBanner, Hash, Loading, Modal, PageHeader, Pager, Tabs, useToast, type Tone } from '../ui';
 
 const LIMIT = 100;
 type Tab = 'deleted' | 'all' | 'recovered';
+type Flag = '' | 'renamed' | 'encrypted' | HashKind;
+
+/** The file categories file processing assigns (from the content, never the name). */
+export const CATEGORY_LABELS: Record<string, string> = {
+  executable: 'Program', script: 'Script', document: 'Document', archive: 'Archive', image: 'Picture', video: 'Video',
+  audio: 'Audio', email: 'Email', database: 'Database', registry: 'Registry hive', shortcut: 'Shortcut', text: 'Text',
+  empty: 'Empty', other: 'Other',
+};
+
+export const HASH_KIND: Record<HashKind, { label: string; tone: Tone }> = {
+  KNOWN_BAD: { label: 'Known bad', tone: 'danger' },
+  NOTABLE: { label: 'Notable', tone: 'accent' },
+  KNOWN_GOOD: { label: 'Known good', tone: 'ok' },
+};
+
+const FLAGS: { id: Flag; label: string }[] = [
+  { id: '', label: 'Any file' },
+  { id: 'renamed', label: 'Renamed (content does not match the name)' },
+  { id: 'encrypted', label: 'Encrypted' },
+  { id: 'KNOWN_BAD', label: 'Known bad (hash set)' },
+  { id: 'NOTABLE', label: 'Notable (hash set)' },
+  { id: 'KNOWN_GOOD', label: 'Known good (hash set)' },
+];
 
 export function FilesPage() {
   const { overview, caseId, reloadOverview } = useCase();
   const [params, setParams] = useSearchParams();
   const analyzed = (overview?.evidence || []).filter((e) => e.analysis_status === 'COMPLETED');
   const evidenceId = params.get('evidence') || analyzed[0]?.evidence_id || '';
-  const [tab, setTab] = useState<Tab>('deleted');
+  const initialFlag = (params.get('flag') || '') as Flag;
+  const [tab, setTab] = useState<Tab>(initialFlag ? 'all' : 'deleted');
   const counts = overview?.counts;
 
   return (
     <div className="stack">
       <PageHeader
-        title="Deleted files"
-        subtitle="The file index Sleuth Kit (fls) built for each analyzed image, including deleted entries still described by the filesystem. Recovery copies a file out with icat; the original image is never modified."
+        title="Files"
+        subtitle="The file index the Sleuth Kit built for each analyzed image, including deleted entries still described by the file system, with each file's hashes and its real type from its content. Recovery copies a file out with icat; the original image is never modified."
         actions={
           analyzed.length > 0 && (
             <select className="select" style={{ width: 300 }} value={evidenceId} onChange={(e) => setParams({ evidence: e.target.value })} aria-label="Evidence">
@@ -45,15 +69,16 @@ export function FilesPage() {
             value={tab}
             onChange={setTab}
             tabs={[
-              { id: 'deleted', label: 'Deleted entries' },
-              { id: 'all', label: 'All files' },
+              { id: 'deleted', label: 'Deleted entries', count: counts?.deleted_files },
+              { id: 'all', label: 'All files', count: counts?.files },
               { id: 'recovered', label: 'Recovered files', count: counts?.recovered_files },
             ]}
           />
           {tab === 'recovered' ? (
             <RecoveredFiles caseId={caseId} />
           ) : (
-            <FileIndex key={`${evidenceId}-${tab}`} evidenceId={evidenceId} deletedOnly={tab === 'deleted'} onRecovered={reloadOverview} />
+            <FileIndex key={`${evidenceId}-${tab}`} caseId={caseId} evidenceId={evidenceId} deletedOnly={tab === 'deleted'}
+              initialFlag={tab === 'all' ? initialFlag : ''} onRecovered={reloadOverview} />
           )}
         </Card>
       )}
@@ -61,18 +86,49 @@ export function FilesPage() {
   );
 }
 
-function FileIndex({ evidenceId, deletedOnly, onRecovered }: { evidenceId: string; deletedOnly: boolean; onRecovered: () => void }) {
+/** Badges for what file processing found: renamed, encrypted, and the hash-set status. */
+export function FileFlags({ f }: { f: FsEntry }) {
+  return (
+    <>
+      {f.ext_mismatch && (
+        <Badge tone="warn" title={`The content is ${f.mime}; the name suggests ${f.expected_type}`}>RENAMED</Badge>
+      )}
+      {f.encryption && <Badge tone="warn" title={f.encryption.detail}>ENCRYPTED</Badge>}
+      {f.hash_status && (
+        <Badge tone={HASH_KIND[f.hash_status].tone} title={(f.hash_sets || []).map((s) => s.name).join(', ')}>
+          {HASH_KIND[f.hash_status].label.toUpperCase()}
+        </Badge>
+      )}
+    </>
+  );
+}
+
+function FileIndex({ caseId, evidenceId, deletedOnly, initialFlag, onRecovered }: {
+  caseId: string; evidenceId: string; deletedOnly: boolean; initialFlag: Flag; onRecovered: () => void;
+}) {
   const { can } = useAuth();
   const toast = useToast();
   const time = useTime();
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
+  const [category, setCategory] = useState('');
+  const [flag, setFlag] = useState<Flag>(initialFlag);
+  const [hideKnown, setHideKnown] = useState(true);
   const [skip, setSkip] = useState(0);
   const [recovered, setRecovered] = useState<Record<string, any>>({});
   const [busy, setBusy] = useState('');
-  useEffect(() => setSkip(0), [search]);
-  const path = `/forensics/evidence/${encodeURIComponent(evidenceId)}/files?limit=${LIMIT}&skip=${skip}${deletedOnly ? '&deleted=true' : ''}${search ? `&q=${encodeURIComponent(search)}` : ''}`;
-  const { data, error, loading } = useApi<{ data: FsEntry[]; total: number }>(path);
+  const [details, setDetails] = useState<FsEntry | null>(null);
+  useEffect(() => setSkip(0), [search, category, flag, hideKnown]);
+  const qs = new URLSearchParams({ limit: String(LIMIT), skip: String(skip) });
+  if (deletedOnly) qs.set('deleted', 'true');
+  if (search) qs.set('q', search);
+  if (category) qs.set('category', category);
+  if (flag === 'renamed') qs.set('renamed', 'true');
+  else if (flag === 'encrypted') qs.set('encrypted', 'true');
+  else if (flag) qs.set('hash_status', flag);
+  if (hideKnown && flag !== 'KNOWN_GOOD') qs.set('hide_known', 'true');
+  const { data, error, loading } = useApi<{ data: FsEntry[]; total: number }>(`/forensics/evidence/${encodeURIComponent(evidenceId)}/files?${qs}`);
+  const filtered = Boolean(search || category || flag);
 
   async function recover(f: FsEntry) {
     const key = `${f.partition_offset}:${f.inode}`;
@@ -93,20 +149,34 @@ function FileIndex({ evidenceId, deletedOnly, onRecovered }: { evidenceId: strin
   return (
     <>
       <div className="row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
-        <input className="input sm" style={{ maxWidth: 340 }} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setSearch(q.trim())} placeholder="Filter by path, e.g. payroll or .docx" />
+        <input className="input sm" style={{ maxWidth: 300 }} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setSearch(q.trim())} placeholder="Filter by path, e.g. payroll or .docx" />
         <Button size="sm" icon={<Search size={13} />} onClick={() => setSearch(q.trim())}>Filter</Button>
-        {search && <Button size="sm" variant="ghost" onClick={() => { setQ(''); setSearch(''); }}>Clear</Button>}
-        <span className="small muted">{data ? `${formatNumber(data.total)} ${deletedOnly ? 'deleted entries' : 'entries'}` : ''}</span>
+        <select className="select sm" style={{ width: 150 }} value={category} onChange={(e) => setCategory(e.target.value)} aria-label="File type">
+          <option value="">All types</option>
+          {Object.entries(CATEGORY_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+        </select>
+        <select className="select sm" style={{ width: 250 }} value={flag} onChange={(e) => setFlag(e.target.value as Flag)} aria-label="Flag">
+          {FLAGS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+        </select>
+        <label className="check" title="Files whose hash is in a known-good set (for example the NSRL) are hidden">
+          <input type="checkbox" checked={hideKnown} disabled={flag === 'KNOWN_GOOD'} onChange={(e) => setHideKnown(e.target.checked)} />
+          Hide known-good files
+        </label>
+        {filtered && <Button size="sm" variant="ghost" onClick={() => { setQ(''); setSearch(''); setCategory(''); setFlag(''); }}>Clear</Button>}
+        <span className="small muted">{data ? `${formatNumber(data.total)} ${deletedOnly ? 'deleted' : ''} ${data.total === 1 ? 'entry' : 'entries'}`.replace('  ', ' ') : ''}</span>
       </div>
       <ErrorBanner error={error} />
       {loading && !data ? (
         <Loading />
       ) : !data?.data.length ? (
-        <Empty title={deletedOnly ? 'No deleted entries' : 'No matching files'} text={deletedOnly ? 'The filesystem metadata in this image describes no deleted files. File carving can still find data in unallocated space.' : undefined} />
+        <Empty
+          title={filtered ? 'No matching files' : deletedOnly ? 'No deleted entries' : 'No files'}
+          text={deletedOnly && !filtered ? 'The filesystem metadata in this image describes no deleted files. File carving can still find data in unallocated space.' : undefined}
+        />
       ) : (
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Path</th><th>Inode</th><th>Size</th><th>Modified</th><th>Accessed</th><th>Created</th><th /></tr></thead>
+            <thead><tr><th>Path</th><th>Type</th><th>Size</th><th>Modified</th><th>Accessed</th><th>Created</th><th /></tr></thead>
             <tbody>
               {data.data.map((f) => {
                 const key = `${f.partition_offset}:${f.inode}`;
@@ -118,14 +188,22 @@ function FileIndex({ evidenceId, deletedOnly, onRecovered }: { evidenceId: strin
                         {f.is_dir ? <Folder size={14} style={{ flex: 'none', marginTop: 2 }} /> : <File size={14} style={{ flex: 'none', marginTop: 2 }} />}
                         <span className={f.deleted ? 'strong' : ''}>{f.path}</span>
                       </span>
-                      {f.deleted && <Badge tone="danger">{(f.deleted_status || 'deleted').toUpperCase()}</Badge>}
+                      <span className="row" style={{ gap: 4 }}>
+                        {f.deleted && <Badge tone="danger">{(f.deleted_status || 'deleted').toUpperCase()}</Badge>}
+                        <FileFlags f={f} />
+                      </span>
                     </td>
-                    <td className="mono small">{f.inode}</td>
+                    <td className="small">
+                      {f.is_dir ? '—' : f.file_category ? (
+                        <>{CATEGORY_LABELS[f.file_category] || f.file_category}<div className="tiny muted mono">{f.mime}</div></>
+                      ) : <span className="muted">—</span>}
+                    </td>
                     <td className="small nowrap">{f.is_dir ? '—' : formatBytes(f.size)}</td>
                     <td className="mono tiny nowrap">{time(f.mtime, false)}</td>
                     <td className="mono tiny nowrap">{time(f.atime, false)}</td>
                     <td className="mono tiny nowrap">{time(f.crtime, false)}</td>
                     <td className="nowrap right">
+                      {!f.is_dir && <Button size="sm" variant="ghost" className="icon-btn" icon={<Info size={15} />} onClick={() => setDetails(f)} aria-label={`Details of ${f.path}`} title="Hashes, type and same content" />}{' '}
                       <TagButton type="FILE" id={f._id} title={f.path} />{' '}
                       {!f.is_dir && <ViewButton source={{ kind: 'image', evidenceId, inode: f.inode, offset: f.partition_offset, name: f.path }} />}{' '}
                       {rec ? (
@@ -146,7 +224,84 @@ function FileIndex({ evidenceId, deletedOnly, onRecovered }: { evidenceId: strin
         </div>
       )}
       {data && <Pager skip={skip} limit={LIMIT} total={data.total} onChange={setSkip} />}
+      <FileDetails caseId={caseId} file={details} onClose={() => setDetails(null)} />
     </>
+  );
+}
+
+/** Everything file processing knows about one file, and where else in the case the same content is. */
+export function FileDetails({ caseId, file: f, onClose }: { caseId: string; file: FsEntry | null; onClose: () => void }) {
+  const same = useApi<{ files: FsEntry[]; artifacts: Artifact[] }>(
+    f?.sha256 ? `/forensics/hash?case_id=${encodeURIComponent(caseId)}&digest=${f.sha256}` : null,
+  );
+  const others = (same.data?.files || []).filter((x) => x._id !== f?._id);
+  const copies = same.data?.artifacts || [];
+  return (
+    <Modal open={!!f} title={`File details — ${f?.name || f?.path || ''}`} onClose={onClose} wide>
+      {f && (
+        <div className="stack">
+          {!f.sha256 && !f.hash_error && (
+            <Banner tone="info">This file has not been hashed yet: run the analysis with the standard profile (file hashes and types).</Banner>
+          )}
+          {f.hash_error && <Banner tone="warn">The file could not be read for hashing: {f.hash_error}</Banner>}
+          <dl className="kv">
+            <dt>Path</dt><dd className="mono small">{f.path}</dd>
+            <dt>Evidence</dt><dd className="small">{f.evidence_id} · volume {f.volume_id || `offset ${f.partition_offset}`} · inode <span className="mono">{f.inode}</span>{f.deleted && ' · deleted'}</dd>
+            <dt>Size</dt><dd className="small">{formatBytes(f.size)} ({formatNumber(f.size)} bytes)</dd>
+            {f.mime && (<>
+              <dt>Type (from content)</dt>
+              <dd className="small">{CATEGORY_LABELS[f.file_category || ''] || f.file_category} · <span className="mono">{f.mime}</span><div className="tiny muted">{f.magic}</div></dd>
+              <dt>Name check</dt>
+              <dd className="small">{f.ext_mismatch ? <><Badge tone="warn">RENAMED</Badge> The name suggests {f.expected_type}, but the content is <span className="mono">{f.mime}</span>.</> : 'The name matches the content (or its extension says nothing about it).'}</dd>
+              <dt>Entropy</dt>
+              <dd className="small">{f.entropy?.toFixed(3)} bits per byte<span className="muted"> (0 = constant, 8 = indistinguishable from random; compressed and encrypted data is close to 8)</span></dd>
+              <dt>Encryption</dt>
+              <dd className="small">{f.encryption ? <><Badge tone="warn">ENCRYPTED</Badge> {f.encryption.detail}</> : 'None recognised'}</dd>
+            </>)}
+            {f.sha256 && (<>
+              <dt>MD5</dt><dd><Hash value={f.md5} /></dd>
+              <dt>SHA-1</dt><dd><Hash value={f.sha1} /></dd>
+              <dt>SHA-256</dt><dd><Hash value={f.sha256} /></dd>
+              <dt>Hashed</dt><dd className="small">{f.deleted ? 'Deleted file: the hashes are of its content as it is on the disk now (its clusters may have been reused).' : 'The allocated file content.'}</dd>
+              <dt>Hash sets</dt>
+              <dd className="small">
+                {f.hash_sets?.length ? f.hash_sets.map((s) => (
+                  <div key={s.set_id}><Badge tone={HASH_KIND[s.kind].tone}>{HASH_KIND[s.kind].label}</Badge> {s.name} <span className="muted">({s.set_id}, {s.algorithm.toUpperCase()})</span></div>
+                )) : 'In no imported hash set'}
+              </dd>
+            </>)}
+          </dl>
+          {f.sha256 && (
+            <div>
+              <h4 style={{ margin: '4px 0 8px' }}>Same content elsewhere in this case</h4>
+              {same.loading && !same.data ? <Loading /> : !others.length && !copies.length ? (
+                <p className="small muted">No other file in the case has this SHA-256.</p>
+              ) : (
+                <table className="table">
+                  <thead><tr><th>Where</th><th>Evidence</th><th>Kind</th></tr></thead>
+                  <tbody>
+                    {others.map((x) => (
+                      <tr key={x._id}>
+                        <td className="cell-path mono small">{x.path}</td>
+                        <td className="small">{x.evidence_id}</td>
+                        <td className="small">{x.deleted ? <Badge tone="danger">DELETED</Badge> : 'File'}</td>
+                      </tr>
+                    ))}
+                    {copies.map((a) => (
+                      <tr key={a._id}>
+                        <td className="cell-path mono small">{a.filename}{a.original_path && <div className="tiny muted">from {a.original_path}</div>}</td>
+                        <td className="small">{a.evidence_id}</td>
+                        <td className="small">{a.type === 'RECOVERED_FILE' ? 'Recovered copy' : a.type === 'CARVED_FILE' ? 'Carved file' : 'Extracted file'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
   );
 }
 

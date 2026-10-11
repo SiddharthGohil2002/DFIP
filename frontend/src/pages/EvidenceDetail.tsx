@@ -199,7 +199,7 @@ export function EvidenceDetailPage() {
                   <Stat label="YARA matches" value={formatNumber(counts.yara_matches)} hint={`${formatNumber(counts.files_scanned)} files scanned`} />
                 </div>
                 <div className="row">
-                  <Link className="btn sm" to={`/app/files?evidence=${e.evidence_id}`}>Deleted files</Link>
+                  <Link className="btn sm" to={`/app/files?evidence=${e.evidence_id}`}>Files</Link>
                   <Link className="btn sm" to="/app/timeline">Timeline</Link>
                   <Link className="btn sm" to="/app/browser">Browser history</Link>
                   <Link className="btn sm" to="/app/usb">USB devices</Link>

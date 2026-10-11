@@ -166,6 +166,10 @@ export interface CaseCounts {
   recent_files: number;
   recycle_bin_items: number;
   user_accounts?: number;
+  renamed_files?: number;
+  encrypted_files?: number;
+  known_bad_files?: number;
+  notable_files?: number;
   malware_indicators: number;
   patterns: number;
   anomalies_flagged: number;
@@ -198,6 +202,46 @@ export interface FsEntry {
   atime?: string | null;
   ctime?: string | null;
   crtime?: string | null;
+  volume_id?: string;
+  // From file processing (absent until the fileproc module has run).
+  md5?: string;
+  sha1?: string;
+  sha256?: string;
+  mime?: string;
+  magic?: string;
+  file_category?: string;
+  ext_mismatch?: boolean;
+  /** What the name suggests when the content contradicts it, e.g. "JPEG image". */
+  expected_type?: string | null;
+  entropy?: number;
+  encryption?: { kind: 'ZIP' | 'OFFICE' | 'PDF' | 'HIGH_ENTROPY'; detail: string } | null;
+  hash_basis?: string;
+  hash_error?: string | null;
+  hash_status?: HashKind | null;
+  hash_sets?: { set_id: string; name: string; kind: HashKind; algorithm: string }[];
+}
+
+export type HashKind = 'KNOWN_GOOD' | 'KNOWN_BAD' | 'NOTABLE';
+
+export interface HashSet {
+  set_id: string;
+  name: string;
+  kind: HashKind;
+  description?: string | null;
+  status: 'IMPORTING' | 'READY' | 'FAILED';
+  format?: string;
+  count?: number;
+  counts?: Record<'md5' | 'sha1' | 'sha256', number>;
+  algorithms?: string[];
+  invalid_lines?: number;
+  error?: string | null;
+  source_filename?: string;
+  source_size?: number;
+  source_sha256?: string;
+  imported_by_name?: string;
+  imported_at?: string;
+  ready_at?: string;
+  job_id?: string;
 }
 
 export interface TimelineEvent {

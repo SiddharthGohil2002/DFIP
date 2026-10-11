@@ -31,12 +31,15 @@ class Module:
     requires: tuple[str, ...] = ()
     weight = 10
     collections: tuple[str, ...] = ()   # collections whose documents this module owns
+    fields: dict[str, tuple[str, ...]] = {}  # fields this module sets on other modules' documents
 
     def clear(self, db, evidence_id: str):
-        """Removes this module's previous output for one evidence item."""
+        """Removes this module's previous output for one evidence item: its documents, and its fields on others'."""
         q = {'evidence_id': evidence_id, 'pipeline_module': self.name}
         for col in set(self.collections) | {'pipeline_warnings'}:
             db[col].delete_many(q)
+        for col, names in self.fields.items():
+            db[col].update_many({'evidence_id': evidence_id}, {'$unset': {n: '' for n in names}})
         db['analysis_facts'].update_one({'evidence_id': evidence_id}, {'$unset': {self.name: ''}})
 
     def run(self, ctx: 'ModuleContext') -> None:  # pragma: no cover - implemented by subclasses

@@ -47,6 +47,12 @@ class _Col:
         for path in update.get('$unset', {}):
             doc.pop(path, None)
 
+    def update_many(self, q, update):
+        for doc in self.docs:
+            if self._match(doc, q):
+                for path in update.get('$unset', {}):
+                    doc.pop(path, None)
+
 
 class FakeDB(dict):
     def __missing__(self, name):
@@ -69,6 +75,8 @@ def test_order_respects_requirements():
 def test_profiles_and_requests():
     assert resolve_request() == PROFILES['standard']
     assert resolve_request('quick') == ['tz_probe', 'fs_index', 'computer', 'artifacts']
+    # Standard adds file processing (hashes, types, hash sets, YARA) on every file.
+    assert PROFILES['standard'] == PROFILES['full'] == ORDER
     assert resolve_request(modules=['yara', 'yara']) == ['yara']
     with pytest.raises(ValueError):
         resolve_request('everything')
@@ -81,17 +89,21 @@ def _done(*names):
 
 
 def test_plan_adds_missing_prerequisites():
-    assert plan(['yara'], {}) == ['tz_probe', 'fs_index', 'yara']
+    assert plan(['yara'], {}) == ['tz_probe', 'fs_index', 'fileproc', 'yara']  # YARA chooses files by their real type
+    assert plan(['hash_match'], {}) == ['tz_probe', 'fs_index', 'fileproc', 'hash_match']
     assert plan(['artifacts'], {}) == ['tz_probe', 'fs_index', 'artifacts']
     assert plan(['computer'], {}) == ['computer']  # reads its hives directly
 
 
 def test_plan_reruns_only_what_is_needed():
-    status = _done('tz_probe', 'fs_index', 'computer', 'artifacts', 'yara')
+    status = _done(*ORDER)
     assert plan(['yara'], status) == ['yara']                       # nothing depends on yara
-    assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'yara']  # dependents are refreshed
+    assert plan(['hash_match'], status) == ['hash_match']           # a hash set changed: only matching runs again
+    assert plan(['fileproc'], status) == ['fileproc', 'hash_match', 'yara']
+    # Dependents are refreshed.
+    assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara']
     # A new time zone re-indexes the file system (FAT times) and refreshes what was built on the index.
-    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'yara']
+    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara']
     assert plan(['fs_index'], _done('tz_probe', 'fs_index')) == ['fs_index']  # dependents that never ran are not added
 
 
@@ -116,6 +128,17 @@ def test_clear_removes_only_the_modules_own_output():
     _ctx(db, REGISTRY['artifacts']).insert('forensic_artifacts', [{'evidence_id': 'EVID-1', 'type': 'BROWSER_HISTORY'}])
     REGISTRY['yara'].clear(db, 'EVID-1')
     assert [d['type'] for d in db['forensic_artifacts'].docs] == ['BROWSER_HISTORY']
+
+
+def test_clear_unsets_the_fields_a_module_adds_to_others_documents():
+    db = FakeDB()
+    _ctx(db, REGISTRY['fs_index']).insert('fs_entries', [{'evidence_id': 'EVID-1', 'path': '/a.txt'}])
+    db['fs_entries'].docs[0].update(sha256='ab' * 32, mime='text/plain', hash_status='KNOWN_GOOD', hash_sets=['HS-0001'])
+    REGISTRY['hash_match'].clear(db, 'EVID-1')
+    doc = db['fs_entries'].docs[0]
+    assert 'hash_status' not in doc and 'hash_sets' not in doc and doc['sha256'] == 'ab' * 32
+    REGISTRY['fileproc'].clear(db, 'EVID-1')
+    assert db['fs_entries'].docs == [doc] and 'sha256' not in doc and 'mime' not in doc and doc['path'] == '/a.txt'
 
 
 def test_warnings_are_all_stored_but_capped_on_the_summary():
