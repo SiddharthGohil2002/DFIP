@@ -194,6 +194,23 @@ export function SearchPage() {
               </tr>
             ))}
           </Group>
+          <Group title="NTFS: altered times, data streams and the USN journal" total={(res.totals.ntfs ?? 0) + (res.totals.usn ?? 0)}
+            shown={(res.results.ntfs || []).length + (res.results.usn || []).length} link={{ to: '/app/ntfs', label: 'Open the file system journal' }}>
+            {(res.results.ntfs || []).map((a) => (
+              <tr key={a._id}>
+                <td className="small nowrap">{a.type === 'TIMESTOMP_SUSPECT' ? 'Times look altered' : 'Data stream'}</td>
+                <td className="mono small nowrap">{a.zone?.ZoneName || ''}</td>
+                <td className="cell-path small mono" colSpan={2}>{a.path}</td>
+              </tr>
+            ))}
+            {(res.results.usn || []).map((x) => (
+              <tr key={x._id}>
+                <td className="small nowrap">USN journal</td>
+                <td className="mono small nowrap">{time(x.time)}</td>
+                <td className="cell-path small mono" colSpan={2}>{x.path || x.name} · {(x.reasons || []).join(' ')}</td>
+              </tr>
+            ))}
+          </Group>
           <Group title="User accounts" total={res.totals.accounts ?? 0} shown={(res.results.accounts || []).length} link={{ to: '/app/computer', label: 'Open computer and users' }}>
             {(res.results.accounts || []).map((a) => (
               <tr key={a._id}>

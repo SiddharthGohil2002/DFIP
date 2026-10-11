@@ -21,13 +21,14 @@ REGISTRY_LABELS = {'USERASSIST': 'Program run (UserAssist)', 'SHELLBAG': 'Folder
                    'RDP_CONNECTION': 'Remote desktop connection', 'NETWORK_DRIVE': 'Network drive'}
 WINDOWS_LABELS = {'JUMPLIST_ENTRY': 'Jump list item', 'TIMELINE_ACTIVITY': 'Windows Timeline activity', 'THUMBNAIL': 'Thumbnail',
                   'SRUM_NETWORK': 'Network usage (SRUM)', 'SRUM_APP_USAGE': 'Application usage (SRUM)',
-                  'SRUM_CONNECTIVITY': 'Network connection (SRUM)', 'SEARCH_INDEX_ENTRY': 'Windows Search index entry'}
+                  'SRUM_CONNECTIVITY': 'Network connection (SRUM)', 'SEARCH_INDEX_ENTRY': 'Windows Search index entry',
+                  'TIMESTOMP_SUSPECT': 'Times possibly altered (NTFS)', 'ALTERNATE_STREAM': 'Alternate data stream'}
 KEY_VERSION = 2  # 2: keys use volume_id and never a time that a time-zone correction could change
 
 ITEM_COLLECTIONS = {
     'FILE': 'fs_entries', 'TIMELINE_EVENT': 'timeline_events', 'BROWSER': 'forensic_artifacts',
     'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts', 'ENTITY': 'entities',
-    'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records', 'WINDOWS': 'forensic_artifacts',
+    'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records', 'WINDOWS': 'forensic_artifacts', 'USN': 'usn_records',
 }
 LABELS = ('EVIDENCE', 'NOTABLE', 'FOLLOW_UP')
 _ARTIFACT_TYPES = {
@@ -36,7 +37,8 @@ _ARTIFACT_TYPES = {
     'ARTIFACT': {'RECOVERED_FILE', 'CARVED_FILE', 'EXTRACTED_FILE', 'MALWARE_INDICATOR'},
     'REGISTRY': {'USERASSIST', 'SHELLBAG', 'TYPED_PATH', 'TYPED_URL', 'EXPLORER_SEARCH', 'RECENT_DOC', 'RUN_MRU', 'PERSISTENCE',
                  'INSTALLED_PROGRAM', 'AMCACHE_FILE', 'SHIMCACHE_ENTRY', 'BAM_ENTRY', 'RDP_CONNECTION', 'NETWORK_DRIVE'},
-    'WINDOWS': {'JUMPLIST_ENTRY', 'TIMELINE_ACTIVITY', 'THUMBNAIL', 'SRUM_NETWORK', 'SRUM_APP_USAGE', 'SRUM_CONNECTIVITY', 'SEARCH_INDEX_ENTRY'},
+    'WINDOWS': {'JUMPLIST_ENTRY', 'TIMELINE_ACTIVITY', 'THUMBNAIL', 'SRUM_NETWORK', 'SRUM_APP_USAGE', 'SRUM_CONNECTIVITY', 'SEARCH_INDEX_ENTRY',
+                'TIMESTOMP_SUSPECT', 'ALTERNATE_STREAM'},
 }
 
 
@@ -83,6 +85,8 @@ def natural_key(item_type: str, doc) -> dict:
         return {'evidence_id': e, 'nk': doc.get('nk')}
     if item_type == 'WINDOWS':
         return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
+    if item_type == 'USN':
+        return {'evidence_id': e, 'nk': doc.get('nk')}
     if t == 'MALWARE_INDICATOR':
         return {'evidence_id': e, 'type': t, 'rule': doc.get('rule'), 'original_path': doc.get('original_path')}
     if t == 'EXTRACTED_FILE':
@@ -142,10 +146,18 @@ def snapshot(item_type: str, doc) -> dict:
             title, when = doc.get('indexed_path') or f'Thumbnail {doc.get("entry_hash")}', None
         elif t == 'SEARCH_INDEX_ENTRY':
             title, when = doc.get('path'), doc.get('modified')
+        elif t == 'TIMESTOMP_SUSPECT':
+            title, when = doc.get('path'), doc.get('fn_created')
+        elif t == 'ALTERNATE_STREAM':
+            title, when = doc.get('path'), None
         else:
             title, when = doc.get('app'), doc.get('time')
         detail = f'{label}{" · " + doc["user"] if doc.get("user") else ""} · {doc.get("source_path")}'
         return {'title': title, 'detail': detail, 'timestamp': _iso(when), 'source': doc.get('source_path')}
+    elif item_type == 'USN':
+        title = doc.get('path') or doc.get('name')
+        detail = f'USN journal: {" ".join(doc.get("reasons") or [])} (record {doc.get("usn")})'
+        return {'title': title, 'detail': detail, 'timestamp': _iso(doc.get('time')), 'source': 'USN journal'}
     elif item_type == 'EVENT':
         title = doc.get('description') or doc.get('title') or f'{doc.get("channel")} event {doc.get("event_id")}'
         detail = f'{doc.get("channel")} event {doc.get("event_id")} (record {doc.get("record_id")}){" · " + doc["user"] if doc.get("user") else ""}'

@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Monitor, Bookmark, Clock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen, ScanSearch,
+  Activity, BarChart3, Monitor, Bookmark, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen, ScanSearch,
   ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
@@ -85,6 +85,13 @@ export const NAV: NavGroup[] = [
         count: (c) => c.event_records ?? 0,
         alert: (c) => (c.event_detections ?? 0) > 0,
         countLabel: (c) => `${n(c.notable_events ?? 0)} notable · ${n(c.event_detections ?? 0)} detections`,
+      },
+      {
+        to: '/app/ntfs', label: 'File system journal', icon: FileClock, tone: 'amber',
+        description: 'NTFS: files whose times look altered, alternate data streams (where downloads came from) and the USN change journal.',
+        count: (c) => c.usn_records ?? 0,
+        alert: (c) => (c.timestomp_suspects ?? 0) > 0,
+        countLabel: (c) => `${n(c.timestomp_suspects ?? 0)} timestomped · ${n(c.alternate_streams ?? 0)} streams · ${n(c.usn_records ?? 0)} journal records`,
       },
       {
         to: '/app/computer', label: 'Computer and users', icon: Monitor, tone: 'teal',

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added — NTFS internals
+- **File system journal** (new `ntfs` module, standard and full profiles, and a new page) for every NTFS volume:
+  - **Timestomping**: files whose `$STANDARD_INFORMATION` times look set back, compared with their `$FILE_NAME` times, flagged strong or possible with the reasons. No false positives on a real Windows XP `$MFT` of 13,060 entries.
+  - **Alternate data streams**, with the Mark of the Web decoded (which downloaded files came from where) and streams that Windows does not write flagged for review.
+  - **The USN change journal**: every file created, renamed, overwritten, deleted or with its times changed that the journal still holds, with full paths; a wipe (rename, overwrite, delete) shows on the timeline.
+- Records can be tagged, are found by keyword search, are counted on the overview and have a report section; downloads count as user activity on the dashboard.
+- The backend image gains libfsntfs and libqcow (the tests read Plaso's journal sample from its QCOW image). A second test disk, alice's office desktop on NTFS, is built with ntfs-3g and libntfs-3g (`make-ntfs-image.sh`).
+
 ### Added — Jump Lists, Windows Timeline, thumbnails, SRUM and Windows Search
 - **Jump Lists** (new `user_activity` module, standard and full profiles): the files and folders each program opened, with when (AutomaticDestinations: last used, pinned, use count, the computer and the MAC address from the object identifiers) and the programs' own lists and tasks (CustomDestinations).
 - **Windows Timeline** (ActivitiesCache.db): applications and documents opened, how long an application was in use, clipboard copies with the copied text, and entries the user deleted from the Timeline.

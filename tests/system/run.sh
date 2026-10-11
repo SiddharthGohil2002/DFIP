@@ -5,6 +5,7 @@
 # Needs Docker, the current backend image and the synthetic test image. From the repository root:
 #   docker compose build backend celery_worker
 #   docker run --rm -v "$PWD:/repo" -w /repo python:3.11-slim sh scripts/test-image/make-test-image.sh
+#   docker run --rm --privileged -v "$PWD:/repo" -w /repo python:3.11-slim sh scripts/test-image/make-ntfs-image.sh
 #   sh tests/system/run.sh
 #
 # Output: tests/system/out/<phase>.log and results-<phase>.json. Exits 1 if any check fails.

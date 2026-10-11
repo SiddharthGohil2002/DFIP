@@ -505,10 +505,10 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
-STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc', 'hash_match',
-                    'yara']
+STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc',
+                    'hash_match', 'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
-ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc', 'containers',
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc', 'containers',
                'hash_match', 'yara', 'content', 'unallocated', 'found_data']
 
 
@@ -570,11 +570,12 @@ def t_modules():
     j = _analyse(inv, E, {'modules': ['fs_index']})
     s = j['result']['summary']
     check('re-running the file system index also refreshes the modules built on it',
-          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc', 'hash_match', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
+          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc', 'hash_match', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
     j = _analyse(inv, E, {'modules': ['tz_probe']})
     s = j['result']['summary']
     check('re-reading the time zone re-indexes the file system and refreshes what is built on it (not the computer module)',
-          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc', 'hash_match', 'yara']
+          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc', 'hash_match',
+                                 'yara']
           and s['counts'] == C['COUNTS'], s.get('plan'))
 
     # A broker redelivery of a finished job must not run it again.
@@ -1102,7 +1103,7 @@ def t_computer():
     after = db.fs_entries.find_one({'evidence_id': E, 'path': '/Users/alice/Documents/payroll-export.csv'})
     tz = get(f'/api/evidence/{E}', inv).json.get('time_zone') or {}
     check('setting the time zone re-indexes with it (FAT times as recorded: 05:41:02 = local time read as UTC)',
-          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc',
+          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc',
                                                                    'hash_match', 'yara']
           and after['mtime'] == utc(2026, 9, 1, 5, 41, 2) and tz.get('source') == 'override' and tz.get('zone') == 'UTC', (j.get('status'), after.get('mtime'), tz.get('source')))
     check('...and tags still follow their items after the times changed', j.get('result', {}).get('summary', {}).get('tags') == {'relinked': 2, 'unresolved': 0},
@@ -2364,6 +2365,220 @@ def t_user_activity_samples():
           'the rest "not on the disk"', c_drive and not wrong and any(x['file_state'] == 'on disk' for x in c_drive), wrong[:5])
 
 
+NTFS_IMG = Path('/testdata/dfip-ntfs-disk.dd')
+NTFS_MANIFEST = Path('/testdata/dfip-ntfs-disk.manifest.json')
+
+
+def _istat_times(img, offset, inode):
+    """$STANDARD_INFORMATION and $FILE_NAME times from istat, to the millisecond (as DFIP stores them)."""
+    text = sh('istat', '-o', str(offset), str(img), str(inode)).stdout.decode()
+    out, part = {}, None
+    for line in text.splitlines():
+        if line.startswith('$STANDARD_INFORMATION'):
+            part = 'si'
+        elif line.startswith('$FILE_NAME'):
+            part = 'fn'
+        elif line.startswith('Attributes:'):
+            part = None
+        m = re.match(r'^(Created|File Modified|MFT Modified|Accessed):\s+(\S+ \S+?)(\d{0,3})\d* \(UTC\)', line)
+        if part and m:
+            key = {'Created': 'created', 'File Modified': 'modified', 'MFT Modified': 'changed', 'Accessed': 'accessed'}[m.group(1)]
+            out[f'{part}_{key}'] = datetime.fromisoformat((m.group(2) + m.group(3)).rstrip('.')).replace(tzinfo=timezone.utc)
+    return out
+
+
+def _usnjls(img, offset):
+    """usnjls records: (entry, sequence, parent entry, parent sequence, time to the ms, reasons, name)."""
+    out = []
+    for line in sh('usnjls', '-o', str(offset), str(img)).stdout.decode().splitlines():
+        ref, parent, ts, reasons, name = line.split('\t')
+        sec, _, nsec = ts.partition('.')  # usnjls prints the fraction as nanoseconds, without leading zeros
+        when = datetime.fromtimestamp(int(sec), tz=timezone.utc) + timedelta(milliseconds=int(nsec or 0) // 1_000_000)
+        e, s = ref.split('-')
+        pe, ps = parent.split('-')
+        out.append((int(e), int(s), int(pe), int(ps), when, reasons.split(), name))
+    return out
+
+
+@section('12k NTFS: timestomping, alternate data streams and the USN journal (an NTFS disk vs istat, icat, usnjls and the generator)')
+def t_ntfs():
+    if not NTFS_IMG.is_file():
+        check('the NTFS test disk exists (scripts/test-image/make-ntfs-image.sh)', False)
+        return
+    inv = C['INVESTIGATOR']
+    truth = json.loads(NTFS_MANIFEST.read_text())
+    case = post('/api/cases', inv, {'name': 'Office desktop (NTFS)', 'priority': 'HIGH'}).json['case_id']
+    ev = upload(inv, case, NTFS_IMG.read_bytes(), 'alice-desktop.dd').json['evidence_id']
+    j = _analyse(inv, ev)
+    counts = j.get('result', {}).get('summary', {}).get('counts', {})
+    C['NTFS_CASE'], C['NTFS_E'] = case, ev
+    check('the standard analysis reads the NTFS volume: 1 volume, 20 journal records, 3 streams, 1 file with altered times',
+          j['status'] == 'COMPLETED' and (counts.get('ntfs_volumes'), counts.get('usn_records'), counts.get('alternate_streams'),
+                                          counts.get('timestomp_suspects'), counts.get('timestomp_possible')) == (1, 20, 3, 1, 0), counts)
+    vols = get(f'/api/forensics/ntfs/volumes?case_id={case}', inv).json['data']
+    serial = re.search(r'Volume Serial Number: (\S+)', sh('fsstat', '-o', '2048', str(NTFS_IMG)).stdout.decode()).group(1)
+    check('the volume serial number and label equal fsstat', vols and vols[0]['serial_number'] == serial.upper() and vols[0]['name'] == 'ALICE-DATA',
+          (vols, serial))
+
+    # Timestomping, against istat.
+    ts = get(f'/api/forensics/ntfs/timestomp?case_id={case}', inv).json['data']
+    stomped = truth['timestomped']
+    t = ts[0] if ts else {}
+    ist = _istat_times(NTFS_IMG, 2048, 73)
+    check('only budget-2025.txt is flagged (strong): $SI says 2 March 2024 09:00:00, $FN says it was created 1 September 2026',
+          [x['path'] for x in ts] == [stomped['path']] and t['level'] == 'strong' and iso(t['si_created']) == iso(stomped['si'])
+          and iso(t['fn_created']).date().isoformat() == '2026-09-01', ts)
+    check("its $SI and $FN times equal istat's, to the millisecond",
+          all(iso(t[k]) == ist[k] for k in ('si_created', 'si_modified', 'si_changed', 'si_accessed', 'fn_created', 'fn_modified')), (t, ist))
+
+    # Alternate data streams, against icat.
+    streams = {s['path']: s for s in get(f'/api/forensics/ntfs/streams?case_id={case}', inv).json['data']}
+    check("the three streams are found (the journal's own $J and $Max are not listed)", set(streams) == set(truth['streams']), sorted(streams))
+    good = []
+    for path, text in truth['streams'].items():
+        s = streams.get(path, {})
+        data = sh('icat', '-o', '2048', str(NTFS_IMG), s.get('inode') or '0').stdout
+        good.append(data == text.encode() and s.get('sha256') == hashlib.sha256(data).hexdigest() and s.get('text') == text)
+    check('each stream equals icat byte for byte (SHA-256 and content)', all(good), good)
+    sd = streams.get('/Users/alice/Downloads/SecureDelete.exe:Zone.Identifier', {})
+    check('SecureDelete.exe was downloaded from the internet (zone 3), from the page Chrome recorded',
+          (sd.get('zone') or {}).get('ZoneName') == 'Internet' and sd['zone'].get('ReferrerUrl') == 'https://tools.example.org/securedelete'
+          and sd['zone'].get('HostUrl') == 'https://tools.example.org/securedelete/SecureDelete.exe', sd.get('zone'))
+    hidden = streams.get('/Users/alice/Documents/notes.txt:hidden.txt', {})
+    check('the note hidden in notes.txt:hidden.txt is shown, and has no stream kind (it is not a stream Windows writes)',
+          hidden.get('text') == 'Copy the payroll to the SanDisk, then wipe it.\r\n' and hidden.get('kind') is None, hidden)
+    view = get(f"/api/forensics/evidence/{ev}/preview?inode={hidden.get('inode')}&offset=2048", inv).json or {}
+    check('the hidden stream opens in the file viewer', 'Copy the payroll to the SanDisk' in (view.get('text') or ''), view)
+    downloads = get(f'/api/forensics/ntfs/streams?case_id={case}&downloaded=true', inv).json['total']
+    check('downloaded files can be listed on their own (2)', downloads == 2, downloads)
+
+    # The USN journal, against usnjls and the generator.
+    recs = get(f'/api/forensics/ntfs/usn?case_id={case}&limit=1000', inv).json['data']
+    ours = [(x['entry'], x['sequence'], x['parent_entry'], x['parent_sequence'], iso(x['time']), x['reasons'], x['name']) for x in recs]
+    theirs = _usnjls(NTFS_IMG, 2048)
+    planned = [(r['entry'], 1, r['parent_entry'], 1, iso(r['time']).replace(microsecond=iso(r['time']).microsecond // 1000 * 1000),
+                [n for b, n in USN_REASONS if r['reason_flags'] & b], r['name']) for r in truth['usn']]
+    check(f'all {len(theirs)} journal records equal usnjls and the generator (file and folder references, time, reasons, name)',
+          len(ours) == 20 and ours == [(a, b, c, d, e, sorted(f, key=_reason_order), g) for a, b, c, d, e, f, g in theirs] == planned,
+          (ours[:2], theirs[:2], planned[:2]))
+    paths = {x['usn']: x['path'] for x in recs}
+    check('each record has its full path, through its folder\'s MFT entry (the wiped file too, under both its names)',
+          paths[truth['usn'][7]['usn']] == '/Users/alice/Documents/payroll-copy.csv' and paths[truth['usn'][-1]['usn']] == '/Users/alice/Documents/AAAAAAAA.AAA'
+          and all(paths.values()), paths)
+    deleted = [x for x in sh('fls', '-r', '-p', '-o', '2048', str(NTFS_IMG)).stdout.decode().splitlines() if '*' in x and 'AAAAAAAA.AAA' in x]
+    check('the wiped file is deleted in the MFT (fls), its entry the one the journal names', deleted and deleted[0].split()[2].startswith(f"{truth['wiped']['entry']}-"),
+          deleted)
+    q = lambda extra: get(f'/api/forensics/ntfs/usn?case_id={case}{extra}', inv)
+    check('filters: a reason, closing records only, a name, an MFT entry; a bad reason is refused (400)',
+          q('&reason=FILE_DELETE').json['total'] == 1 and q('&closing=true').json['total'] == sum(1 for r in truth['usn'] if r['reason_flags'] & 0x80000000)
+          and q('&search=payroll-copy').json['total'] == 3 and q(f"&entry={truth['wiped']['entry']}").json['total'] == 8
+          and q('&reason=NOPE').status == 400)
+
+    # The timeline and the rest.
+    events = [e for e in get(f'/api/forensics/timeline?case_id={case}&limit=2000', inv).json['data'] if e.get('source') == 'NTFS']
+    by = lambda kind: [(iso(e['timestamp']), e['description']) for e in events if e['type'] == kind]
+    check('the timeline shows the wipe: renamed (was payroll-copy.csv), overwritten, deleted; and the time change on budget-2025.txt',
+          any(d == 'File renamed (USN journal): /Users/alice/Documents/AAAAAAAA.AAA, was payroll-copy.csv' for _, d in by('USN_CHANGE'))
+          and any(d.startswith('File deleted (USN journal): /Users/alice/Documents/AAAAAAAA.AAA') for _, d in by('USN_CHANGE'))
+          and any(d.startswith('File overwritten') for _, d in by('USN_CHANGE'))
+          and (utc(2026, 9, 1, 14, 16, 40, 250000), 'File times or attributes changed (USN journal): /Users/alice/Documents/budget-2025.txt') in by('USN_CHANGE'),
+          by('USN_CHANGE'))
+    check('...the altered times at the moment they were changed, and the two downloads with where they came from',
+          [t_ for t_, _ in by('TIMESTOMP_SUSPECT')] == [ist['si_changed']] and len(by('FILE_DOWNLOADED')) == 2
+          and any('https://tools.example.org/securedelete/SecureDelete.exe' in d for _, d in by('FILE_DOWNLOADED')), events[:3])
+    s = get(f'/api/forensics/search?case_id={case}&q=AAAAAAAA', inv).json['totals']
+    check('keyword search finds journal records', s.get('usn') == 5, s)
+    ov = get(f'/api/cases/{case}/overview', inv).json['counts']
+    check('the overview counts altered files, streams and journal records', (ov.get('timestomp_suspects'), ov.get('alternate_streams'), ov.get('usn_records')) == (1, 3, 20), ov)
+    check('another investigator gets 404', all(get(f'/api/forensics/ntfs/{p}?case_id={case}', C['INV2']).status == 404
+                                                for p in ('volumes', 'timestomp', 'streams', 'usn')))
+    tag = post('/api/tags', inv, {'case_id': case, 'item_type': 'USN', 'item_id': recs[-1]['_id'], 'label': 'EVIDENCE', 'note': 'wiped'})
+    j2 = _analyse(inv, ev, {'modules': ['ntfs']})
+    check('a journal record can be tagged, and the tag follows it when the volume is read again',
+          tag.status == 200 and j2['result']['summary'].get('tags') == {'relinked': 1, 'unresolved': 0}, (tag, j2.get('result', {}).get('summary', {}).get('tags')))
+    r = post(f'/api/reports?case_id={case}', inv)
+    if r.status == 200:
+        (OUT / 'report-ntfs.pdf').write_bytes(get(f"/api/reports/{r.json['report_id']}/download", inv).body)
+    check('a report of the NTFS case is generated', r.status == 200, r)
+
+
+USN_REASONS = [(0x00000001, 'DATA_OVERWRITE'), (0x00000002, 'DATA_EXTEND'), (0x00000004, 'DATA_TRUNCATION'), (0x00000010, 'NAMED_DATA_OVERWRITE'),
+               (0x00000020, 'NAMED_DATA_EXTEND'), (0x00000040, 'NAMED_DATA_TRUNCATION'), (0x00000100, 'FILE_CREATE'), (0x00000200, 'FILE_DELETE'),
+               (0x00000400, 'EA_CHANGE'), (0x00000800, 'SECURITY_CHANGE'), (0x00001000, 'RENAME_OLD_NAME'), (0x00002000, 'RENAME_NEW_NAME'),
+               (0x00004000, 'INDEXABLE_CHANGE'), (0x00008000, 'BASIC_INFO_CHANGE'), (0x00010000, 'HARD_LINK_CHANGE'),
+               (0x00020000, 'COMPRESSION_CHANGE'), (0x00040000, 'ENCRYPTION_CHANGE'), (0x00080000, 'OBJECT_ID_CHANGE'),
+               (0x00100000, 'REPARSE_POINT_CHANGE'), (0x00200000, 'STREAM_CHANGE'), (0x00400000, 'TRANSACTED_CHANGE'),
+               (0x00800000, 'INTEGRITY_CHANGE'), (0x80000000, 'CLOSE')]  # [MS-FSCC] USN_RECORD reason codes
+_reason_order = {n: i for i, (_, n) in enumerate(USN_REASONS)}.get
+
+
+@section('12l Real NTFS samples (dfVFS ntfs.raw vs fls and istat; Plaso\'s $MFT and USN journal vs Plaso and usnjls)')
+def t_ntfs_samples():
+    sys.path.insert(0, '/app')
+    from app.forensic import ntfs
+    raw = sample('dfvfs', 'ntfs.raw')
+    if raw:
+        vol, f = ntfs.open_volume(raw, 0)
+        ours = {('/' + ntfs.windows_path(e['path_hint']).lstrip('/')): e for e in ntfs.entries(vol) if e['path_hint'] and not e['path_hint'].startswith('\\$')}
+        fls = {'/' + line.split('\t', 1)[1]: line.split()[1].split('-')[0].rstrip(':')
+               for line in sh('fls', '-r', '-p', str(raw)).stdout.decode().splitlines() if '\t' in line and ':' not in line.split('\t', 1)[1]
+               and not line.split('\t', 1)[1].startswith('$') and '*' not in line}
+        check(f"dfVFS ntfs.raw: every file and folder ({len(fls)}) with the MFT entry fls gives", {p: str(e['entry']) for p, e in ours.items()} == fls,
+              (sorted(ours), fls))
+        ist = _istat_times(raw, 0, int(fls.get('/passwords.txt', 0)))
+        pw = ours.get('/passwords.txt', {})
+        check("dfVFS ntfs.raw: passwords.txt's $SI and $FN times equal istat's",
+              pw and pw['si']['created'].replace(microsecond=pw['si']['created'].microsecond // 1000 * 1000) == ist['si_created']
+              and pw['fn']['created'].replace(microsecond=pw['fn']['created'].microsecond // 1000 * 1000) == ist['fn_created'], (pw.get('si'), ist))
+        vol.close()
+        f.close()
+    mft = sample('plaso', 'MFT')
+    if mft:
+        import pyfsntfs
+        m = pyfsntfs.mft_metadata_file()
+        m.open(str(mft))
+        entries = list(ntfs.entries(m, first=0))
+        sam = next((e for e in entries if e['path_hint'] == '\\WINDOWS\\system32\\config\\SAM'), {})
+        caja = next((e for e in entries if e['name'] == 'CAJA1S19.js'), {})
+        orphan = next((e for e in entries if e['path_hint'] == '$Orphan\\session\\menu.text.css'), {})
+        expect = lambda e, when: e and e['fn']['created'] == when
+        check("Plaso's real Windows XP $MFT: SAM, the deleted CAJA1S19.js and the orphaned menu.text.css with the paths and times Plaso expects",
+              expect(sam, utc(2007, 6, 30, 12, 58, 50, 274054)) and expect(caja, utc(2009, 1, 14, 3, 38, 58, 586999)) and caja['allocated'] is False
+              and caja['path_hint'].endswith('Content.IE5\\9EUWFPZ1\\CAJA1S19.js') and expect(orphan, utc(2009, 1, 14, 21, 7, 11, 572185)),
+              (sam.get('path_hint'), caja.get('path_hint'), orphan.get('path_hint')))
+        flagged = [e['path_hint'] for e in entries if ntfs.timestomp_reasons(e['si_raw'], e['fn'], e['path_hint'])[0]]
+        check(f'...and none of its {len(entries):,} entries is flagged as timestomped (Windows installation times are not mistaken for it)',
+              not flagged, flagged[:5])
+    qcow = sample('plaso', 'usnjrnl.qcow2')
+    if qcow:
+        import pyqcow
+        q = pyqcow.file()
+        q.open(str(qcow))
+        local = Path(tempfile.mkdtemp()) / 'usnjrnl.dd'
+        with local.open('wb') as out:
+            size, pos = q.get_media_size(), 0
+            while pos < size:
+                out.write(q.read_buffer_at_offset(min(16 << 20, size - pos), pos))
+                pos += 16 << 20
+        q.close()
+        vol, f = ntfs.open_volume(local, 63 * 512)
+        recs = list(ntfs.usn_records(vol))
+        vol.close()
+        f.close()
+        first = recs[0] if recs else {}
+        check("Plaso's USN journal sample: 19 records; the first creates \"Nieuw - Tekstdocument.txt\" (entry 30-1 in folder 5-5) "
+              'at 21:15:27.2031250 on 30 November 2015, as Plaso expects',
+              len(recs) == 19 and (first['name'], first['entry'], first['sequence'], first['parent_entry'], first['parent_sequence'], first['reason_flags'],
+                                   first['time_raw']) == ('Nieuw - Tekstdocument.txt', 30, 1, 5, 5, 0x100, 130933917272031250), first)
+        theirs = _usnjls(local, 63)
+        ours = [(r['entry'], r['sequence'], r['parent_entry'], r['parent_sequence'],
+                 r['time'].replace(microsecond=r['time'].microsecond // 1000 * 1000), sorted(r['reasons'], key=_reason_order), r['name']) for r in recs]
+        check(f'...and its first {len(theirs)} records equal usnjls (which stops at the first record that crosses a 512-byte cluster)',
+              len(theirs) == 11 and ours[:len(theirs)] == [(a, b, c, d, e, sorted(f_, key=_reason_order), g) for a, b, c, d, e, f_, g in theirs],
+              (ours[:2], theirs[:2]))
+        local.unlink()
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -2858,7 +3073,7 @@ def t_overview():
 
 ACTIVITY_EVENT_TYPES = ('BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY,PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN,'
                         'PROGRAM_RUN_USERASSIST,PROGRAM_RUN_BAM,FOLDER_BROWSED,EXPLORER_SEARCH,TYPED_PATH,RECENT_DOC_OPENED,RUN_DIALOG,RDP_CONNECTION,'
-                        'LOGON,LOGOFF,JUMPLIST_OPENED,TIMELINE_ACTIVITY')
+                        'LOGON,LOGOFF,JUMPLIST_OPENED,TIMELINE_ACTIVITY,FILE_DOWNLOADED')
 
 
 @section('28b Activity dashboard')
@@ -3129,7 +3344,7 @@ def t_reg_disabled():
 PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
-             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

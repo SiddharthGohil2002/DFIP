@@ -133,7 +133,12 @@ const COUNT_LABELS: [string, string, string][] = [
   ['srum_app_records', 'SRUM application record', 'SRUM application records'],
   ['srum_connectivity_records', 'SRUM connection record', 'SRUM connection records'],
   ['search_index_entries', 'search index entry', 'search index entries'],
-  ['search_entries_not_on_disk', 'indexed file no longer on the disk', 'indexed files no longer on the disk'], ['usb_devices_from_event_logs', 'USB device seen only in the event logs', 'USB devices seen only in the event logs'],
+  ['search_entries_not_on_disk', 'indexed file no longer on the disk', 'indexed files no longer on the disk'],
+  ['ntfs_volumes', 'NTFS volume', 'NTFS volumes'], ['mft_entries', 'MFT entry', 'MFT entries'],
+  ['timestomp_suspects', 'file whose times look altered', 'files whose times look altered'],
+  ['timestomp_possible', 'file whose times may be altered', 'files whose times may be altered'],
+  ['alternate_streams', 'alternate data stream', 'alternate data streams'], ['downloaded_files', 'downloaded file', 'downloaded files'],
+  ['usn_records', 'USN journal record', 'USN journal records'], ['usb_devices_from_event_logs', 'USB device seen only in the event logs', 'USB devices seen only in the event logs'],
   ['timeline_events', 'timeline event', 'timeline events'],
 ];
 

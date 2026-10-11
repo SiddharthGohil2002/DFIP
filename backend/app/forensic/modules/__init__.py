@@ -3,7 +3,8 @@
 Profiles:
   quick     the file system index and the well-known artifacts, for a fast first look
   standard  everything that is cheap enough to run on every disk (the default): also event logs, Jump Lists, the
-            Windows Timeline, thumbnails, SRUM and the search index, file hashes and types, hash sets and YARA
+            Windows Timeline, thumbnails, SRUM and the search index, NTFS timestomping, alternate data streams and the USN
+            journal, file hashes and types, hash sets and YARA
   full      everything: also archive members and embedded files, the text of every file and of unallocated space
             (content search), and the data found in it
 
@@ -24,6 +25,7 @@ from .found import FoundDataModule
 from .fs_index import FsIndexModule
 from .hash_match import HashMatchModule
 from .members import MembersModule
+from .ntfs import NtfsModule
 from .registry import RegistryModule
 from .tz_probe import TzProbeModule
 from .unallocated import UnallocatedModule
@@ -31,16 +33,16 @@ from .user_activity import UserActivityModule
 from .yara_scan import YaraModule
 
 MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), RegistryModule(), EventLogsModule(),
-                         UserActivityModule(), FileProcModule(), MembersModule(), HashMatchModule(), YaraModule(), ContentModule(),
+                         UserActivityModule(), NtfsModule(), FileProcModule(), MembersModule(), HashMatchModule(), YaraModule(), ContentModule(),
                          UnallocatedModule(), FoundDataModule()]
 REGISTRY: dict[str, Module] = {m.name: m for m in MODULES}
 ORDER = [m.name for m in MODULES]
 
 PROFILES = {
     'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry'],
-    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc', 'hash_match',
-                 'yara'],
-    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
+    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc',
+                 'hash_match', 'yara'],
+    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
              'unallocated', 'found_data'],
 }
 DEFAULT_PROFILE = 'standard'

@@ -18,7 +18,8 @@ import re
 titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer and users', 'Deleted files', 'Recovered files',
           'USB device history', 'Browser history', 'Browser downloads', 'Windows activity', 'Execution evidence', 'Folders browsed',
           'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives',
-          'Jump lists, Timeline, thumbnails, SRUM and search index', 'Event logs', 'Malware indicators',
+          'Jump lists, Timeline, thumbnails, SRUM and search index', 'NTFS: timestomping, alternate data streams and USN journal',
+          'Event logs', 'Malware indicators',
           'Hash set matches', 'Renamed and encrypted files', 'Found data',
           'Investigator findings', 'Tagged evidence', 'Timeline of notable events', 'Audit trail integrity']
 found = [(int(m.group(1)), m.group(2)) for m in re.finditer(r'^\s*(\d+)\. (' + '|'.join(map(re.escape, titles)) + r')', a, re.M)]
@@ -64,6 +65,14 @@ check("time basis in the header: the computer's time zone from the SYSTEM hive",
 check('computer and users listed: LAPTOP-07, Windows 10 Pro, alice with her SID',
       all(x in flat for x in ('LAPTOP-07', 'Windows 10 Pro', 'alice', 'Alice Example')) and '30300820-1001' in flat.replace(' ', ''))
 check('audit chain reported valid', 'valid' in flat.lower() and 'INVALID' not in flat)
+import os
+if os.path.exists('/out/report-ntfs.pdf'):
+    nt = ' '.join(text('report-ntfs.pdf').split())
+    check('NTFS report: the timestomped file, the hidden stream, the download source and the wipe in the USN journal',
+          all(x in nt for x in ('strong /Users/alice/Documents/budget-2', 'Copy the payroll to the SanDisk', 'Internet', 'tools.example.org',
+                                'AAAAAAAA.AAA', 'FILE_DELETE', 'RENAME_NEW_NAME', 'BASIC_INFO_CHANGE')))
+else:
+    check('NTFS report saved by the system test', False)
 m = text('report-markup.pdf')
 check('markup in case text is printed literally', '<b>Bold</b> & "quoted" <script>alert(1)</script>' in ' '.join(m.split()))
 t = text('report-tamper.pdf')

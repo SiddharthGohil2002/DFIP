@@ -26,6 +26,7 @@ import { CarvingPage } from '../pages/Carving';
 import { SearchPage } from '../pages/Search';
 import { FoundDataPage } from '../pages/FoundData';
 import { EventLogsPage } from '../pages/EventLogs';
+import { NtfsPage } from '../pages/Ntfs';
 import { FindingsPage } from '../pages/Findings';
 import { ReportsPage } from '../pages/Reports';
 import { CustodyPage } from '../pages/Custody';
@@ -131,6 +132,7 @@ function Workspace() {
         <Route path="usb" element={c(<UsbPage />)} />
         <Route path="activity" element={c(<ActivityPage />)} />
         <Route path="event-logs" element={c(<EventLogsPage />)} />
+        <Route path="ntfs" element={c(<NtfsPage />)} />
         <Route path="computer" element={c(<ComputerPage />)} />
         <Route path="tagged" element={c(<TaggedPage />)} />
         <Route path="dashboard" element={c(<DashboardPage />)} />

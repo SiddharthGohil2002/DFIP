@@ -181,6 +181,9 @@ export interface CaseCounts {
   srum_records?: number;
   search_index_entries?: number;
   search_entries_not_on_disk?: number;
+  timestomp_suspects?: number;
+  alternate_streams?: number;
+  usn_records?: number;
   renamed_files?: number;
   encrypted_files?: number;
   known_bad_files?: number;

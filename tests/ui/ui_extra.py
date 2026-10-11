@@ -2,7 +2,7 @@
 switching, top-bar search, user administration, password change, bad sessions and narrow windows.
 Runs against a DFIP stack at http://host.docker.internal; it first creates and analyses its own case
 from the test image mounted at /img."""
-import hashlib, json, sys, time, urllib.error, urllib.request, uuid
+import hashlib, json, re, sys, time, urllib.error, urllib.request, uuid
 from playwright.sync_api import sync_playwright, expect
 
 BASE = 'http://host.docker.internal'
@@ -23,14 +23,15 @@ def api(method, path, token=None, body=None, raw=None, ctype='application/json')
         return json.loads(r.read())
 
 
-def analysed_case():
-    """A case holding the analysed test image (deleted payroll export at 09:41:02 UTC, browser and USB data)."""
+def analysed_case(image='/img/dfip-test-disk.dd', name=CASE_NAME):
+    """A case holding an analysed test image (by default the laptop: deleted payroll export at 09:41:02 UTC, browser and
+    USB data)."""
     token = api('POST', '/auth/login', body={'email': 'investigator@dfip.local', 'password': PW})['access_token']
-    case_id = api('POST', '/cases', token, {'name': CASE_NAME, 'priority': 'HIGH'})['case_id']
+    case_id = api('POST', '/cases', token, {'name': name, 'priority': 'HIGH'})['case_id']
     b = uuid.uuid4().hex
     body = (f'--{b}\r\nContent-Disposition: form-data; name="case_id"\r\n\r\n{case_id}\r\n'
-            f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="laptop.dd"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() \
-        + open('/img/dfip-test-disk.dd', 'rb').read() + f'\r\n--{b}--\r\n'.encode()
+            f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{image.rsplit("/", 1)[-1]}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() \
+        + open(image, 'rb').read() + f'\r\n--{b}--\r\n'.encode()
     eid = api('POST', '/evidence/upload', token, raw=body, ctype=f'multipart/form-data; boundary={b}')['evidence_id']
     job = api('POST', f'/jobs/analysis/{eid}', token)['job_id']
     for _ in range(600):
@@ -44,6 +45,7 @@ def analysed_case():
 
 
 SHOWCASE = analysed_case()
+NTFS_CASE = analysed_case('/img/dfip-ntfs-disk.dd', f'UI extra — office desktop (NTFS) {uuid.uuid4().hex[:4]}')
 
 
 def check(name, cond, detail=''):
@@ -118,6 +120,31 @@ with sync_playwright() as p:
     page.get_by_role('link', name='Case desktop').first.click()
     expect(page.get_by_role('heading', name=CASE_NAME)).to_be_visible()
     check('case switcher changes the active case', True)
+
+    print('== file system journal (NTFS)')
+    page.get_by_label('Active case').select_option(NTFS_CASE)
+    page.get_by_role('link', name='File system journal').first.click()
+    tab_rows = lambda **kw: page.locator('.card:has([role="tablist"]) table tbody tr', **kw)  # not the volumes table below
+    row = tab_rows(has_text='budget-2025.txt')
+    expect(row.get_by_text('STRONG', exact=True)).to_be_visible()
+    expect(row).to_contain_text('2024-03-02')
+    check('timestomping: budget-2025.txt is flagged strong, with its $SI and $FN times', tab_rows().count() == 1)
+    page.screenshot(path=f'{OUT}/x4-ntfs-timestomp.png')
+    page.get_by_role('tab', name=re.compile(r'^Alternate data streams')).click()
+    hidden = tab_rows(has_text='notes.txt:hidden.txt')
+    expect(hidden.get_by_text('HIDDEN DATA?', exact=True)).to_be_visible()
+    expect(tab_rows(has_text='SecureDelete.exe:Zone.Identifier')).to_contain_text('tools.example.org/securedelete/SecureDelete.exe')
+    hidden.get_by_role('button', name='View').click()
+    expect(page.get_by_role('dialog')).to_contain_text('Copy the payroll to the SanDisk, then wipe it.')
+    page.keyboard.press('Escape')
+    check('streams: the hidden note is flagged and opens in the viewer; the download shows where it came from', True)
+    page.get_by_role('tab', name=re.compile(r'^USN journal')).click()
+    expect(tab_rows()).to_have_count(20)
+    page.get_by_label('Change', exact=True).select_option('FILE_DELETE')
+    expect(tab_rows()).to_have_count(1)
+    expect(tab_rows().first).to_contain_text('/Users/alice/Documents/AAAAAAAA.AAA')
+    check('USN journal: all 20 records, and the deletion of the wiped file found by its reason', True)
+    page.screenshot(path=f'{OUT}/x5-ntfs-usn.png')
 
     print('== bad session')
     page.evaluate("() => { sessionStorage.setItem('dfip_token', 'garbage'); sessionStorage.setItem('dfip_refresh', 'garbage'); }")

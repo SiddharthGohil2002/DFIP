@@ -27,6 +27,7 @@ const SECTIONS = [
   'Installed programs',
   'Remote desktop and network drives',
   'Jump lists, Timeline, thumbnails, SRUM and search index',
+  'NTFS: timestomping, alternate data streams and USN journal',
   'Event logs (logs read, detections, notable events)',
   'Malware indicators (YARA)',
   'Hash set matches',

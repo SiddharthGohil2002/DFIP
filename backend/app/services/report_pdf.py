@@ -322,6 +322,36 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
              f'No indexed file is missing from the disk ({art.count_documents({"case_id": cid, "type": "SEARCH_INDEX_ENTRY"}):,} index entries read).',
              total=art.count_documents(q), heading=H3)
 
+    # NTFS internals (module ntfs).
+    nt_title = T('NTFS: timestomping, alternate data streams and USN journal')
+    story.append(Paragraph(escape(nt_title), H2))
+    story.append(Paragraph('$STANDARD_INFORMATION times can be set by any program; $FILE_NAME times are set by Windows when the '
+                           'name is created. Files whose $SI times look altered are listed with the reason. Alternate data streams '
+                           'hold extra data next to a file: Zone.Identifier records where a download came from. The USN change '
+                           'journal records changes to files, including files that were renamed and deleted.', NOTE))
+    n = nt_title.split('.')[0]
+    q = {'case_id': cid, 'type': 'TIMESTOMP_SUSPECT'}
+    _section(story, f'{n}.1 Files whose times look altered', ['Level', 'File', 'Created ($SI)', 'Name created ($FN)', 'Changed ($SI)', 'Why'],
+             [[t.get('level'), t.get('path'), t.get('si_created'), t.get('fn_created'), t.get('si_changed'), '; '.join(t.get('reasons') or [])]
+              for t in art.find(q).sort([('level', -1), ('path', 1)]).limit(MAX_ROWS)],
+             [0.6, 2.0, 1.2, 1.2, 1.2, 1.9], 'No file on an NTFS volume has times that look altered (or no NTFS volume was analysed).',
+             total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'ALTERNATE_STREAM'}
+    _section(story, f'{n}.2 Alternate data streams', ['Stream', 'Size', 'Kind', 'Downloaded from', 'Content'],
+             [[s.get('path'), s.get('size'), (s.get('zone') or {}).get('ZoneName') or s.get('kind'),
+               (s.get('zone') or {}).get('HostUrl') or (s.get('zone') or {}).get('ReferrerUrl'),
+               None if s.get('zone') else (s.get('text') or '')[:120] or None]
+              for s in art.find(q).sort('path', 1).limit(MAX_ROWS)],
+             [2.4, 0.6, 1.0, 2.2, 1.9], 'No alternate data streams were found.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'reasons': {'$all': ['CLOSE']},
+         '$or': [{'reasons': x} for x in ('FILE_DELETE', 'RENAME_NEW_NAME', 'BASIC_INFO_CHANGE', 'DATA_OVERWRITE')]}
+    _section(story, f'{n}.3 USN journal: deletions, renames, overwrites and time changes', ['Time', 'Change', 'File', 'Entry'],
+             [[x.get('time'), ' '.join(r for r in x.get('reasons') or [] if r != 'CLOSE'), x.get('path') or x.get('name'), x.get('entry')]
+              for x in db['usn_records'].find(q).sort([('evidence_id', 1), ('usn', 1)]).limit(MAX_ROWS)],
+             [1.3, 2.2, 3.4, 0.6],
+             f'No deletions, renames, overwrites or time changes in the USN journal ({db["usn_records"].count_documents({"case_id": cid}):,} records read).',
+             total=db['usn_records'].count_documents(q), heading=H3)
+
     # Windows event logs (module eventlogs).
     events_title = T('Event logs')
     story.append(Paragraph(escape(events_title), H2))
@@ -402,7 +432,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     tagged = sorted(db['tags'].find({'case_id': cid}), key=lambda t: (tag_order.get(t.get('label'), 9), str((t.get('snapshot') or {}).get('timestamp') or '')))
     item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
                  'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file', 'ENTITY': 'Found data',
-                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity'}
+                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity', 'USN': 'USN journal record'}
     _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
              [[(t.get('label') or '').replace('_', ' ').capitalize(),
                f'{(t.get("snapshot") or {}).get("title")}' + ('' if resolve(db, t) is not None else ' (not in the latest analysis)'),

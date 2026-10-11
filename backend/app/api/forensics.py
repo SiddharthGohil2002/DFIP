@@ -449,7 +449,8 @@ def computer(case_id:str,evidence_id:str|None=None,u=Depends(current_user)):
 def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
     """Keyword search across a case: file paths, timeline events, browser
     records, USB devices, Windows activity, registry records, event log records, Jump Lists, Timeline activities, thumbnails
-    and search index entries, findings, user accounts and found data (case-insensitive substring match)."""
+    and search index entries, NTFS timestomping suspects, alternate data streams and USN journal records, findings, user
+    accounts and found data (case-insensitive substring match)."""
     if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
     term=q.strip()
     if len(term)<2: raise HTTPException(400,'Search term must be at least 2 characters')
@@ -469,6 +470,9 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
         'registry':('forensic_artifacts',{'case_id':case_id,'source':'REGISTRY','$or':[{f:rx} for f in ('program','path','value','command','name','server','remote_path','publisher')]},
                     [('type',1),('key_last_write',-1)]),
         'eventlogs':('event_records',{'case_id':case_id,'text':rx},[('notable',-1),('time',1)]),
+        'usn':('usn_records',{'case_id':case_id,'$or':[{'name':rx},{'path':rx}]},[('evidence_id',1),('usn',1)]),
+        'ntfs':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['TIMESTOMP_SUSPECT','ALTERNATE_STREAM']},
+                '$or':[{'path':rx},{'zone.HostUrl':rx},{'text':rx}]},[('type',1),('path',1)]),
         'useractivity':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['JUMPLIST_ENTRY','TIMELINE_ACTIVITY','THUMBNAIL','SEARCH_INDEX_ENTRY']},
                         '$or':[{f:rx} for f in ('target','destlist_path','application','display_text','description','clipboard_text','path','name',
                                                 'indexed_path','summary')]},[('type',1),('timestamp',-1)]),
