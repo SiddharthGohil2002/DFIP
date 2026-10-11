@@ -189,6 +189,36 @@
           "used_by": "real NTUSER.DAT hive",
           "sha256": "4a3232850f9677de96774b4de0020ac7f5e2efeb5e4576a200bb751d9e1c9d1d",
           "size": 786432
+        },
+        {
+          "name": "automaticDestinations-ms/1b4dd67f29cb1962.automaticDestinations-ms",
+          "used_by": "Jump Lists (AutomaticDestinations: DestList and LNK streams)",
+          "sha256": "003a1b2e449f1b8bd790ca6dc3b01378b2e835836b464556d70883a6eebcf414",
+          "size": 13824
+        },
+        {
+          "name": "automaticDestinations-ms/9d1f905ce5044aee.automaticDestinations-ms",
+          "used_by": "Jump Lists (AutomaticDestinations, small)",
+          "sha256": "6c59abb4bc79f1abf51cb836fe17b95066f4dfb1b91c61f13a22316bea1d0d9f",
+          "size": 3584
+        },
+        {
+          "name": "customDestinations-ms/5afe4de1b92fc382.customDestinations-ms",
+          "used_by": "Jump Lists (CustomDestinations)",
+          "sha256": "c1c77214698293fcfd9fb4cae296a3faa88191092ff381e97fd947cb62bba217",
+          "size": 17261
+        },
+        {
+          "name": "customDestinations-ms/368d807282ccde9d.customDestinations-ms",
+          "used_by": "Jump Lists (CustomDestinations, small)",
+          "sha256": "3a0799df3433cfca1fa0284ba716d3f5502b047f665a1920089839ffeeef301a",
+          "size": 1775
+        },
+        {
+          "name": "windows/ActivitiesCache.db",
+          "used_by": "Windows Timeline (ActivitiesCache.db)",
+          "sha256": "95811eebd1ea3ec0244bda5c5200266861cfcf405eed687dce96af8589836888",
+          "size": 1048576
         }
       ]
     },

@@ -127,7 +127,13 @@ const COUNT_LABELS: [string, string, string][] = [
   ['rdp_connections', 'remote desktop connection', 'remote desktop connections'], ['network_drives', 'network drive', 'network drives'],
   ['event_logs', 'event log', 'event logs'], ['event_records', 'event record', 'event records'],
   ['recovered_event_records', 'recovered event record', 'recovered event records'], ['notable_events', 'notable event', 'notable events'],
-  ['eventlog_detections', 'detection', 'detections'], ['usb_devices_from_event_logs', 'USB device seen only in the event logs', 'USB devices seen only in the event logs'],
+  ['eventlog_detections', 'detection', 'detections'], ['jumplists', 'Jump List', 'Jump Lists'],
+  ['jumplist_entries', 'Jump List item', 'Jump List items'], ['timeline_activities', 'Timeline activity', 'Timeline activities'],
+  ['thumbnails', 'thumbnail', 'thumbnails'], ['srum_network_records', 'SRUM network record', 'SRUM network records'],
+  ['srum_app_records', 'SRUM application record', 'SRUM application records'],
+  ['srum_connectivity_records', 'SRUM connection record', 'SRUM connection records'],
+  ['search_index_entries', 'search index entry', 'search index entries'],
+  ['search_entries_not_on_disk', 'indexed file no longer on the disk', 'indexed files no longer on the disk'], ['usb_devices_from_event_logs', 'USB device seen only in the event logs', 'USB devices seen only in the event logs'],
   ['timeline_events', 'timeline event', 'timeline events'],
 ];
 

@@ -270,6 +270,28 @@ with sync_playwright() as p:
     expect(page.locator('main table tbody tr', has_text='Spooler')).to_have_count(0)
     shot(page, '11e-persistence')
 
+    step['v'] = 'jump lists, timeline and thumbnails'
+    page.get_by_role('tab', name=re.compile(r'^Jump lists')).click()
+    pinned = page.locator('main table tbody tr', has_text='cleanup.ps1')
+    expect(pinned.get_by_text('PINNED', exact=True)).to_be_visible()
+    expect(page.locator('main table tbody tr', has_text='E:\\payroll-export.csv').get_by_text('Removable drive "CRUZER"')).to_be_visible()
+    page.locator('main table tbody tr', has_text='E:\\payroll-export.csv').get_by_role('button', name=re.compile('^Details')).click()
+    expect(page.get_by_text('00:15:5d:01:a2:b3', exact=True)).to_be_visible()      # the MAC address in the object ID
+    shot(page, '11h-jump-lists')
+    page.get_by_role('tab', name=re.compile(r'^Timeline')).click()
+    expect(page.get_by_text('DELETED BY THE USER', exact=True)).to_be_visible()
+    expect(page.locator('main table tbody tr', has_text='Copied to the clipboard').get_by_text('E:\\payroll-export.csv')).to_be_visible()
+    page.get_by_role('tab', name=re.compile(r'^Thumbnails')).click()
+    expect(page.locator('.thumb-card')).to_have_count(2)
+    expect(page.locator('.thumb-card img').first).to_be_visible()
+    if page.evaluate("() => [...document.querySelectorAll('.thumb-card img')].filter(i => i.naturalWidth > 0).length") != 2:
+        problems.append('[thumbnails] a thumbnail did not load')
+    shot(page, '11i-thumbnails')
+    page.get_by_role('tab', name=re.compile(r'^Network usage')).click()
+    expect(page.get_by_text('No network usage')).to_be_visible()
+    page.get_by_role('tab', name=re.compile(r'^Search index')).click()
+    expect(page.get_by_text('No search index entries')).to_be_visible()
+
     step['v'] = 'event logs'
     ev_case = api_get(page, f'/evidence/{eid}')['case_id']
     page.get_by_role('link', name='Event logs').first.click()

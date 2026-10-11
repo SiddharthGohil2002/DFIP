@@ -175,6 +175,12 @@ export interface CaseCounts {
   event_records?: number;
   notable_events?: number;
   event_detections?: number;
+  jumplist_entries?: number;
+  timeline_activities?: number;
+  thumbnails?: number;
+  srum_records?: number;
+  search_index_entries?: number;
+  search_entries_not_on_disk?: number;
   renamed_files?: number;
   encrypted_files?: number;
   known_bad_files?: number;

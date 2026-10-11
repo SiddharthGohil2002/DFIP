@@ -19,12 +19,15 @@ REGISTRY_LABELS = {'USERASSIST': 'Program run (UserAssist)', 'SHELLBAG': 'Folder
                    'RUN_MRU': 'Run dialog command', 'PERSISTENCE': 'Autostart entry', 'INSTALLED_PROGRAM': 'Installed program',
                    'AMCACHE_FILE': 'Amcache entry', 'SHIMCACHE_ENTRY': 'ShimCache entry', 'BAM_ENTRY': 'Program run (BAM)',
                    'RDP_CONNECTION': 'Remote desktop connection', 'NETWORK_DRIVE': 'Network drive'}
+WINDOWS_LABELS = {'JUMPLIST_ENTRY': 'Jump list item', 'TIMELINE_ACTIVITY': 'Windows Timeline activity', 'THUMBNAIL': 'Thumbnail',
+                  'SRUM_NETWORK': 'Network usage (SRUM)', 'SRUM_APP_USAGE': 'Application usage (SRUM)',
+                  'SRUM_CONNECTIVITY': 'Network connection (SRUM)', 'SEARCH_INDEX_ENTRY': 'Windows Search index entry'}
 KEY_VERSION = 2  # 2: keys use volume_id and never a time that a time-zone correction could change
 
 ITEM_COLLECTIONS = {
     'FILE': 'fs_entries', 'TIMELINE_EVENT': 'timeline_events', 'BROWSER': 'forensic_artifacts',
     'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts', 'ENTITY': 'entities',
-    'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records',
+    'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records', 'WINDOWS': 'forensic_artifacts',
 }
 LABELS = ('EVIDENCE', 'NOTABLE', 'FOLLOW_UP')
 _ARTIFACT_TYPES = {
@@ -33,6 +36,7 @@ _ARTIFACT_TYPES = {
     'ARTIFACT': {'RECOVERED_FILE', 'CARVED_FILE', 'EXTRACTED_FILE', 'MALWARE_INDICATOR'},
     'REGISTRY': {'USERASSIST', 'SHELLBAG', 'TYPED_PATH', 'TYPED_URL', 'EXPLORER_SEARCH', 'RECENT_DOC', 'RUN_MRU', 'PERSISTENCE',
                  'INSTALLED_PROGRAM', 'AMCACHE_FILE', 'SHIMCACHE_ENTRY', 'BAM_ENTRY', 'RDP_CONNECTION', 'NETWORK_DRIVE'},
+    'WINDOWS': {'JUMPLIST_ENTRY', 'TIMELINE_ACTIVITY', 'THUMBNAIL', 'SRUM_NETWORK', 'SRUM_APP_USAGE', 'SRUM_CONNECTIVITY', 'SEARCH_INDEX_ENTRY'},
 }
 
 
@@ -77,6 +81,8 @@ def natural_key(item_type: str, doc) -> dict:
         return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
     if item_type == 'EVENT':
         return {'evidence_id': e, 'nk': doc.get('nk')}
+    if item_type == 'WINDOWS':
+        return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
     if t == 'MALWARE_INDICATOR':
         return {'evidence_id': e, 'type': t, 'rule': doc.get('rule'), 'original_path': doc.get('original_path')}
     if t == 'EXTRACTED_FILE':
@@ -125,6 +131,21 @@ def snapshot(item_type: str, doc) -> dict:
                  or doc.get('server') or doc.get('remote_path'))
         detail = f'{REGISTRY_LABELS.get(t, t)}{" · " + doc["user"] if doc.get("user") else ""} · {doc.get("hive")}'
         when = doc.get('last_run') or doc.get('key_last_write')
+    elif item_type == 'WINDOWS':
+        label = WINDOWS_LABELS.get(t, t)
+        if t == 'JUMPLIST_ENTRY':
+            title, when = doc.get('target'), doc.get('last_used')
+            label = f'{label} ({doc.get("application") or "AppID " + str(doc.get("app_id"))})'
+        elif t == 'TIMELINE_ACTIVITY':
+            title, when = doc.get('display_text') or doc.get('description') or doc.get('app'), doc.get('start_time')
+        elif t == 'THUMBNAIL':
+            title, when = doc.get('indexed_path') or f'Thumbnail {doc.get("entry_hash")}', None
+        elif t == 'SEARCH_INDEX_ENTRY':
+            title, when = doc.get('path'), doc.get('modified')
+        else:
+            title, when = doc.get('app'), doc.get('time')
+        detail = f'{label}{" · " + doc["user"] if doc.get("user") else ""} · {doc.get("source_path")}'
+        return {'title': title, 'detail': detail, 'timestamp': _iso(when), 'source': doc.get('source_path')}
     elif item_type == 'EVENT':
         title = doc.get('description') or doc.get('title') or f'{doc.get("channel")} event {doc.get("event_id")}'
         detail = f'{doc.get("channel")} event {doc.get("event_id")} (record {doc.get("record_id")}){" · " + doc["user"] if doc.get("user") else ""}'

@@ -347,7 +347,7 @@ def delete(eid, body: DeleteEvidence, u=Depends(require_write('EVIDENCE_DELETE')
         _remove(Path(x['storage_path']), storage, removed, problems)
     for p in (analysis / 'working').glob(f'{eid}.*'):
         _remove(p, storage, removed, problems)
-    for area in ('recovered', 'carved', 'pipeline', 'members'):
+    for area in ('recovered', 'carved', 'pipeline', 'members', 'thumbs'):
         _remove(analysis / area / eid, storage, removed, problems)
     for p in (analysis / 'text').glob(f'{eid}.*'):  # the content index (and an unfinished rebuild)
         _remove(p, storage, removed, problems)

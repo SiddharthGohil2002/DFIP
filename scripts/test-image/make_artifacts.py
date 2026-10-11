@@ -451,19 +451,157 @@ def event_logs():
     write(f'{LOGS}/Microsoft-Windows-Partition%4Diagnostic.evtx', ev.write_evtx(partition, first_record_id=57))
 
 
+PROJECT_NOTES = 'Q3 project notes. Nothing sensitive here.\n' * 40
+CLEANUP_PS1 = 'powershell.exe -NoProfile -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAKQA=\n'
+# Jump Lists, the Windows Timeline and the thumbnail cache (Phase 7). The story they add: alice opens the payroll export
+# from E: in Notepad at 14:14:06 (her Recent shortcut says the same) after browsing E:\Exports; cleanup.ps1 is pinned in
+# Notepad's Jump List; Chrome's Jump List remembers the closed upload page; the Windows Timeline shows Notepad in use for
+# 95 seconds, SecureDelete.exe starting at 14:18:31 (as BAM says) and E:\payroll-export.csv copied to the clipboard; she
+# deleted the Timeline entry for payroll-screenshot.png, which SecureDelete wiped (it is not on the disk), but its
+# thumbnail is still in Explorer's thumbnail cache.
+ALICE_HOME = 'Users/alice/AppData'
+LAPTOP_MAC = 0x00155D01A2B3
+NOTEPAD_APPID, EXPLORER_APPID, CHROME_APPID = '9b9cdc69c1c24e2b', 'f01b4d95cf55d32a', '5d696d521de238c3'
+SCREENSHOT_HASH, WHITEBOARD_THUMB_HASH = 0x9F3A6C21E4D07B58, 0x41C7D2E09B6F3A15
+CHROME_EXE = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+
+
+def spreadsheet_png(width=256, height=144) -> bytes:
+    """A picture of a spreadsheet: a dark header row and grid lines (the wiped payroll screenshot's thumbnail)."""
+    rows = b''
+    for y in range(height):
+        row = b'\0'
+        for x in range(width):
+            if y < 18:
+                px = (31, 78, 121)
+            elif y % 14 == 4 or x % 64 == 0:
+                px = (200, 205, 212)
+            elif x < 64 and y % 14 < 10:
+                px = (90, 96, 104)
+            else:
+                px = (255, 255, 255)
+            row += bytes(px)
+        rows += row
+    chunk = lambda kind, data: struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(rows, 9)) + chunk(b'IEND', b''))
+
+
+def jump_lists():
+    removable = dict(drive_type=winfmt.DRIVE_REMOVABLE, drive_serial=0x6A3C91F2, volume_label='CRUZER', machine_id='laptop-07')
+    fixed = dict(drive_type=winfmt.DRIVE_FIXED, drive_serial=0x5E1F22C4, machine_id='laptop-07')
+    droid = lambda n: dict(droid_volume=winfmt.droid_uuid(100, LAPTOP_MAC), droid_file=winfmt.droid_uuid(n, LAPTOP_MAC), hostname='laptop-07')
+    notepad = [
+        dict(number=3, path='E:\\payroll-export.csv', last_used=utc(2026, 9, 1, 14, 14, 6), access_count=1, **droid(3),
+             lnk=winfmt.shell_link('E:\\payroll-export.csv', size=len(PAYROLL), created=utc(2026, 9, 1, 14, 13, 10),
+                                   modified=utc(2026, 9, 1, 9, 41, 2), accessed=utc(2026, 9, 1, 14, 14, 6), working_dir='E:\\', **removable)),
+        dict(number=2, path='C:\\Users\\alice\\Downloads\\cleanup.ps1', last_used=utc(2026, 9, 1, 10, 6, 45), access_count=2, pin=0,
+             **droid(2), lnk=winfmt.shell_link('C:\\Users\\alice\\Downloads\\cleanup.ps1', size=len(CLEANUP_PS1),
+                                                created=utc(2026, 9, 1, 10, 6, 30), modified=utc(2026, 9, 1, 10, 6, 30),
+                                                accessed=utc(2026, 9, 1, 10, 6, 45), **fixed)),
+        dict(number=1, path='C:\\Users\\alice\\Documents\\project-notes.txt', last_used=utc(2026, 8, 28, 16, 5), access_count=3,
+             **droid(1), lnk=winfmt.shell_link('C:\\Users\\alice\\Documents\\project-notes.txt', size=len(PROJECT_NOTES),
+                                                created=utc(2026, 8, 28, 16, 4, 10), modified=utc(2026, 8, 28, 16, 4, 10),
+                                                accessed=utc(2026, 8, 28, 16, 5), **fixed)),
+    ]
+    explorer = [
+        dict(number=2, path='E:\\Exports', last_used=utc(2026, 9, 1, 14, 13, 2), access_count=1, **droid(5),
+             lnk=winfmt.shell_link('E:\\Exports', size=0, created=utc(2026, 9, 1, 9, 41, 2), modified=utc(2026, 9, 1, 9, 41, 2),
+                                   accessed=utc(2026, 9, 1, 14, 13, 2), attributes=0x10, **removable)),
+        dict(number=1, path='C:\\Users\\alice\\Documents', last_used=utc(2026, 9, 1, 14, 10, 12), access_count=4, **droid(4),
+             lnk=winfmt.shell_link('C:\\Users\\alice\\Documents', size=0, created=utc(2026, 3, 2, 10, 0), modified=utc(2026, 9, 1, 13, 5),
+                                   accessed=utc(2026, 9, 1, 14, 10, 12), attributes=0x10, **fixed)),
+    ]
+    auto = f'{ALICE_HOME}/Roaming/Microsoft/Windows/Recent/AutomaticDestinations'
+    write(f'{auto}/{NOTEPAD_APPID}.automaticDestinations-ms', winfmt.automatic_destinations(notepad))
+    write(f'{auto}/{EXPLORER_APPID}.automaticDestinations-ms', winfmt.automatic_destinations(explorer))
+    chrome = lambda args, name: winfmt.shell_link(CHROME_EXE, size=2_845_528, created=utc(2026, 7, 14, 9), modified=utc(2026, 7, 14, 9),
+                                                  accessed=utc(2026, 9, 1, 8, 50), arguments=args, description=name,
+                                                  working_dir='C:\\Program Files\\Google\\Chrome\\Application', **fixed)
+    write(f'{ALICE_HOME}/Roaming/Microsoft/Windows/Recent/CustomDestinations/{CHROME_APPID}.customDestinations-ms', winfmt.custom_destinations([
+        ('custom', 'Recently closed', [chrome('--profile-directory=Default https://filetransfer.example.net/upload', 'Anonymous File Upload')]),
+        ('tasks', [chrome('--new-window', 'New window'), chrome('--incognito', 'New Incognito window')]),
+    ]))
+
+
+def activities_cache(path):
+    """ActivitiesCache.db with the Activity and ActivityOperation tables as Windows 10 creates them."""
+    import base64
+    import json
+    con = sqlite3.connect(path)
+    common = ('Id GUID NOT NULL, AppId TEXT NOT NULL, PackageIdHash TEXT, AppActivityId TEXT, ActivityType INT NOT NULL, '
+              'ParentActivityId GUID NOT NULL, Tag TEXT, "Group" TEXT, MatchId TEXT, LastModifiedTime DATETIME NOT NULL, '
+              'ExpirationTime DATETIME NOT NULL, Payload BLOB, Priority INT, PlatformDeviceId TEXT, CreatedInCloud DATETIME NOT NULL, '
+              'StartTime DATETIME, EndTime DATETIME, LastModifiedOnClient DATETIME NOT NULL, GroupAppActivityId TEXT, '
+              'ClipboardPayload BLOB, EnterpriseId TEXT, OriginalPayload BLOB, OriginalLastModifiedOnClient DATETIME, ETag INT NOT NULL')
+    con.execute(f'CREATE TABLE Activity ({common}, ActivityStatus INT, IsLocalOnly INT, PRIMARY KEY("Id"))')
+    con.execute(f'CREATE TABLE ActivityOperation (OperationOrder INTEGER PRIMARY KEY ASC NOT NULL, OperationType INT NOT NULL, '
+                f'CreatedTime DATETIME NOT NULL, Attachments TEXT, CorrelationVector TEXT, {common})')
+    ts = lambda dt: int(dt.timestamp())
+    device = 'nMYRXH62tWDtRB8GdjEJlnrWj+K+rZxEr3OtYKlBBNo='
+    notepad = json.dumps([{'application': '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\notepad.exe', 'platform': 'windows_win32'},
+                          {'application': 'C:\\Windows\\System32\\notepad.exe', 'platform': 'x_exe_path'}])
+    secure = json.dumps([{'application': 'C:\\Users\\alice\\Downloads\\SecureDelete.exe', 'platform': 'x_exe_path'}])
+    explorer = json.dumps([{'application': 'Microsoft.Windows.Explorer', 'platform': 'windows_win32'},
+                           {'application': '{F38BF404-1D43-42F2-9305-67DE0B28FC23}\\explorer.exe', 'platform': 'x_exe_path'}])
+    photos = json.dumps([{'application': 'Microsoft.Windows.Photos_8wekyb3d8bbwe!App', 'platform': 'windows_universal'},
+                         {'application': 'Microsoft.Windows.Photos_8wekyb3d8bbwe!App', 'platform': 'packageId'}])
+    engaged = lambda secs: json.dumps({'type': 'UserEngaged', 'reportingApp': 'ShellActivityMonitor', 'activeDurationSeconds': secs,
+                                       'shellContentDescription': {'MergedGap': 30}, 'userTimezone': 'America/New_York'}).encode()
+    opened = lambda text, desc, app, uri: json.dumps({'displayText': text, 'description': desc, 'appDisplayName': app,
+                                                      'activationUri': 'ms-shellactivity:', 'contentUri': uri}).encode()
+    clip = json.dumps([{'content': base64.b64encode('E:\\payroll-export.csv'.encode()).decode(), 'formatName': 'Text'}]).encode()
+    rows = [  # (id, app, type, start, end, payload, clipboard)
+        (1, notepad, 5, utc(2026, 9, 1, 14, 14, 6), None, opened('payroll-export.csv', 'E:\\payroll-export.csv', 'Notepad',
+                                                                  'file:///E:/payroll-export.csv'), None),
+        (2, notepad, 6, utc(2026, 9, 1, 14, 14, 6), utc(2026, 9, 1, 14, 15, 41), engaged(95), None),
+        (3, explorer, 10, utc(2026, 9, 1, 14, 13, 30), None, json.dumps({'displayText': ''}).encode(), clip),
+        (4, secure, 5, utc(2026, 9, 1, 14, 18, 31), None, opened('SecureDelete.exe', None, 'SecureDelete', None), None),
+        (5, secure, 6, utc(2026, 9, 1, 14, 18, 31), utc(2026, 9, 1, 14, 19, 20), engaged(49), None),
+    ]
+    for n, app, kind, start, end, payload, clipboard in rows:
+        modified = end or start
+        con.execute('INSERT INTO Activity (Id, AppId, ActivityType, ActivityStatus, ParentActivityId, LastModifiedTime, ExpirationTime, '
+                    'Payload, Priority, IsLocalOnly, PlatformDeviceId, CreatedInCloud, StartTime, EndTime, LastModifiedOnClient, '
+                    'ClipboardPayload, ETag) VALUES (?,?,?,1,?,?,?,?,3,0,?,0,?,?,?,?,?)',
+                    (bytes([n]) * 16, app, kind, b'\0' * 16, ts(modified), ts(modified) + 30 * 86400, payload, device, ts(start),
+                     ts(end) if end else 0, ts(modified), clipboard, n))
+    deleted_at = utc(2026, 9, 1, 14, 21, 5)
+    con.execute('INSERT INTO ActivityOperation (OperationOrder, OperationType, CreatedTime, Id, AppId, ActivityType, ParentActivityId, '
+                'LastModifiedTime, ExpirationTime, Payload, Priority, PlatformDeviceId, CreatedInCloud, StartTime, EndTime, '
+                'LastModifiedOnClient, ETag) VALUES (1, 3, ?, ?, ?, 5, ?, ?, ?, ?, 3, ?, 0, ?, 0, ?, 6)',
+                (ts(deleted_at), bytes([6]) * 16, photos, b'\0' * 16, ts(deleted_at), ts(deleted_at) + 30 * 86400,
+                 opened('payroll-screenshot.png', 'C:\\Users\\alice\\Pictures\\payroll-screenshot.png', 'Photos',
+                        'file:///C:/Users/alice/Pictures/payroll-screenshot.png'), device, ts(utc(2026, 9, 1, 13, 59, 40)), ts(deleted_at)))
+    con.commit()
+    con.close()
+
+
+def user_activity_files():
+    jump_lists()
+    path = OUT / f'{ALICE_HOME}/Local/ConnectedDevicesPlatform/L.alice/ActivitiesCache.db'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
+    activities_cache(path)
+    write(f'{ALICE_HOME}/Local/Microsoft/Windows/Explorer/thumbcache_256.db', winfmt.thumbcache([
+        dict(hash=SCREENSHOT_HASH, width=256, height=144, data=spreadsheet_png()),
+        dict(hash=0x0D51E7A2C3B48F60),  # an entry Windows reserved without a picture
+        dict(hash=WHITEBOARD_THUMB_HASH, width=48, height=32, data=png(48, 32)),
+    ]))
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     write('Windows/INF/setupapi.dev.log', SETUPAPI.replace('\n', '\r\n'))
     chrome_history(OUT / 'Users/alice/AppData/Local/Google/Chrome/User Data/Default/History')
     firefox_places(OUT / 'Users/alice/AppData/Roaming/Mozilla/Firefox/Profiles/k2x8.default-release/places.sqlite')
-    write('Users/alice/Documents/project-notes.txt', 'Q3 project notes. Nothing sensitive here.\n' * 40)
+    write('Users/alice/Documents/project-notes.txt', PROJECT_NOTES)
     # Stamped in standard time (EST) by make-test-image.sh, to prove daylight saving is handled per date.
     write('Users/alice/Documents/q1-forecast.txt', 'Q1 2026 forecast draft. Figures to be confirmed.\n')
     write('Users/alice/Documents/year-end-checklist.txt', 'Year-end checklist: archive mail, renew licences.\n')
     # Deleted by make-test-image.sh after being copied into the image.
     write('Users/alice/Documents/payroll-export.csv', PAYROLL)
-    write('Users/alice/Downloads/cleanup.ps1',
-          'powershell.exe -NoProfile -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAKQA=\n')
+    write('Users/alice/Downloads/cleanup.ps1', CLEANUP_PS1)
     windows_activity()
     write('Users/alice/Pictures/whiteboard.png', png())
     write('Users/alice/Documents/offer-letter.pdf', pdf())
@@ -471,6 +609,7 @@ def main():
     content_files()
     container_files()
     event_logs()
+    user_activity_files()
     print(PREFETCH_NAME)
 
 

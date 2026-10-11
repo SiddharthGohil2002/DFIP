@@ -39,6 +39,13 @@ stamp '2026-09-01 18:42:06' 'Windows/System32/winevt/Logs/System.evtx'
 stamp '2026-09-01 14:24:32' 'Windows/System32/winevt/Logs/Microsoft-Windows-PowerShell%4Operational.evtx'
 stamp '2026-09-01 14:24:34' 'Windows/System32/winevt/Logs/Windows PowerShell.evtx'
 stamp '2026-09-01 14:41:10' 'Windows/System32/winevt/Logs/Microsoft-Windows-Partition%4Diagnostic.evtx'
+# Jump Lists, the Windows Timeline and the thumbnail cache: written when last updated.
+JL='Users/alice/AppData/Roaming/Microsoft/Windows/Recent'
+stamp '2026-09-01 14:14:07' "$JL/AutomaticDestinations/9b9cdc69c1c24e2b.automaticDestinations-ms"
+stamp '2026-09-01 14:13:03' "$JL/AutomaticDestinations/f01b4d95cf55d32a.automaticDestinations-ms"
+stamp '2026-09-01 10:21:40' "$JL/CustomDestinations/5d696d521de238c3.customDestinations-ms"
+stamp '2026-09-01 14:21:05' 'Users/alice/AppData/Local/ConnectedDevicesPlatform/L.alice/ActivitiesCache.db'
+stamp '2026-09-01 14:00:02' 'Users/alice/AppData/Local/Microsoft/Windows/Explorer/thumbcache_256.db'
 stamp '2026-09-01 14:12:46' 'Windows/INF/setupapi.dev.log'
 stamp '2026-08-28 16:04:10' 'Users/alice/Documents/project-notes.txt'
 stamp '2026-09-01 09:41:02' 'Users/alice/Documents/payroll-export.csv'

@@ -7,10 +7,10 @@ import { Badge, Card, Empty, PageHeader, Tabs } from '../ui';
 
 const TYPE_NAMES: Record<TagItemType, string> = {
   FILE: 'File', TIMELINE_EVENT: 'Timeline event', BROWSER: 'Browser record', USB: 'USB device',
-  ACTIVITY: 'Windows activity', ARTIFACT: 'Recovered / carved file', ENTITY: 'Found data', REGISTRY: 'Registry activity', EVENT: 'Event log record',
+  ACTIVITY: 'Windows activity', ARTIFACT: 'Recovered / carved file', ENTITY: 'Found data', REGISTRY: 'Registry activity', EVENT: 'Event log record', WINDOWS: 'Windows activity',
 };
 const SOURCE_PAGE: Record<TagItemType, string> = {
-  FILE: '/app/files', TIMELINE_EVENT: '/app/timeline', BROWSER: '/app/browser', USB: '/app/usb', ACTIVITY: '/app/activity', ARTIFACT: '/app/files', ENTITY: '/app/found-data', REGISTRY: '/app/activity', EVENT: '/app/event-logs',
+  FILE: '/app/files', TIMELINE_EVENT: '/app/timeline', BROWSER: '/app/browser', USB: '/app/usb', ACTIVITY: '/app/activity', ARTIFACT: '/app/files', ENTITY: '/app/found-data', REGISTRY: '/app/activity', EVENT: '/app/event-logs', WINDOWS: '/app/activity',
 };
 
 type Filter = 'ALL' | TagLabel;

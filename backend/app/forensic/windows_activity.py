@@ -83,11 +83,15 @@ def parse_recycle_index_file(path) -> dict:
 
 # ---------------------------------------------------------------- LNK
 def parse_lnk(path) -> dict:
-    """Shell link: target, drive, and the target file's created/modified/accessed times from the header."""
+    """Shell link: target, drive, and the target file's created/modified/accessed times from the header.
+    `path` may also be a file object (a link held in memory, such as a Jump List entry)."""
     import pylnk
     f = pylnk.file()
     try:
-        f.open(str(path))
+        if hasattr(path, 'read'):
+            f.open_file_object(path)
+        else:
+            f.open(str(path))
     except (IOError, OSError) as e:
         return _failed(e)
     try:

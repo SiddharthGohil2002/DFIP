@@ -296,6 +296,11 @@ button { font: inherit; }
 
 .usb-card { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
 .usb-times { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.thumb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; padding: 14px; }
+.thumb-card { padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.thumb-box { height: 150px; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--faint);
+  background: repeating-conic-gradient(var(--surface-2) 0% 25%, var(--surface) 0% 50%) 50% / 16px 16px; overflow: hidden; }
+.thumb-box img { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: auto; }
 .usb-time { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
 .usb-time .k { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .usb-time .v { font-family: var(--mono); font-size: 12.5px; margin-top: 3px; }

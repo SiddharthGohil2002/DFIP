@@ -13,9 +13,11 @@ Results: /out/results-<phase>.json
 import asyncio
 import base64
 import hashlib
+import io
 import json
 import os
 import re
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -503,10 +505,11 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
-STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'hash_match', 'yara']
+STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc', 'hash_match',
+                    'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
-ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'containers', 'hash_match', 'yara',
-               'content', 'unallocated', 'found_data']
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc', 'containers',
+               'hash_match', 'yara', 'content', 'unallocated', 'found_data']
 
 
 def _ids(db, col, q):
@@ -567,11 +570,11 @@ def t_modules():
     j = _analyse(inv, E, {'modules': ['fs_index']})
     s = j['result']['summary']
     check('re-running the file system index also refreshes the modules built on it',
-          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'hash_match', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
+          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc', 'hash_match', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
     j = _analyse(inv, E, {'modules': ['tz_probe']})
     s = j['result']['summary']
     check('re-reading the time zone re-indexes the file system and refreshes what is built on it (not the computer module)',
-          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'hash_match', 'yara']
+          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc', 'hash_match', 'yara']
           and s['counts'] == C['COUNTS'], s.get('plan'))
 
     # A broker redelivery of a finished job must not run it again.
@@ -1099,7 +1102,8 @@ def t_computer():
     after = db.fs_entries.find_one({'evidence_id': E, 'path': '/Users/alice/Documents/payroll-export.csv'})
     tz = get(f'/api/evidence/{E}', inv).json.get('time_zone') or {}
     check('setting the time zone re-indexes with it (FAT times as recorded: 05:41:02 = local time read as UTC)',
-          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'hash_match', 'yara']
+          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'fileproc',
+                                                                   'hash_match', 'yara']
           and after['mtime'] == utc(2026, 9, 1, 5, 41, 2) and tz.get('source') == 'override' and tz.get('zone') == 'UTC', (j.get('status'), after.get('mtime'), tz.get('source')))
     check('...and tags still follow their items after the times changed', j.get('result', {}).get('summary', {}).get('tags') == {'relinked': 2, 'unresolved': 0},
           j.get('result', {}).get('summary', {}).get('tags'))
@@ -2122,6 +2126,244 @@ def t_eventlogs():
             note(f'real {name}: recovered records libevtx could not read', f'{log.stats["unreadable"]} ({log.stats["errors"][0][:160]})')
 
 
+JUMP = '/Users/alice/AppData/Roaming/Microsoft/Windows/Recent'
+ACTIVITIES_DB = '/Users/alice/AppData/Local/ConnectedDevicesPlatform/L.alice/ActivitiesCache.db'
+THUMBCACHE = '/Users/alice/AppData/Local/Microsoft/Windows/Explorer/thumbcache_256.db'
+NOTEPAD_JL = f'{JUMP}/AutomaticDestinations/9b9cdc69c1c24e2b.automaticDestinations-ms'
+EXPLORER_JL = f'{JUMP}/AutomaticDestinations/f01b4d95cf55d32a.automaticDestinations-ms'
+CHROME_JL = f'{JUMP}/CustomDestinations/5d696d521de238c3.customDestinations-ms'
+SAMPLES_IMG = Path('/testdata/dfip-samples-disk.dd')
+
+
+def _pngs(data: bytes) -> list[bytes]:
+    """Every PNG in a byte string, cut at its IEND chunk (an independent way to find the thumbnails)."""
+    out, pos = [], data.find(b'\x89PNG\r\n\x1a\n')
+    while pos != -1:
+        end = data.find(b'IEND', pos)
+        out.append(data[pos:end + 8])
+        pos = data.find(b'\x89PNG\r\n\x1a\n', end)
+    return out
+
+
+@section('12i Jump lists, Timeline and thumbnails (vs pyolecf, sqlite3 and Pillow on the files in the image, and the generator)')
+def t_user_activity():
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    mods = get(f'/api/evidence/{E}', inv).json['modules']
+    check('the user activity module ran with the standard analysis', (mods.get('user_activity') or {}).get('status') == 'COMPLETED',
+          mods.get('user_activity'))
+    rows = lambda t, extra='': get(f'/api/forensics/user-activity?case_id={A}&evidence_id={E}&type={t}&limit=2000{extra}', inv).json
+    jls = rows('JUMPLIST_ENTRY')['data']
+    by_file = {}
+    for j in jls:
+        by_file.setdefault(j['source_path'], []).append(j)
+
+    # Jump Lists, against pyolecf (libyal's compound-file reader) and the generator.
+    import pyolecf
+    local = Path(tempfile.mkdtemp()) / 'notepad.automaticDestinations-ms'
+    local.write_bytes(icat_bytes(NOTEPAD_JL))
+    olecf = pyolecf.file()
+    olecf.open(str(local))
+    streams = sorted(olecf.root_item.get_sub_item(i).name for i in range(olecf.root_item.number_of_sub_items))
+    olecf.close()
+    notepad = sorted(by_file.get(NOTEPAD_JL, []), key=lambda j: j['entry_number'])
+    check("Notepad's Jump List: one shell link stream per DestList entry (pyolecf lists the same streams)",
+          streams == ['1', '2', '3', 'DestList'] and [format(j['entry_number'], 'x') for j in notepad] == ['1', '2', '3'], (streams, notepad))
+    got = [(j['target'], iso(j['last_used']), j['pinned'], j['access_count']) for j in reversed(notepad)]
+    check('Notepad: the payroll export on E: at 14:14:06, cleanup.ps1 pinned (used twice), the project notes',
+          got == [('E:\\payroll-export.csv', utc(2026, 9, 1, 14, 14, 6), False, 1), ('C:\\Users\\alice\\Downloads\\cleanup.ps1', utc(2026, 9, 1, 10, 6, 45), True, 2),
+                  ('C:\\Users\\alice\\Documents\\project-notes.txt', utc(2026, 8, 28, 16, 5), False, 3)]
+          and all(j['application'] == 'Notepad (64-bit)' and j['user'] == 'alice' and j['hostname'] == 'laptop-07'
+                  and j['mac_address'] == '00:15:5d:01:a2:b3' for j in notepad), got)
+    pay = next((j for j in notepad if j['target'] == 'E:\\payroll-export.csv'), {})
+    recent = [r for r in get(f'/api/forensics/activity?case_id={A}&kind=RECENT_FILE', inv).json['data'] if r['target_path'] == 'E:\\payroll-export.csv']
+    check("the export's link in the Jump List is on the removable drive CRUZER (serial 6A3C-91F2), opened when the Recent shortcut says",
+          (pay.get('lnk') or {}).get('drive_type') == 'Removable' and pay['lnk'].get('volume_label') == 'CRUZER'
+          and pay['lnk'].get('drive_serial') == '6A3C-91F2' and recent and iso(recent[0]['lnk_modified']) == iso(pay['last_used']), (pay.get('lnk'), recent[:1]))
+    explorer = sorted(by_file.get(EXPLORER_JL, []), key=lambda j: j['entry_number'], reverse=True)
+    shell = next((b for b in get(f'/api/forensics/registry?case_id={A}&type=SHELLBAG', inv).json['data'] if b['path'] == 'E:\\Exports'), {})
+    check("Explorer's Jump List: E:\\Exports at 14:13:02, the time the ShellBags give for it, then Documents",
+          [(j['target'], iso(j['last_used'])) for j in explorer] == [('E:\\Exports', utc(2026, 9, 1, 14, 13, 2)), ('C:\\Users\\alice\\Documents', utc(2026, 9, 1, 14, 10, 12))]
+          and iso(shell.get('key_last_write')) == utc(2026, 9, 1, 14, 13, 2) and explorer[0]['application'] == 'Windows Explorer', (explorer, shell))
+    chrome = by_file.get(CHROME_JL, [])
+    check("Chrome's custom Jump List: the closed upload page, and two tasks (no times: the program writes these lists)",
+          [(j['category'], (j['lnk'] or {}).get('arguments'), (j['lnk'] or {}).get('description'), j.get('last_used')) for j in chrome] == [
+              ('Recently closed', '--profile-directory=Default https://filetransfer.example.net/upload', 'Anonymous File Upload', None),
+              ('Tasks', '--new-window', 'New window', None), ('Tasks', '--incognito', 'New Incognito window', None)], chrome)
+
+    # The Windows Timeline, against the database read with sqlite3.
+    db_path = Path(tempfile.mkdtemp()) / 'ActivitiesCache.db'
+    db_path.write_bytes(icat_bytes(ACTIVITIES_DB))
+    con = sqlite3.connect(db_path)
+    truth = [(r[0], datetime.fromtimestamp(r[1], tz=timezone.utc)) for r in con.execute('SELECT ActivityType, StartTime FROM Activity ORDER BY StartTime, ETag')]
+    ops = con.execute('SELECT OperationType, ActivityType, StartTime FROM ActivityOperation').fetchall()
+    con.close()
+    acts = rows('TIMELINE_ACTIVITY')['data']
+    ours = sorted((a['activity_type'], iso(a['start_time'])) for a in acts if a['table'] == 'Activity')
+    check(f'the Timeline holds the {len(truth)} activities sqlite3 reads, with their types and start times, and the pending deletion',
+          ours == sorted(truth) and [(a['operation_type'], a['activity_type']) for a in acts if a['table'] == 'ActivityOperation'] == [(o[0], o[1]) for o in ops] == [(3, 5)],
+          (ours, truth, ops))
+    note_ = next((a for a in acts if a['activity_type'] == 5 and a['display_text'] == 'payroll-export.csv'), {})
+    used = next((a for a in acts if a['activity_type'] == 6 and 'notepad' in (a['app'] or '').lower()), {})
+    clip = next((a for a in acts if a['activity_type'] == 10), {})
+    sd = next((a for a in acts if a['activity_type'] == 5 and 'SecureDelete' in (a['app'] or '')), {})
+    bam = next((b for b in get(f'/api/forensics/registry?case_id={A}&type=BAM_ENTRY', inv).json['data'] if 'SecureDelete' in b['path']), {})
+    check('Notepad opened E:\\payroll-export.csv at 14:14:06 and was in use for 95 seconds; the path was copied to the clipboard at 14:13:30',
+          note_.get('app') == 'C:\\Windows\\System32\\notepad.exe' and note_.get('description') == 'E:\\payroll-export.csv'
+          and iso(note_.get('start_time')) == utc(2026, 9, 1, 14, 14, 6) and used.get('duration_seconds') == 95
+          and iso(used.get('end_time')) == utc(2026, 9, 1, 14, 15, 41) and clip.get('clipboard_text') == 'E:\\payroll-export.csv'
+          and clip.get('app') == 'C:\\Windows\\explorer.exe', (note_, used, clip))
+    check('SecureDelete.exe started at 14:18:31, the last run BAM records for it',
+          iso(sd.get('start_time')) == iso(bam.get('last_run')) == utc(2026, 9, 1, 14, 18, 31), (sd, bam))
+    gone = next((a for a in acts if a['table'] == 'ActivityOperation'), {})
+    fs_shot = get(f'/api/forensics/evidence/{E}/files?q=payroll-screenshot&limit=10', inv).json
+    check('the Timeline entry for payroll-screenshot.png was deleted by the user, and the picture is not on the disk',
+          gone.get('operation_label') == 'deleted by the user' and gone.get('display_text') == 'payroll-screenshot.png'
+          and gone.get('app') == 'Microsoft.Windows.Photos_8wekyb3d8bbwe!App' and fs_shot.get('total', 0) == 0, (gone, fs_shot.get('total')))
+
+    # Thumbnails, against the PNGs found in the cache file and decoded by Pillow.
+    from PIL import Image
+    thumbs = sorted(rows('THUMBNAIL')['data'], key=lambda t: t['offset'])
+    pngs = _pngs(icat_bytes(THUMBCACHE))
+    served = [get(f"/api/forensics/artifacts/{t['artifact_id']}/raw", inv) for t in thumbs]
+    sizes = [Image.open(io.BytesIO(s.body)).size for s in served if s.status == 200]
+    check('the two thumbnails (the reserved entry without a picture is skipped) equal the PNGs in the cache file, byte for byte',
+          [t['entry_hash'] for t in thumbs] == ['9f3a6c21e4d07b58', '41c7d2e09b6f3a15']
+          and [hashlib.sha256(p).hexdigest() for p in pngs] == [t['sha256'] for t in thumbs] == [hashlib.sha256(s.body).hexdigest() for s in served],
+          ([t['entry_hash'] for t in thumbs], len(pngs)))
+    check("Pillow decodes each thumbnail at the size its cache entry records (the wiped screenshot's: 256×144)",
+          sizes == [(t['width'], t['height']) for t in thumbs] == [(256, 144), (48, 32)], sizes)
+    db = mongo()
+    check('viewing a thumbnail is recorded in the audit log, and it is served as a sandboxed attachment',
+          db.audit_logs.find_one({'action': 'FILE_CONTENT_VIEWED', 'resource_id': thumbs[0]['artifact_id']})
+          and (lambda h: h.get('content-security-policy', '').startswith('sandbox') and h.get('x-content-type-options') == 'nosniff')(
+              {k.lower(): v for k, v in served[0].headers.items()}), served[0].headers)
+
+    # Timeline events, filters, search, tags, counts and access.
+    events = [e for e in get(f'/api/forensics/timeline?case_id={A}&limit=2000', inv).json['data'] if e.get('evidence_id') == E]
+    opened = sorted(iso(e['timestamp']) for e in events if e['type'] == 'JUMPLIST_OPENED')
+    check('the timeline gains the five Jump List uses and the six Timeline activities',
+          len(opened) == 5 and utc(2026, 9, 1, 14, 14, 6) in opened and sum(e['type'] == 'TIMELINE_ACTIVITY' for e in events) == 6
+          and any(e['description'].startswith('Timeline entry deleted by the user') for e in events), opened)
+    check('records can be searched', rows('JUMPLIST_ENTRY', '&search=payroll')['total'] == 1 and rows('TIMELINE_ACTIVITY', '&search=payroll')['total'] == 3
+          and get(f'/api/forensics/search?case_id={A}&q=payroll-screenshot', inv).json['totals'].get('useractivity') == 1)
+    ov = get(f'/api/cases/{A}/overview', inv).json['counts']
+    check('the overview counts Jump List items, Timeline activities and thumbnails (8, 6, 2)',
+          (ov.get('jumplist_entries'), ov.get('timeline_activities'), ov.get('thumbnails')) == (8, 6, 2), ov)
+    check('a bad type is refused (400); another investigator gets 404 for the records and the thumbnails',
+          get(f'/api/forensics/user-activity?case_id={A}&type=NOPE', inv).status == 400
+          and get(f'/api/forensics/user-activity?case_id={A}&type=THUMBNAIL', C['INV2']).status == 404
+          and get(f"/api/forensics/artifacts/{thumbs[0]['artifact_id']}/raw", C['INV2']).status == 404)
+    t = post('/api/tags', inv, {'case_id': A, 'item_type': 'WINDOWS', 'item_id': pay['_id'], 'label': 'EVIDENCE', 'note': 'opened from E:'})
+    j = _analyse(inv, E, {'modules': ['user_activity']})
+    runs = sorted(p.name for p in (Path('/app/storage/analysis/thumbs') / E).iterdir())
+    check('a Jump List item can be tagged and the tag follows it when the module runs again; old thumbnails are replaced',
+          t.status == 200 and j['result']['summary'].get('tags') == {'relinked': 1, 'unresolved': 0} and len(runs) == 1
+          and rows('THUMBNAIL')['total'] == 2, (t, j.get('result', {}).get('summary', {}).get('tags'), runs))
+    req('DELETE', f"/api/tags/{t.json['tag_id']}", inv)
+
+
+@section('12j Real Jump Lists, Timeline, SRUM and Windows Search (Plaso samples on a disk, vs Plaso, impacket and sqlite3)')
+def t_user_activity_samples():
+    if not SAMPLES_IMG.is_file():
+        note('real-sample disk', 'storage/test-images/dfip-samples-disk.dd is missing: run scripts/test-image/fetch-samples.sh')
+        return
+    inv = C['INVESTIGATOR']
+    case = post('/api/cases', inv, {'name': 'Real Windows samples', 'priority': 'LOW'}).json['case_id']
+    ev = upload(inv, case, SAMPLES_IMG.read_bytes(), 'samples.dd').json['evidence_id']
+    j = _analyse(inv, ev, {'modules': ['user_activity']})
+    counts = j.get('result', {}).get('summary', {}).get('counts', {})
+    check('the module reads the real files on the samples disk', j['status'] == 'COMPLETED' and counts.get('srum_network_records') == 1840
+          and counts.get('search_index_entries') == 322, counts)
+    db = mongo()
+    of = lambda t, q=None: list(db.forensic_artifacts.find(dict({'evidence_id': ev, 'type': t}, **(q or {}))))
+
+    # Jump Lists: the values Plaso's own tests expect for these files.
+    jl = of('JUMPLIST_ENTRY')
+    e7 = next((x for x in jl if x['source_path'].endswith('1b4dd67f29cb1962.automaticDestinations-ms') and x.get('entry_number') == 7), {})
+    check('Windows 7 Jump List (DestList version 1): 7 entries; entry 7 is C:\\Users\\bperry\\Downloads with the values Plaso expects',
+          sum(x['source_path'].endswith('1b4dd67f29cb1962.automaticDestinations-ms') for x in jl) == 7 and e7.get('destlist_path') == 'C:\\Users\\bperry\\Downloads'
+          and e7.get('hostname') == 'student-pc1' and e7.get('droid_volume_id') == 'fb6af886-05d7-402d-9741-d1ee9e64c41f'
+          and e7.get('droid_file_id') == '9b1ce584-4a4c-11e5-b5c9-080027ac3d7f' and e7.get('pinned') is False
+          and e7.get('last_used') == utc(2015, 8, 29, 15, 32, 44, 34000), e7)  # stored to the millisecond (Plaso: .0343008)
+    v3 = next((x for x in jl if x['source_path'].endswith('9d1f905ce5044aee.automaticDestinations-ms') and x.get('entry_number') == 2), {})
+    check('Windows 10 Jump List (DestList version 3): entry 2 is the support.microsoft.com page used at 13:08:08.2475 on 17 January 2016',
+          v3.get('destlist_path') == 'http://support.microsoft.com/kb/3124263' and v3.get('last_used') == utc(2016, 1, 17, 13, 8, 8, 247000)
+          and v3.get('access_count') == 1 and v3.get('format_version') == 3, v3)
+    disp = next((x for x in jl if ((x.get('lnk') or {}).get('arguments') or '').endswith('/name Microsoft.Display')), {})
+    check('CustomDestinations: the Microsoft.Display task link with the description and times Plaso expects',
+          (disp.get('lnk') or {}).get('target_path') == 'C:\\Windows\\System32\\GettingStarted.exe' and disp.get('category') == 'Tasks'
+          and disp['lnk'].get('description') == '@%systemroot%\\system32\\oobefldr.dll,-1262'
+          and iso(disp['lnk'].get('target_modified')) == utc(2009, 7, 14, 1, 39, 11, 388000), disp.get('lnk'))
+    cats = {x['category'] for x in jl if x['source_path'].endswith('368d807282ccde9d.customDestinations-ms')}
+    check('a CustomDestinations file with several categories is read through to the end', cats == {'My Category 1', 'Tasks', 'My Category 2'}, cats)
+
+    # The Windows Timeline: Plaso's expected values, and sqlite3.
+    acts = of('TIMELINE_ACTIVITY')
+    con = sqlite3.connect(f"file:{SAMPLES / 'plaso' / 'windows' / 'ActivitiesCache.db'}?mode=ro&immutable=1", uri=True)
+    n_db = con.execute('SELECT count(*) FROM Activity').fetchone()[0] + con.execute('SELECT count(*) FROM ActivityOperation').fetchone()[0]
+    con.close()
+    py = [a for a in acts if a.get('start_time') == utc(2018, 8, 3, 11, 29) and a.get('duration_seconds') == 9]
+    od = [a for a in acts if a.get('app') == 'Microsoft.SkyDrive.Desktop' and a.get('start_time') == utc(2018, 7, 25, 12, 4, 48)
+          and a.get('app_display_name') == 'OneDrive']
+    check(f'Windows Timeline: all {n_db} activities sqlite3 counts (Plaso reads 112); python.exe in use 9 s at 11:29:00 on 3 August 2018; OneDrive opened',
+          len(acts) == n_db == 112 and len(py) == 1 and py[0]['app'].lower() == 'c:\\python34\\python.exe'
+          and py[0]['reporting_app'] == 'ShellActivityMonitor' and len(od) == 1, (len(acts), [(a['app'], a['start_time']) for a in py]))
+
+    # SRUM, against impacket's ESE reader.
+    from impacket.ese import ESENT_DB
+    srudb = ESENT_DB(str(SAMPLES / 'plaso' / 'SRUDB.dat'))
+    cur = srudb.openTable('SruDbIdMapTable')
+    names = {}
+    while (r := srudb.getNextRow(cur)) is not None:
+        if r[b'IdType'] in (0, 1, 2) and r[b'IdBlob']:
+            names[r[b'IdIndex']] = bytes.fromhex(r[b'IdBlob'].decode()).decode('utf-16-le').rstrip('\0')
+    cur = srudb.openTable('{973F5D5C-1D90-4944-BE8E-24B94231A174}')
+    truth = {}
+    while (r := srudb.getNextRow(cur)) is not None:
+        when = datetime(1899, 12, 30, tzinfo=timezone.utc) + timedelta(days=struct.unpack('<d', struct.pack('<q', r[b'TimeStamp']))[0])
+        truth[r[b'AutoIncId']] = (when, names.get(r[b'AppId']), r[b'BytesSent'], r[b'BytesRecvd'])
+    ours = {x['record']: (x['time'], x['app'], x['bytes_sent'], x['bytes_received']) for x in of('SRUM_NETWORK')}
+    bad = [k for k in truth if k not in ours or abs(ours[k][0] - truth[k][0]) > timedelta(milliseconds=1)
+           or (ours[k][1] or '') != re.sub(r'^\\Device\\HarddiskVolume\d+', '', truth[k][1] or '', flags=re.I) or ours[k][2:] != truth[k][2:]]
+    check(f'SRUM network usage: all {len(truth)} records equal impacket (time, application, bytes sent and received)',
+          len(ours) == len(truth) == 1840 and not bad, bad[:5])
+    top = get(f'/api/forensics/user-activity/network?case_id={case}', inv).json['data']
+    expect_total = sum(v[2] for v in truth.values())
+    check('the network usage per application adds up to the bytes impacket reads', sum(x['bytes_sent'] for x in top) == expect_total and top[0]['bytes_sent'] >= top[-1]['bytes_sent'],
+          (sum(x['bytes_sent'] for x in top), expect_total))
+    check('application usage and connections are read too (16,183 and 260 records)',
+          len(of('SRUM_APP_USAGE')) == 16183 and len(of('SRUM_CONNECTIVITY')) == 260)
+
+    # Windows Search, against impacket (it reads numbers and times; the compressed text columns are decoded by libesedb only).
+    edb = ESENT_DB(str(SAMPLES / 'plaso' / 'Windows.edb'))
+    cur = edb.openTable('SystemIndex_0A')
+    rows_ = {}
+    while (r := edb.getNextRow(cur)) is not None:
+        hexval = lambda k: int(r[k].decode(), 16) if r.get(k) and r[k] != b'2a2a2a2a2a2a2a2a' else None
+        rows_[r[b'DocID']] = (hexval(b'System_Size'), hexval(b'System_DateModified'), r[b'System_ThumbnailCacheId'].decode() if r.get(b'System_ThumbnailCacheId') else None)
+    entries = of('SEARCH_INDEX_ENTRY')
+    # To the millisecond; a placeholder before 1980 (some items have FILETIME 1) is no time at all.
+    ft = lambda n: (lambda t: t if t.year >= 1980 else None)(datetime(1601, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=n // 10 // 1000 * 1000)) if n else None
+    bad = [x['work_id'] for x in entries if x['work_id'] not in rows_ or x.get('size') != rows_[x['work_id']][0]
+           or x.get('modified') != ft(rows_[x['work_id']][1]) or x.get('thumbnail_cache_id') != rows_[x['work_id']][2]]
+    check(f'Windows Search: all {len(rows_)} items equal impacket (document ID, size, modification time, thumbnail cache ID)',
+          len(entries) == len(rows_) == 322 and not bad, bad[:5])
+    files = [x for x in entries if x.get('extension')]
+    check('every indexed path is its folder and name joined (the decompressed text columns agree with each other)',
+          files and all(x['path'] == (x['folder'].rstrip('\\') + '\\' + x['name']) for x in files),
+          [(x['path'], x['folder'], x['name']) for x in files if x['path'] != (x['folder'].rstrip('\\') + '\\' + x['name'])][:3])
+    summ = next((x for x in entries if (x.get('path') or '').endswith('Default Programs.lnk')), {})
+    check('summaries are decoded (Windows Search obfuscates them): "Choose which programs you want Windows to use..."',
+          (summ.get('summary') or '').startswith('Choose which programs you want Windows to use for activities like web browsing')
+          and sum(1 for x in entries if x.get('summary')) == 78, summ.get('summary'))
+    on_disk = {f['path'] for f in db.fs_entries.find({'evidence_id': ev, 'deleted': False, 'is_virtual': False}, {'path': 1})}
+    c_drive = [x for x in entries if (x.get('path') or '').upper().startswith('C:\\')]
+    wrong = [(x['path'], x['file_state']) for x in c_drive
+             if x['file_state'] != ('on disk' if '/' + x['path'][3:].replace('\\', '/') in on_disk else 'not on the disk')]
+    check('each indexed C: path is matched with the disk: the few folders the samples disk has (C:\\Users, C:\\ProgramData...) are "on disk", '
+          'the rest "not on the disk"', c_drive and not wrong and any(x['file_state'] == 'on disk' for x in c_drive), wrong[:5])
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -2616,7 +2858,7 @@ def t_overview():
 
 ACTIVITY_EVENT_TYPES = ('BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY,PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN,'
                         'PROGRAM_RUN_USERASSIST,PROGRAM_RUN_BAM,FOLDER_BROWSED,EXPLORER_SEARCH,TYPED_PATH,RECENT_DOC_OPENED,RUN_DIALOG,RDP_CONNECTION,'
-                        'LOGON,LOGOFF')
+                        'LOGON,LOGOFF,JUMPLIST_OPENED,TIMELINE_ACTIVITY')
 
 
 @section('28b Activity dashboard')
@@ -2887,7 +3129,7 @@ def t_reg_disabled():
 PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
-             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

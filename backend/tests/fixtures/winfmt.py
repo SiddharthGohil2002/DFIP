@@ -38,18 +38,21 @@ def recycle_bin_index(original_path: str, size: int, deleted: datetime, version:
 
 # ---------------------------------------------------------------- Shell Link
 LINK_CLSID = bytes.fromhex('0114020000000000c000000000000046')
-HAS_LINK_INFO, HAS_WORKING_DIR, HAS_ARGUMENTS, IS_UNICODE = 0x02, 0x10, 0x20, 0x80
+HAS_LINK_INFO, HAS_NAME, HAS_WORKING_DIR, HAS_ARGUMENTS, IS_UNICODE = 0x02, 0x04, 0x10, 0x20, 0x80
 DRIVE_REMOVABLE, DRIVE_FIXED = 2, 3
 
 
 def shell_link(target_path: str, *, size: int, created: datetime, modified: datetime, accessed: datetime,
                drive_type: int = DRIVE_FIXED, drive_serial: int = 0, volume_label: str = '',
                working_dir: str | None = None, arguments: str | None = None, attributes: int = 0x20,
-               machine_id: str = '') -> bytes:
+               machine_id: str = '', description: str | None = None) -> bytes:
     """A .lnk file pointing at a local path: header, LinkInfo (VolumeID + LocalBasePath), StringData,
     a TrackerDataBlock (machine ID) and the terminal block. The header times are the target's times."""
     flags = HAS_LINK_INFO | IS_UNICODE
     strings = b''
+    if description is not None:  # NAME_STRING comes first in StringData
+        flags |= HAS_NAME
+        strings += struct.pack('<H', len(description)) + description.encode('utf-16-le')
     if working_dir is not None:
         flags |= HAS_WORKING_DIR
         strings += struct.pack('<H', len(working_dir)) + working_dir.encode('utf-16-le')
@@ -266,3 +269,73 @@ def shell_item_directory(name: str, short_name: str, modified: datetime, created
 def id_list(*items: bytes) -> bytes:
     """Shell items followed by the 2-byte terminator, as stored in ShellBags (BagMRU) values."""
     return b''.join(items) + b'\0\0'
+
+
+# ---------------------------------------------------------------- Jump Lists (libyal/dtformats "Jump lists format")
+def droid_uuid(sequence: int, node: int) -> bytes:
+    """A version 1 (time-based) UUID made on the computer with MAC address `node`, as stored (little-endian fields)."""
+    import uuid
+    u = uuid.UUID(fields=(0x9B1CE584 + sequence, 0x4A4C, 0x11E5, 0xB5, 0xC9, node))
+    return u.bytes_le
+
+
+def destlist(entries: list[dict], version: int = 4) -> bytes:
+    """A DestList stream (Windows 10 layout, versions 3 and 4): a 32-byte header, then per entry the droid identifiers,
+    host name, entry number, last-used FILETIME, pin position (-1: not pinned), access count and the path."""
+    body = b''
+    for e in entries:
+        path = e['path'].encode('utf-16-le')
+        body += (struct.pack('<Q', 0) + e.get('droid_volume', b'\0' * 16) + e.get('droid_file', b'\0' * 16)
+                 + e.get('droid_volume', b'\0' * 16) + e.get('droid_file', b'\0' * 16)
+                 + e.get('hostname', '').encode('ascii')[:16].ljust(16, b'\0')
+                 + struct.pack('<IIfQiiIQH', e['number'], 0, float(e.get('access_count', 1)), filetime(e['last_used']),
+                               e.get('pin', -1), -1, e.get('access_count', 1), 0, len(e['path']))
+                 + path + b'\0' * 4)
+    pinned = sum(1 for e in entries if e.get('pin', -1) != -1)
+    last = max((e['number'] for e in entries), default=0)
+    return struct.pack('<IIIfQQ', version, len(entries), pinned, float(len(entries)), last, last + 1) + body
+
+
+def automatic_destinations(entries: list[dict]) -> bytes:
+    """An .automaticDestinations-ms compound file: one shell link stream per entry, named by its entry number in hex,
+    and the DestList."""
+    streams = {format(e['number'], 'x'): e['lnk'] for e in entries}
+    streams['DestList'] = destlist(entries)
+    return compound_file(streams)
+
+
+def custom_destinations(categories: list[tuple]) -> bytes:
+    """A .customDestinations-ms file: ('custom', name, [links]), ('tasks', [links]) or ('known', 1 frequent | 2 recent)
+    categories, each link after the shell link CLSID, each category ended by the 0xBABFFBAB footer."""
+    out = struct.pack('<III', 2, len(categories), 0)
+    for cat in categories:
+        if cat[0] == 'known':
+            out += struct.pack('<II', 1, cat[1])
+        else:
+            links = cat[2] if cat[0] == 'custom' else cat[1]
+            if cat[0] == 'custom':
+                out += struct.pack('<IH', 0, len(cat[1])) + cat[1].encode('utf-16-le')
+            else:
+                out += struct.pack('<I', 2)
+            out += struct.pack('<I', len(links)) + b''.join(LINK_CLSID + link for link in links)
+        out += struct.pack('<I', 0xBABFFBAB)
+    return out
+
+
+# ---------------------------------------------------------------- Explorer thumbnail cache (Thumbcache Viewer's layout)
+def thumbcache(entries: list[dict], version: int = 0x20, cache_type: int = 4) -> bytes:
+    """A thumbcache_*.db (Windows 8 and later layout): the CMMM header (version, type, first entry offset, first free
+    offset), then per entry: CMMM, entry size, 64-bit hash, identifier size, padding, data size, width, height, checksums
+    (left zero: readers do not need them), the identifier (the hash in hex, UTF-16) and the picture."""
+    body = b''
+    first = 24
+    for e in entries:
+        ident = format(e['hash'], '016x').encode('utf-16-le')
+        data = e.get('data', b'')
+        padding = -(56 + len(ident)) % 8
+        size = 56 + len(ident) + padding + len(data)
+        size += -size % 8
+        entry = (b'CMMM' + struct.pack('<IQIIIIIIQQ', size, e['hash'], len(ident), padding, len(data), e.get('width', 0),
+                                       e.get('height', 0), 0, 0, 0) + ident + b'\0' * padding + data)
+        body += entry.ljust(size, b'\0')
+    return b'CMMM' + struct.pack('<IIIII', version, cache_type, 0, first, first + len(body)) + body

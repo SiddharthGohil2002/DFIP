@@ -39,3 +39,6 @@ libevtx-python==20260705
 python-evtx==0.8.1
 # Detection rules (Sigma YAML) for event logs
 PyYAML==6.0.3
+# ESE databases (SRUM, Windows Search) and OLE compound files (Jump Lists; the tests' independent reader), libyal
+libesedb-python==20260704
+libolecf-python==20260526

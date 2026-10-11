@@ -23,6 +23,9 @@ const MODES: { id: Mode; label: string }[] = [
   { id: 'regex', label: 'Regular expression' },
 ];
 const MIN: Record<Mode, number> = { records: 2, text: 3, regex: 1 };
+const USER_TYPE: Record<string, string> = {
+  JUMPLIST_ENTRY: 'Jump list', TIMELINE_ACTIVITY: 'Windows Timeline', THUMBNAIL: 'Thumbnail', SEARCH_INDEX_ENTRY: 'Search index',
+};
 const REGISTRY_TYPE: Record<string, string> = {
   USERASSIST: 'Program run (UserAssist)', SHELLBAG: 'Folder browsed', TYPED_PATH: 'Typed path', TYPED_URL: 'Typed address',
   EXPLORER_SEARCH: 'Explorer search', RECENT_DOC: 'Recent document', RUN_MRU: 'Run dialog', PERSISTENCE: 'Autostart entry',
@@ -179,6 +182,15 @@ export function SearchPage() {
                 <td className="small nowrap">{(e.channel || '').replace(/^Microsoft-Windows-/, '')} {e.event_id}</td>
                 <td className="mono small nowrap">{time(e.time)}</td>
                 <td className="small" colSpan={2}>{e.description || `${e.provider} event ${e.event_id}`}{e.user && <span className="muted"> · {e.user}</span>}</td>
+              </tr>
+            ))}
+          </Group>
+          <Group title="Jump lists, Timeline, thumbnails and search index" total={res.totals.useractivity ?? 0} shown={(res.results.useractivity || []).length} link={{ to: '/app/activity', label: 'Open Windows activity' }}>
+            {(res.results.useractivity || []).map((a) => (
+              <tr key={a._id}>
+                <td className="small nowrap">{USER_TYPE[a.type] || a.type}{a.user && <span className="muted"> · {a.user}</span>}</td>
+                <td className="mono small nowrap">{time(a.last_used || a.start_time || a.modified)}</td>
+                <td className="cell-path small mono" colSpan={2}>{a.target || a.description || a.display_text || a.path || a.indexed_path || a.entry_hash}</td>
               </tr>
             ))}
           </Group>

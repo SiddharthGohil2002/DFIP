@@ -17,7 +17,8 @@ import re
 # does not need every later number edited here.
 titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer and users', 'Deleted files', 'Recovered files',
           'USB device history', 'Browser history', 'Browser downloads', 'Windows activity', 'Execution evidence', 'Folders browsed',
-          'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives', 'Event logs', 'Malware indicators',
+          'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives',
+          'Jump lists, Timeline, thumbnails, SRUM and search index', 'Event logs', 'Malware indicators',
           'Hash set matches', 'Renamed and encrypted files', 'Found data',
           'Investigator findings', 'Tagged evidence', 'Timeline of notable events', 'Audit trail integrity']
 found = [(int(m.group(1)), m.group(2)) for m in re.finditer(r'^\s*(\d+)\. (' + '|'.join(map(re.escape, titles)) + r')', a, re.M)]
@@ -27,6 +28,12 @@ subs = [m.group(0).strip() for m in re.finditer(r'^\s*\d+\.\d+ (Programs run|Rec
 check('Windows activity has its three subsections', len(subs) == 3)
 subs = [m.group(1) for m in re.finditer(r'^\s*\d+\.\d+ (Logs read|Detections|Notable events)', a, re.M)]
 check('Event logs has its three subsections', subs == ['Logs read', 'Detections', 'Notable events'])
+subs = [m.group(1) for m in re.finditer(r'^\s*\d+\.\d+ (Jump lists|Windows Timeline|Thumbnails|Network usage \(SRUM\)|Windows Search index)', a, re.M)]
+check('Jump lists, Timeline, thumbnails, SRUM and search index has its five subsections',
+      subs == ['Jump lists', 'Windows Timeline', 'Thumbnails', 'Network usage (SRUM)', 'Windows Search index'])
+check('Jump lists, the Timeline and thumbnails listed: Notepad, the deleted Timeline entry, the wiped screenshot\'s thumbnail',
+      all(x in flat for x in ('Notepad (64-bit)', 'Google Chrome', 'deleted by the user', '9f3a6c21e4d07b58', 'payroll-screenshot.png',
+                              'No SRUM database was found.')))
 check('evidence ID and full SHA-256', exp['evidence'] in a and exp['sha256'] in flat.replace(' ', '') )
 import re
 custody = ' '.join(a[a.index('2. Chain of custody'):a.index('3. Analysis summary')].split())

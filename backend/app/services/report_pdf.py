@@ -279,6 +279,49 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
                x.get('key_last_write')] for x in art.find(q).sort('key_last_write', -1).limit(MAX_ROWS)],
              [0.8, 1.2, 2.6, 1.6, 1.5], 'No remote desktop connections or mapped network drives were found.', total=art.count_documents(q))
 
+    # Jump Lists, the Windows Timeline, thumbnails, SRUM and the search index (module user_activity).
+    ua_title = T('Jump lists, Timeline, thumbnails, SRUM and search index')
+    story.append(Paragraph(escape(ua_title), H2))
+    story.append(Paragraph('Jump Lists record the files and folders each program opened (with when, for AutomaticDestinations); the '
+                           'Windows Timeline records applications and documents in use; thumbnails stay in the Explorer cache after '
+                           'their pictures are deleted; SRUM records network and application use per hour; the Windows Search index '
+                           'keeps what it learned about files that may no longer exist.', NOTE))
+    n = ua_title.split('.')[0]
+    q = {'case_id': cid, 'type': 'JUMPLIST_ENTRY'}
+    _section(story, f'{n}.1 Jump lists', ['User', 'Application', 'Item', 'Last used', 'Pinned', 'Uses'],
+             [[j.get('user'), j.get('application') or f'AppID {j.get("app_id")}', j.get('target'), j.get('last_used'),
+               'yes' if j.get('pinned') else None, j.get('access_count')] for j in art.find(q).sort('last_used', -1).limit(MAX_ROWS)],
+             [0.7, 1.4, 3.0, 1.3, 0.5, 0.5], 'No Jump Lists were found.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'TIMELINE_ACTIVITY'}
+    _section(story, f'{n}.2 Windows Timeline', ['Start', 'User', 'Application', 'Activity', 'What'],
+             [[a.get('start_time'), a.get('user'), a.get('app_display_name') or a.get('app'),
+               a.get('activity_label') + (' (deleted by the user)' if a.get('operation_type') == 3 else ''),
+               a.get('clipboard_text') or a.get('description') or a.get('display_text')]
+              for a in art.find(q).sort('start_time', -1).limit(MAX_ROWS)],
+             [1.3, 0.7, 1.7, 1.2, 2.5], 'No Windows Timeline database was found.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'THUMBNAIL'}
+    _section(story, f'{n}.3 Thumbnails', ['User', 'Cache', 'Entry', 'Size', 'Indexed file', 'SHA-256'],
+             [[t.get('user'), f'thumbcache_{t.get("cache_size")}', t.get('entry_hash'),
+               f'{t.get("width")}×{t.get("height")}' if t.get('width') else None,
+               (t.get('indexed_path') or '') + (f' ({t["indexed_file_state"]})' if t.get('indexed_file_state') else '') or None, t.get('sha256')]
+              for t in art.find(q).sort([('source_path', 1), ('offset', 1)]).limit(MAX_ROWS)],
+             [0.6, 1.1, 1.2, 0.7, 2.2, 1.8], 'No thumbnail caches were found.', mono_cols=(2, 5), total=art.count_documents(q), heading=H3)
+    nets = list(art.aggregate([{'$match': {'case_id': cid, 'type': 'SRUM_NETWORK'}},
+                               {'$group': {'_id': {'app': '$app', 'user': '$user', 'sid': '$sid'}, 'sent': {'$sum': '$bytes_sent'},
+                                           'received': {'$sum': '$bytes_received'}, 'first': {'$min': '$time'}, 'last': {'$max': '$time'}}},
+                               {'$sort': {'sent': -1}}, {'$limit': MAX_ROWS}]))
+    _section(story, f'{n}.4 Network usage (SRUM)', ['Application', 'User', 'Bytes sent', 'Bytes received', 'First', 'Last'],
+             [[x['_id'].get('app'), x['_id'].get('user') or x['_id'].get('sid'), x['sent'], x['received'], x.get('first'), x.get('last')]
+              for x in nets],
+             [2.4, 1.0, 0.9, 0.9, 1.2, 1.2], 'No SRUM database was found.', heading=H3)
+    q = {'case_id': cid, 'type': 'SEARCH_INDEX_ENTRY', 'file_state': {'$in': ['deleted', 'not on the disk']}}
+    _section(story, f'{n}.5 Windows Search index: files no longer on the disk', ['File', 'Size', 'Modified', 'Indexed', 'Now'],
+             [[s.get('path'), s.get('size'), s.get('modified'), s.get('gather_time'), s.get('file_state')]
+              for s in art.find(q).sort('path', 1).limit(MAX_ROWS)],
+             [3.4, 0.7, 1.3, 1.3, 0.9],
+             f'No indexed file is missing from the disk ({art.count_documents({"case_id": cid, "type": "SEARCH_INDEX_ENTRY"}):,} index entries read).',
+             total=art.count_documents(q), heading=H3)
+
     # Windows event logs (module eventlogs).
     events_title = T('Event logs')
     story.append(Paragraph(escape(events_title), H2))
@@ -359,7 +402,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     tagged = sorted(db['tags'].find({'case_id': cid}), key=lambda t: (tag_order.get(t.get('label'), 9), str((t.get('snapshot') or {}).get('timestamp') or '')))
     item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
                  'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file', 'ENTITY': 'Found data',
-                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record'}
+                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity'}
     _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
              [[(t.get('label') or '').replace('_', ' ').capitalize(),
                f'{(t.get("snapshot") or {}).get("title")}' + ('' if resolve(db, t) is not None else ' (not in the latest analysis)'),

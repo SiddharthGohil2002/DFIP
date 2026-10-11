@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added — Jump Lists, Windows Timeline, thumbnails, SRUM and Windows Search
+- **Jump Lists** (new `user_activity` module, standard and full profiles): the files and folders each program opened, with when (AutomaticDestinations: last used, pinned, use count, the computer and the MAC address from the object identifiers) and the programs' own lists and tasks (CustomDestinations).
+- **Windows Timeline** (ActivitiesCache.db): applications and documents opened, how long an application was in use, clipboard copies with the copied text, and entries the user deleted from the Timeline.
+- **Thumbnails** from Explorer's thumbnail caches, viewable like recovered files: a picture that was deleted or wiped can still be seen.
+- **SRUM**: network bytes sent and received per application and user, network connections and application resource use.
+- **Windows Search index** (Windows.edb, and Windows 11's Windows.db): what Windows knew about files, including files that are no longer on the disk; thumbnails are linked to the files the index knows.
+- Windows activity gains the tabs Jump lists, Timeline, Thumbnails, Network usage and Search index; the records are on the timeline and the activity dashboard, can be tagged and searched, are counted on the overview and have a report section.
+- The backend image gains libesedb and libolecf, and impacket's ESE reader (used by the tests as an independent reader). The test disk gains alice's Jump Lists, Windows Timeline and thumbnail cache; `fetch-samples.sh` also builds a disk from Plaso's real Jump Lists, ActivitiesCache.db, SRUDB.dat and Windows.edb.
+
 ### Added — Windows event logs
 - **Event logs** (new `eventlogs` module, standard and full profiles, and a new page): every record of every Windows event log (.evtx), read with libevtx, including records recovered from unused space. Notable events are described in plain English with their user: logons (with logon type) and logoffs, failed logons (with the reason), account and group changes, cleared logs, services, scheduled tasks, Remote Desktop, PowerShell (encoded commands decoded), USB devices, Microsoft Defender, startup and shutdown. Every record can be searched and filtered by log, event ID, category, level, user and time, and opened with its XML.
 - **Detections**: a Sigma rule engine (subset of the specification, regular expressions in RE2) with 15 curated rules: cleared logs, suspicious services, encoded PowerShell and download cradles, accounts created, deleted and added to Administrators, password guessing and spraying, Defender alerts and protection turned off, suspicious scheduled tasks, Remote Desktop logons, audit policy changes. Detections are leads, listed with their usual false positives.

@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && groupadd --system dfip && useradd --system --gid dfip --uid 10001 dfip
 COPY requirements.txt .
 RUN pip install -r requirements.txt
+# impacket's ESE reader is the tests' independent check of SRUM and Windows Search (only that part is used)
+RUN pip install --no-deps impacket==0.13.1
 COPY app ./app
 COPY rules ./rules
 COPY tests ./tests

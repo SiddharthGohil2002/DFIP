@@ -10,10 +10,11 @@ import { TagButton } from '../lib/tags';
 import { ViewButton } from '../ui/FileViewer';
 import { Badge, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, Tabs, useToast } from '../ui';
 import { REGISTRY_COUNT, RegistryActivity, type RegistryTab } from './RegistryActivity';
+import { USER_COUNT, USER_TABS, UserActivity, type UserTab } from './UserActivity';
 
 const LIMIT = 100;
 type FileKind = 'PROGRAM_RUN' | 'RECENT_FILE' | 'RECYCLE_BIN_ITEM';
-type Kind = FileKind | RegistryTab;
+type Kind = FileKind | RegistryTab | UserTab;
 const REGISTRY_TABS: RegistryTab[] = ['EXECUTION', 'SHELLBAG', 'SEARCHES', 'PERSISTENCE', 'INSTALLED', 'REMOTE'];
 
 const EMPTY: Record<FileKind, string> = {
@@ -26,6 +27,7 @@ export function ActivityPage() {
   const { caseId, overview } = useCase();
   const [kind, setKind] = useState<Kind>('PROGRAM_RUN');
   const isRegistry = (REGISTRY_TABS as string[]).includes(kind);
+  const isUser = (USER_TABS as string[]).includes(kind);
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
   const [skip, setSkip] = useState(0);
@@ -33,18 +35,19 @@ export function ActivityPage() {
 
   const params = new URLSearchParams({ case_id: caseId, kind, limit: String(LIMIT), skip: String(skip) });
   if (search) params.set('search', search);
-  const res = useApi<{ data: Artifact[]; total: number }>(isRegistry ? null : `/forensics/activity?${params}`);
+  const res = useApi<{ data: Artifact[]; total: number }>(isRegistry || isUser ? null : `/forensics/activity?${params}`);
   const { error, loading } = res;
   // Until the new tab's rows arrive, the previous tab's are still loaded: never draw them under this tab's columns.
   const data = res.dataPath && new URLSearchParams(res.dataPath.split('?')[1]).get('kind') === kind ? res.data : null;
   const counts = overview?.counts;
   const reg = REGISTRY_COUNT(counts);
+  const ua = USER_COUNT(counts);
 
   return (
     <div className="stack">
       <PageHeader
         title="Windows activity"
-        subtitle="What the user did on the computer, from Windows' own records: programs run (Prefetch, UserAssist, BAM, Amcache, ShimCache), files opened (Recent shortcuts, RecentDocs), files moved to the Recycle Bin, folders browsed, searches, autostart entries, installed programs and remote connections."
+        subtitle="What the user did on the computer, from Windows' own records: programs run (Prefetch, UserAssist, BAM, Amcache, ShimCache), files opened (Recent shortcuts, RecentDocs, Jump Lists), files moved to the Recycle Bin, folders browsed, searches, autostart entries, installed programs, remote connections, the Windows Timeline, thumbnails, network usage (SRUM) and the search index."
       />
       <Card flush>
         <Tabs<Kind>
@@ -60,9 +63,14 @@ export function ActivityPage() {
             { id: 'PERSISTENCE', label: 'Persistence', count: reg.PERSISTENCE },
             { id: 'INSTALLED', label: 'Installed programs', count: reg.INSTALLED },
             { id: 'REMOTE', label: 'Remote desktop and drives' },
+            { id: 'JUMPLISTS', label: 'Jump lists', count: ua.JUMPLISTS },
+            { id: 'TIMELINE', label: 'Timeline', count: ua.TIMELINE },
+            { id: 'THUMBNAILS', label: 'Thumbnails', count: ua.THUMBNAILS },
+            { id: 'NETWORK', label: 'Network usage' },
+            { id: 'SEARCH_INDEX', label: 'Search index', count: ua.SEARCH_INDEX },
           ]}
         />
-        {isRegistry ? <RegistryActivity tab={kind as RegistryTab} /> : (<>
+        {isRegistry ? <RegistryActivity tab={kind as RegistryTab} /> : isUser ? <UserActivity tab={kind as UserTab} /> : (<>
         <div className="row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
           <input className="input sm" style={{ maxWidth: 320 }} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setSearch(q.trim())} placeholder="Search programs, paths, volume labels" aria-label="Search" />
           <Button size="sm" icon={<Search size={13} />} onClick={() => setSearch(q.trim())}>Search</Button>
