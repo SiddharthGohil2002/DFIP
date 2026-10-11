@@ -4,6 +4,7 @@ Everything here is fabricated test data for exercising the parsers. The registry
 separately by make_hives.py (with hivex).
 """
 import io
+import json
 import random
 import sqlite3
 import struct
@@ -43,9 +44,21 @@ def write(rel, data):
     return p
 
 
+# History rows alice deleted (id, address, title, time, search term). Chrome's own SQLite zeroes deleted rows (secure delete);
+# these are written with it off, as other SQLite databases do, so they stay in the file's free space for recovery.
+CHROME_DELETED = [
+    (5, 'https://www.google.com/search?q=how+to+permanently+delete+files+from+usb', 'how to permanently delete files from usb - Google Search',
+     utc(2026, 9, 1, 14, 16, 2), 'how to permanently delete files from usb'),
+    (6, 'https://filetransfer.example.net/d/7Hq2xK', 'Your file is ready - Anonymous File Upload', utc(2026, 9, 1, 14, 22, 18), None),
+    (7, 'https://www.google.com/search?q=clear+chrome+history+for+one+day', 'clear chrome history for one day - Google Search',
+     utc(2026, 9, 1, 14, 38, 51), 'clear chrome history for one day'),
+]
+
+
 def chrome_history(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path)
+    db.execute('PRAGMA secure_delete=OFF')
     db.executescript("""
         CREATE TABLE urls(id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR, visit_count INTEGER DEFAULT 0 NOT NULL,
                           typed_count INTEGER DEFAULT 0 NOT NULL, last_visit_time INTEGER NOT NULL, hidden INTEGER DEFAULT 0 NOT NULL);
@@ -68,13 +81,40 @@ def chrome_history(path):
         r'C:\Users\alice\Downloads\SecureDelete.exe', r'C:\Users\alice\Downloads\SecureDelete.exe',
         chrome_ts(utc(2026, 9, 1, 10, 5)), 482_304, 482_304, chrome_ts(utc(2026, 9, 1, 10, 5, 9)),
         'https://tools.example.org/securedelete', 'application/octet-stream'))
+    db.execute('CREATE TABLE keyword_search_terms (keyword_id INTEGER NOT NULL,url_id INTEGER NOT NULL,lower_term LONGVARCHAR NOT NULL,'
+               'term LONGVARCHAR NOT NULL)')
+    db.execute("INSERT INTO keyword_search_terms VALUES (2, 2, 'how to wipe usb drive', 'how to wipe usb drive')")
+    db.commit()
+    for i, url, title, ts, term in CHROME_DELETED:
+        db.execute('INSERT INTO urls VALUES (?,?,?,1,0,?,0)', (i, url, title, chrome_ts(ts)))
+        db.execute('INSERT INTO visits(url, visit_time) VALUES (?,?)', (i, chrome_ts(ts)))
+        if term:
+            db.execute('INSERT INTO keyword_search_terms VALUES (2, ?, ?, ?)', (i, term, term))
+    db.commit()
+    db.execute('DELETE FROM urls WHERE id >= 5')
+    db.execute('DELETE FROM visits WHERE url >= 5')
+    db.execute('DELETE FROM keyword_search_terms WHERE url_id >= 5')
     db.commit()
     db.close()
 
 
+# A search alice made in Firefox and deleted from its history. Firefox keeps places.sqlite in WAL mode: the row is still in an
+# older copy of its page in places.sqlite-wal, written before the deletion and not yet checkpointed.
+FIREFOX_DELETED = (3, 'https://www.bing.com/search?q=securedelete+wipe+free+space', 'securedelete wipe free space - Search',
+                   utc(2026, 9, 1, 14, 17, 25))
+
+
 def firefox_places(path):
+    """places.sqlite and its write-ahead log, copied while the database is open (as on a running computer)."""
+    import shutil
+    import tempfile
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path)
+    work = Path(tempfile.mkdtemp())
+    live = work / 'places.sqlite'
+    db = sqlite3.connect(live)
+    db.execute('PRAGMA secure_delete=OFF')
+    db.execute('PRAGMA journal_mode=WAL')
+    db.execute('PRAGMA wal_autocheckpoint=0')
     db.executescript("""
         CREATE TABLE moz_places(id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR, rev_host LONGVARCHAR,
                                 visit_count INTEGER DEFAULT 0, hidden INTEGER DEFAULT 0 NOT NULL, typed INTEGER DEFAULT 0 NOT NULL,
@@ -91,8 +131,27 @@ def firefox_places(path):
     db.execute("INSERT INTO moz_anno_attributes VALUES (1,'downloads/destinationFileURI')")
     db.execute("INSERT INTO moz_annos(place_id,anno_attribute_id,content,dateAdded) VALUES (2,1,'file:///C:/Users/alice/Downloads/archiver.zip',?)",
                (prtime(utc(2026, 9, 1, 10, 33, 5)),))
+    db.execute('CREATE TABLE moz_bookmarks (id INTEGER PRIMARY KEY, type INTEGER, fk INTEGER DEFAULT NULL, parent INTEGER, position INTEGER, '
+               'title LONGVARCHAR, keyword_id INTEGER, folder_type TEXT, dateAdded INTEGER, lastModified INTEGER, guid TEXT, '
+               'syncStatus INTEGER NOT NULL DEFAULT 0, syncChangeCounter INTEGER NOT NULL DEFAULT 1)')
+    created = prtime(utc(2025, 11, 3, 8, 30))
+    for row in [(1, 2, None, 0, 0, '', 'root________'), (2, 2, None, 1, 0, 'menu', 'menu________'), (3, 2, None, 1, 1, 'toolbar', 'toolbar_____'),
+                (4, 2, None, 1, 2, 'tags', 'tags________'), (5, 2, None, 1, 3, 'unfiled', 'unfiled_____')]:
+        db.execute('INSERT INTO moz_bookmarks(id,type,fk,parent,position,title,guid,dateAdded,lastModified) VALUES (?,?,?,?,?,?,?,?,?)',
+                   row + (created, created))
+    db.execute("INSERT INTO moz_bookmarks(id,type,fk,parent,position,title,guid,dateAdded,lastModified) VALUES (6,1,1,3,0,'Paste','pAsTe0000001',?,?)",
+               (prtime(utc(2026, 9, 1, 14, 31, 40)), prtime(utc(2026, 9, 1, 14, 31, 40))))
     db.commit()
+    db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    i, url, title, ts = FIREFOX_DELETED
+    db.execute('INSERT INTO moz_places(id,url,title,visit_count,last_visit_date) VALUES (?,?,?,1,?)', (i, url, title, prtime(ts)))
+    db.commit()
+    db.execute('DELETE FROM moz_places WHERE id = ?', (i,))
+    db.commit()
+    shutil.copyfile(live, path)
+    shutil.copyfile(work / 'places.sqlite-wal', path.with_name('places.sqlite-wal'))
     db.close()
+    shutil.rmtree(work, ignore_errors=True)
 
 
 SETUPAPI = """[Device Install Log]
@@ -590,6 +649,297 @@ def user_activity_files():
     ]))
 
 
+# ---------------------------------------------------------------------------------------------------- Phase 9
+CHROME_PROFILE = 'Users/alice/AppData/Local/Google/Chrome/User Data/Default'
+FIREFOX_PROFILE = 'Users/alice/AppData/Roaming/Mozilla/Firefox/Profiles/k2x8.default-release'
+THUNDERBIRD = 'Users/alice/AppData/Roaming/Thunderbird/Profiles/q7w1.default-release/ImapMail/imap.corp.example'
+PRIVATE_EMAIL = 'alice.private@mailbox.example'
+
+
+def unix(dt):
+    return int(dt.timestamp())
+
+
+def chrome_profile_files():
+    """Web Data (form history and a saved card), Login Data, Bookmarks and Network/Cookies of alice's Chrome profile."""
+    rnd = random.Random(9)
+    db = sqlite3.connect(OUT / CHROME_PROFILE / 'Web Data')
+    db.executescript("""
+        CREATE TABLE autofill (name VARCHAR, value VARCHAR, value_lower VARCHAR, date_created INTEGER DEFAULT 0,
+                               date_last_used INTEGER DEFAULT 0, count INTEGER DEFAULT 1, PRIMARY KEY (name, value));
+        CREATE TABLE credit_cards (guid VARCHAR PRIMARY KEY, name_on_card VARCHAR, expiration_month INTEGER, expiration_year INTEGER,
+                                   card_number_encrypted BLOB, date_modified INTEGER NOT NULL DEFAULT 0, origin VARCHAR DEFAULT '',
+                                   use_count INTEGER NOT NULL DEFAULT 0, use_date INTEGER NOT NULL DEFAULT 0, billing_address_id VARCHAR,
+                                   nickname VARCHAR);
+    """)
+    for name, value, first, last, count in [
+            ('email', PRIVATE_EMAIL, utc(2026, 8, 20, 18, 2, 11), utc(2026, 9, 1, 14, 19, 4), 4),
+            ('username', 'alice_x', utc(2026, 8, 20, 18, 2, 30), utc(2026, 8, 20, 18, 2, 30), 1),
+            ('q', 'payroll export', utc(2026, 9, 1, 13, 50, 12), utc(2026, 9, 1, 13, 50, 12), 1)]:
+        db.execute('INSERT INTO autofill VALUES (?,?,?,?,?,?)', (name, value, value.lower(), unix(first), unix(last), count))
+    db.execute('INSERT INTO credit_cards VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+               ('0c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5', 'Alice Example', 8, 2029, b'v10' + bytes(rnd.getrandbits(8) for _ in range(44)),
+                unix(utc(2026, 2, 14, 19, 0)), '', 3, unix(utc(2026, 8, 20, 18, 3)), None, None))
+    db.commit()
+    db.close()
+
+    db = sqlite3.connect(OUT / CHROME_PROFILE / 'Login Data')
+    db.execute("""CREATE TABLE logins (origin_url VARCHAR NOT NULL, action_url VARCHAR, username_element VARCHAR, username_value VARCHAR,
+                  password_element VARCHAR, password_value BLOB, submit_element VARCHAR, signon_realm VARCHAR NOT NULL,
+                  date_created INTEGER NOT NULL, blacklisted_by_user INTEGER NOT NULL, scheme INTEGER NOT NULL, password_type INTEGER,
+                  times_used INTEGER, form_data BLOB, display_name VARCHAR, icon_url VARCHAR, federation_url VARCHAR,
+                  skip_zero_click INTEGER, generation_upload_status INTEGER, possible_username_pairs BLOB,
+                  id INTEGER PRIMARY KEY AUTOINCREMENT, date_last_used INTEGER NOT NULL DEFAULT 0, moving_blocked_for BLOB,
+                  date_password_modified INTEGER NOT NULL DEFAULT 0)""")
+    for origin, action, user, pw, created, last, used, never in [
+            ('https://filetransfer.example.net/login', 'https://filetransfer.example.net/session', PRIVATE_EMAIL, True,
+             utc(2026, 9, 1, 14, 19, 5), utc(2026, 9, 1, 14, 19, 5), 1, 0),
+            ('https://mail.example.com/', 'https://mail.example.com/login', 'alice@corp.example', True,
+             utc(2025, 11, 3, 9, 12, 40), utc(2026, 9, 1, 12, 55, 2), 87, 0),
+            ('https://intranet.corp.example/', '', '', False, utc(2026, 1, 12, 8, 30), utc(2026, 1, 12, 8, 30), 0, 1)]:
+        db.execute('INSERT INTO logins(origin_url, action_url, username_element, username_value, password_element, password_value, '
+                   'signon_realm, date_created, blacklisted_by_user, scheme, times_used, date_last_used) VALUES (?,?,?,?,?,?,?,?,?,0,?,?)',
+                   (origin, action, 'email', user, 'password', b'v10' + bytes(rnd.getrandbits(8) for _ in range(28)) if pw else b'',
+                    origin.split('/login')[0].rstrip('/') + '/', chrome_ts(created), never, used, chrome_ts(last)))
+    db.commit()
+    db.close()
+
+    def node(id_, name, url, added, **kw):
+        return {'date_added': str(chrome_ts(added)), 'guid': f'00000000-0000-4000-8000-{id_:012d}', 'id': str(id_), 'name': name,
+                'type': 'url', 'url': url, **kw}
+    bookmarks = {'checksum': '0' * 32, 'version': 1, 'roots': {
+        'bookmark_bar': {'children': [
+            node(5, 'Payroll Portal', 'https://intranet.corp.example/hr/payroll', utc(2025, 11, 4, 9, 0)),
+            {'children': [node(7, 'SecureDelete - secure file wiping', 'https://tools.example.org/securedelete', utc(2026, 9, 1, 10, 4, 41)),
+                          node(8, 'Anonymous File Upload', 'https://filetransfer.example.net/upload', utc(2026, 8, 31, 21, 15, 3))],
+             'date_added': str(chrome_ts(utc(2026, 8, 31, 21, 14, 50))), 'date_modified': '0', 'guid': '00000000-0000-4000-8000-000000000006',
+             'id': '6', 'name': 'tools', 'type': 'folder'}],
+            'date_added': str(chrome_ts(utc(2025, 11, 3, 8, 0))), 'id': '1', 'name': 'Bookmarks bar', 'type': 'folder'},
+        'other': {'children': [], 'date_added': str(chrome_ts(utc(2025, 11, 3, 8, 0))), 'id': '2', 'name': 'Other bookmarks', 'type': 'folder'},
+        'synced': {'children': [], 'date_added': str(chrome_ts(utc(2025, 11, 3, 8, 0))), 'id': '3', 'name': 'Mobile bookmarks', 'type': 'folder'}}}
+    write(f'{CHROME_PROFILE}/Bookmarks', json.dumps(bookmarks, indent=3))
+
+    path = OUT / CHROME_PROFILE / 'Network' / 'Cookies'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path)
+    db.execute("""CREATE TABLE cookies(creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL, top_frame_site_key TEXT NOT NULL, name TEXT NOT NULL,
+                  value TEXT NOT NULL, encrypted_value BLOB NOT NULL, path TEXT NOT NULL, expires_utc INTEGER NOT NULL, is_secure INTEGER NOT NULL,
+                  is_httponly INTEGER NOT NULL, last_access_utc INTEGER NOT NULL, has_expires INTEGER NOT NULL, is_persistent INTEGER NOT NULL,
+                  priority INTEGER NOT NULL, samesite INTEGER NOT NULL, source_scheme INTEGER NOT NULL, source_port INTEGER NOT NULL,
+                  last_update_utc INTEGER NOT NULL, UNIQUE (host_key, top_frame_site_key, name, path))""")
+    for host, name, created, expires, persistent in [
+            ('filetransfer.example.net', 'ft_session', utc(2026, 9, 1, 14, 19, 2), utc(2026, 9, 1, 14, 49, 2), 0),
+            ('.mail.example.com', 'SID', utc(2026, 8, 3, 7, 58, 31), utc(2027, 8, 3, 7, 58, 31), 1),
+            ('.google.com', 'NID', utc(2026, 8, 25, 12, 1, 9), utc(2027, 2, 24, 12, 1, 9), 1)]:
+        db.execute('INSERT INTO cookies VALUES (?,?,?,?,?,?,?,?,1,1,?,1,?,1,0,2,443,?)',
+                   (chrome_ts(created), host, '', name, '', b'v10' + bytes(rnd.getrandbits(8) for _ in range(40)), '/', chrome_ts(expires),
+                    chrome_ts(utc(2026, 9, 1, 14, 40)), persistent, chrome_ts(created)))
+    db.commit()
+    db.close()
+
+
+def firefox_profile_files():
+    db = sqlite3.connect(OUT / FIREFOX_PROFILE / 'formhistory.sqlite')
+    db.execute('CREATE TABLE moz_formhistory (id INTEGER PRIMARY KEY, fieldname TEXT NOT NULL, value TEXT NOT NULL, timesUsed INTEGER, '
+               'firstUsed INTEGER, lastUsed INTEGER, guid TEXT)')
+    db.execute("INSERT INTO moz_formhistory VALUES (1, 'searchbar-history', 'securedelete wipe free space', 1, ?, ?, 'Fh000000001a')",
+               (prtime(utc(2026, 9, 1, 14, 17, 20)), prtime(utc(2026, 9, 1, 14, 17, 20))))
+    db.execute("INSERT INTO moz_formhistory VALUES (2, 'email', ?, 2, ?, ?, 'Fh000000002b')",
+               (PRIVATE_EMAIL, prtime(utc(2026, 8, 22, 19, 40, 1)), prtime(utc(2026, 9, 1, 14, 30, 58))))
+    db.commit()
+    db.close()
+    ms = lambda dt: int(dt.timestamp() * 1000)
+    write(f'{FIREFOX_PROFILE}/logins.json', json.dumps({'nextId': 2, 'logins': [{
+        'id': 1, 'hostname': 'https://pastebin.example.com', 'httpRealm': None, 'formSubmitURL': 'https://pastebin.example.com',
+        'usernameField': 'user', 'passwordField': 'pass',
+        'encryptedUsername': 'MDoEEPgAAAAAAAAAAAAAAAAAAAEwFAYIKoZIhvcNAwcECJ0bS0Uq3c7GBBA3Yp1bJ4tW2x9K8nR5mQ1v',
+        'encryptedPassword': 'MEIEEPgAAAAAAAAAAAAAAAAAAAEwFAYIKoZIhvcNAwcECNk3mH0pQ2wVBBhZq8X1rT4uY6vB9nC3jF7kL0pM2sD5gH8=',
+        'guid': '{3f6c1b2a-8d4e-4f5a-9b0c-1d2e3f4a5b6c}', 'encType': 1, 'timeCreated': ms(utc(2026, 9, 1, 14, 31, 30)),
+        'timeLastUsed': ms(utc(2026, 9, 1, 14, 31, 30)), 'timePasswordChanged': ms(utc(2026, 9, 1, 14, 31, 30)), 'timesUsed': 1}],
+        'potentiallyVulnerablePasswords': [], 'dismissedBreachAlertsByLoginGUID': {}, 'version': 3}))
+
+
+# Email in alice's Thunderbird profile (corporate IMAP account): HR's notice (HTML with an inline logo, a tracking pixel and a
+# script that must never run), a contact asking for the list, the payroll export sent to her private address at 14:20:31 UTC,
+# and a reply she deleted (still in the Sent folder file until Thunderbird compacts it).
+EMAIL_SENT_PAYROLL = {'message_id': '<7f3c2a10-5b1e-4c55-9d1a-2f0d5e6a7b81@corp.example>', 'subject': 'backup',
+                      'sent': utc(2026, 9, 1, 14, 20, 31), 'to': PRIVATE_EMAIL}
+EMAIL_DELETED_REPLY = {'message_id': '<c19e0b7d-2a44-4e0f-bb61-0f6d2e9a1c33@corp.example>', 'subject': 'Re: the list',
+                       'sent': utc(2026, 9, 1, 14, 41, 7), 'to': 'dmitri.k@rivalcorp.example'}
+HR_HTML = ('<html><head><style>p{font-family:Arial,sans-serif}</style><script>document.title="pwned";parent.postMessage("pwned","*")</script>'
+           '</head><body><p><img src="cid:logo@corp.example" alt="Corp logo" width="48" height="32"></p><p>Hi Alice,</p>'
+           '<p>The September payroll export is ready on the portal. Please review it before Friday.</p>'
+           '<p><a href="https://intranet.corp.example/hr/payroll">Open the payroll portal</a></p>'
+           '<img src="https://tracker.example.com/open.gif?u=alice" width="1" height="1" alt="">'
+           '<p onclick="alert(1)">HR Payroll</p></body></html>')
+
+
+def b64lines(data: bytes) -> str:
+    import base64
+    s = base64.b64encode(data).decode()
+    return '\r\n'.join(s[i:i + 76] for i in range(0, len(s), 76))
+
+
+def mbox_message(from_line: str, headers: list[tuple[str, str]], body: str) -> str:
+    return f'From - {from_line}\r\n' + ''.join(f'{k}: {v}\r\n' for k, v in headers) + '\r\n' + body + '\r\n\r\n'
+
+
+def thunderbird():
+    hr = mbox_message('Tue Sep  1 13:35:14 2026', [
+        ('X-Mozilla-Status', '0001'), ('X-Mozilla-Status2', '00000000'),
+        ('Received', 'from mx1.corp.example (mx1.corp.example [10.20.0.25]) by imap.corp.example; Tue, 01 Sep 2026 13:35:14 +0000'),
+        ('Message-ID', '<a8e2f5c1-77d0-4b8e-9f31-5c2d7e10b4a6@corp.example>'), ('Date', 'Tue, 01 Sep 2026 09:35:12 -0400'),
+        ('From', 'HR Payroll <payroll@corp.example>'), ('To', 'Alice Example <alice@corp.example>'),
+        ('Subject', 'Payroll export ready for review'), ('MIME-Version', '1.0'),
+        ('Content-Type', 'multipart/alternative; boundary="b1-alt"')],
+        '--b1-alt\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n'
+        'Hi Alice,\r\n\r\nThe September payroll export is ready on the portal. Please review it before Friday.\r\n\r\nHR Payroll\r\n'
+        '--b1-alt\r\nContent-Type: multipart/related; boundary="b1-rel"\r\n\r\n'
+        '--b1-rel\r\nContent-Type: text/html; charset=utf-8\r\n\r\n' + HR_HTML + '\r\n'
+        '--b1-rel\r\nContent-Type: image/png\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <logo@corp.example>\r\n'
+        'Content-Disposition: inline; filename="logo.png"\r\n\r\n' + b64lines(png(48, 32)) + '\r\n--b1-rel--\r\n--b1-alt--')
+    ask = mbox_message('Mon Aug 31 20:02:46 2026', [
+        ('X-Mozilla-Status', '0001'), ('X-Mozilla-Status2', '00000000'),
+        ('Received', 'from mx1.corp.example (mx1.corp.example [10.20.0.25]) by imap.corp.example; Mon, 31 Aug 2026 20:02:46 +0000'),
+        ('Message-ID', '<5d0b8a3e-1f9c-4a27-8e64-b3f2c9d0e715@rivalcorp.example>'), ('Date', 'Mon, 31 Aug 2026 16:02:44 -0400'),
+        ('From', 'Dmitri K <dmitri.k@rivalcorp.example>'), ('To', 'alice@corp.example'), ('Subject', 'the list'),
+        ('X-Originating-IP', '[203.0.113.77]'), ('Content-Type', 'text/plain; charset=utf-8')],
+        'Can you bring the payroll list before you start? Use the upload site, not work email.\r\n\r\nD.')
+    sent = mbox_message('Tue Sep  1 14:20:31 2026', [
+        ('X-Mozilla-Status', '0001'), ('X-Mozilla-Status2', '00000000'),
+        ('Message-ID', EMAIL_SENT_PAYROLL['message_id']), ('Date', 'Tue, 01 Sep 2026 10:20:31 -0400'),
+        ('From', 'Alice Example <alice@corp.example>'), ('To', PRIVATE_EMAIL), ('Subject', 'backup'),
+        ('User-Agent', 'Mozilla Thunderbird'), ('MIME-Version', '1.0'), ('Content-Type', 'multipart/mixed; boundary="b2-mix"')],
+        '--b2-mix\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nfor home\r\n'
+        '--b2-mix\r\nContent-Type: text/csv; name="payroll-export.csv"\r\nContent-Transfer-Encoding: base64\r\n'
+        'Content-Disposition: attachment; filename="payroll-export.csv"\r\n\r\n' + b64lines(PAYROLL.encode()) + '\r\n--b2-mix--')
+    reply = mbox_message('Tue Sep  1 14:41:07 2026', [
+        ('X-Mozilla-Status', '0009'), ('X-Mozilla-Status2', '00000000'),
+        ('Message-ID', EMAIL_DELETED_REPLY['message_id']), ('Date', 'Tue, 01 Sep 2026 10:41:07 -0400'),
+        ('From', 'Alice Example <alice@corp.example>'), ('To', 'Dmitri K <dmitri.k@rivalcorp.example>'), ('Subject', 'Re: the list'),
+        ('In-Reply-To', '<5d0b8a3e-1f9c-4a27-8e64-b3f2c9d0e715@rivalcorp.example>'), ('User-Agent', 'Mozilla Thunderbird'),
+        ('Content-Type', 'text/plain; charset=utf-8')],
+        'Done. Everything is on the stick and uploaded. Delete this.')
+    write(f'{THUNDERBIRD}/INBOX', ask + hr)
+    write(f'{THUNDERBIRD}/Sent', sent + reply)
+    for folder in ('INBOX', 'Sent'):  # Thunderbird's summary files (only their header here)
+        write(f'{THUNDERBIRD}/{folder}.msf', '// <!-- <mdb:mork:z v="1.4"/> -->\r\n< <(a=c)> // (f=iso-8859-1)\r\n')
+
+
+SKYPE = 'Users/alice/AppData/Roaming/Skype/alice.example/main.db'
+SKYPE_MESSAGES = [  # (time, author, display name, type, body)
+    (utc(2025, 3, 12, 18, 4, 10), 'dmitri.k.rival', 'Dmitri K', 61, 'Offer letter attached. Start date is flexible.'),
+    (utc(2025, 3, 12, 18, 5, 2), 'dmitri.k.rival', 'Dmitri K', 68, '<files alt="offer-letter.pdf"><file size="{size}" index="0">offer-letter.pdf</file></files>'),
+    (utc(2025, 3, 12, 18, 7, 45), 'alice.example', 'Alice Example', 61, 'Thanks. I can bring the payroll &amp; client lists when I move.'),
+    (utc(2025, 3, 12, 18, 9, 30), 'dmitri.k.rival', 'Dmitri K', 61, 'Good. Don&apos;t use work email for it <ss type="wink">;)</ss>'),
+]
+
+
+def skype_db():
+    path = OUT / SKYPE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path)
+    db.executescript("""
+        CREATE TABLE Accounts (id INTEGER NOT NULL PRIMARY KEY, is_permanent INTEGER, skypename TEXT, fullname TEXT, emails TEXT,
+                               country TEXT, city TEXT, registration_timestamp INTEGER, lastonline_timestamp INTEGER);
+        CREATE TABLE Contacts (id INTEGER NOT NULL PRIMARY KEY, is_permanent INTEGER, type INTEGER, skypename TEXT, pstnnumber TEXT,
+                               fullname TEXT, displayname TEXT, given_displayname TEXT, emails TEXT, country TEXT, city TEXT,
+                               phone_mobile TEXT, phone_home TEXT, phone_office TEXT, lastonline_timestamp INTEGER);
+        CREATE TABLE Conversations (id INTEGER NOT NULL PRIMARY KEY, is_permanent INTEGER, identity TEXT, type INTEGER,
+                                    displayname TEXT, given_displayname TEXT, inbox_timestamp INTEGER, last_activity_timestamp INTEGER);
+        CREATE TABLE Messages (id INTEGER NOT NULL PRIMARY KEY, is_permanent INTEGER, convo_id INTEGER, chatname TEXT, author TEXT,
+                               from_dispname TEXT, dialog_partner TEXT, timestamp INTEGER, type INTEGER, body_xml TEXT,
+                               edited_timestamp INTEGER, chatmsg_type INTEGER);
+        CREATE TABLE Calls (id INTEGER NOT NULL PRIMARY KEY, is_permanent INTEGER, begin_timestamp INTEGER, topic TEXT, host_identity TEXT,
+                            duration INTEGER, is_incoming INTEGER, is_conference INTEGER, name TEXT);
+        CREATE TABLE CallMembers (id INTEGER NOT NULL PRIMARY KEY, is_permanent INTEGER, identity TEXT, dispname TEXT, call_duration INTEGER,
+                                  call_name TEXT);
+        CREATE TABLE Transfers (id INTEGER NOT NULL PRIMARY KEY, is_permanent INTEGER, type INTEGER, partner_handle TEXT, partner_dispname TEXT,
+                                status INTEGER, failurereason INTEGER, starttime INTEGER, finishtime INTEGER, filepath TEXT, filename TEXT,
+                                filesize TEXT, bytestransferred TEXT, convo_id INTEGER, accepttime INTEGER);
+    """)
+    db.execute("INSERT INTO Accounts VALUES (1, 1, 'alice.example', 'Alice Example', ?, 'us', 'Boston', ?, ?)",
+               (PRIVATE_EMAIL, unix(utc(2019, 6, 2, 17, 0)), unix(utc(2025, 3, 12, 18, 30))))
+    db.execute("INSERT INTO Contacts VALUES (1, 1, 1, 'dmitri.k.rival', NULL, 'Dmitri K', 'Dmitri K', NULL, 'dmitri.k@rivalcorp.example', "
+               "'us', 'New York', '+1 212 555 0147', NULL, NULL, ?)", (unix(utc(2025, 3, 12, 18, 40)),))
+    db.execute("INSERT INTO Conversations VALUES (1, 1, 'dmitri.k.rival', 1, 'Dmitri K', NULL, ?, ?)",
+               (unix(utc(2025, 3, 12, 18, 9, 30)), unix(utc(2025, 3, 12, 18, 27, 34))))
+    size = len(pdf())
+    for n, (when, author, name, kind, body) in enumerate(SKYPE_MESSAGES, 1):
+        db.execute("INSERT INTO Messages VALUES (?, 1, 1, '#alice.example/$dmitri.k.rival;5d1a0c9b2e3f4a67', ?, ?, 'dmitri.k.rival', ?, ?, ?, NULL, ?)",
+                   (n, author, name, unix(when), kind, body.replace('{size}', str(size)), 3 if kind == 61 else 7))
+    db.execute("INSERT INTO Calls VALUES (1, 1, ?, NULL, 'dmitri.k.rival', 754, 1, 0, '1-1741803300')", (unix(utc(2025, 3, 12, 18, 15)),))
+    db.execute("INSERT INTO CallMembers VALUES (1, 1, 'dmitri.k.rival', 'Dmitri K', 754, '1-1741803300')")
+    db.execute("INSERT INTO Transfers VALUES (1, 1, 1, 'dmitri.k.rival', 'Dmitri K', 8, 0, ?, ?, ?, 'offer-letter.pdf', ?, ?, 1, ?)",
+               (unix(utc(2025, 3, 12, 18, 5, 2)), unix(utc(2025, 3, 12, 18, 5, 4)), r'C:\Users\alice\Documents\offer-letter.pdf',
+                str(size), str(size), unix(utc(2025, 3, 12, 18, 5, 3))))
+    db.commit()
+    db.close()
+
+
+ONEDRIVE = 'Users/alice/AppData/Local/Microsoft/OneDrive/settings/Personal/SyncEngineDatabase.db'
+ONEDRIVE_SCOPE = 'A1B2C3D4E5F60718'
+ONEDRIVE_FILES = [  # (folder, name, content, last change in the cloud)
+    ('Backup', 'payroll-export.csv', None, utc(2026, 9, 1, 14, 26, 10)),
+    ('Documents', 'q1-forecast.txt', 'Q1 2026 forecast draft. Figures to be confirmed.\n', utc(2026, 1, 15, 20, 31, 2)),
+]
+
+
+def onedrive_db():
+    import hashlib
+    path = OUT / ONEDRIVE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path)
+    db.executescript("""
+        CREATE TABLE od_ScopeInfo_Records (scopeID TEXT PRIMARY KEY, siteID TEXT, webID TEXT, listID TEXT, tenantID TEXT, webURL TEXT,
+                                           remotePath TEXT, spoPermissions INTEGER, shortcutVolumeID INTEGER, shortcutItemIndex INTEGER);
+        CREATE TABLE od_ClientFolder_Records (parentScopeID TEXT, parentResourceID TEXT, resourceID TEXT PRIMARY KEY, eTag TEXT,
+                                              folderName TEXT, folderStatus INTEGER, spoPermissions INTEGER, volumeID INTEGER, itemIndex INTEGER);
+        CREATE TABLE od_ClientFile_Records (parentResourceID TEXT, resourceID TEXT PRIMARY KEY, eTag TEXT, fileName TEXT, fileStatus INTEGER,
+                                            spoPermissions INTEGER, volumeID INTEGER, itemIndex INTEGER, lastChange INTEGER, size INTEGER,
+                                            localHashDigest TEXT, sharedItem INTEGER, mediaDateTaken INTEGER, mediaWidth INTEGER,
+                                            mediaHeight INTEGER, mediaDuration INTEGER, diskLastAccessTime INTEGER, diskCreationTime INTEGER);
+    """)
+    root = f'{ONEDRIVE_SCOPE}!101'
+    db.execute('INSERT INTO od_ScopeInfo_Records VALUES (?, NULL, NULL, NULL, NULL, ?, ?, 0, NULL, NULL)',
+               (ONEDRIVE_SCOPE, f'https://onedrive.live.com/?cid={ONEDRIVE_SCOPE.lower()}', '/'))
+    folders = {}
+    for n, name in enumerate(sorted({f for f, _, _, _ in ONEDRIVE_FILES}), 1):
+        rid = f'{ONEDRIVE_SCOPE}!{200 + n}'
+        folders[name] = rid
+        db.execute('INSERT INTO od_ClientFolder_Records VALUES (?,?,?,?,?,?,?,?,?)',
+                   (ONEDRIVE_SCOPE, root, rid, f'aRm9sZGVy{n}', name, 2, 0, 0x5E1F22C4, 9000 + n))
+    for n, (folder, name, content, changed) in enumerate(ONEDRIVE_FILES, 1):
+        data = (PAYROLL if content is None else content).encode()
+        db.execute('INSERT INTO od_ClientFile_Records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,?,?)',
+                   (folders[folder], f'{ONEDRIVE_SCOPE}!{300 + n}', f'aRmlsZQ{n}', name, 2, 0, 0x5E1F22C4, 9100 + n, unix(changed),
+                    len(data), hashlib.sha1(data).hexdigest().upper(), 0, unix(changed), unix(changed)))
+    db.commit()
+    db.close()
+
+
+def chat_cloud_files():
+    skype_db()
+    onedrive_db()
+    write('Users/alice/AppData/Local/Dropbox/info.json', json.dumps(
+        {'personal': {'path': r'C:\Users\alice\Dropbox', 'host': 4029384756, 'is_team': False, 'subscription_type': 'Basic'}}))
+    rnd = random.Random(11)
+    blob = lambda n: bytes(rnd.getrandbits(8) for _ in range(n))
+    for rel, size in [
+            ('Users/alice/AppData/Local/Packages/5319275A.WhatsAppDesktop_cv1g1gvanyjgm/LocalState/sessions/0F1E2D3C4B5A6978/nondb_settings18.dat', 2048),
+            ('Users/alice/AppData/Local/Packages/5319275A.WhatsAppDesktop_cv1g1gvanyjgm/LocalState/sessions/0F1E2D3C4B5A6978/session.db', 8192),
+            ('Users/alice/AppData/Roaming/Telegram Desktop/tdata/key_datas', 1024),
+            ('Users/alice/AppData/Roaming/Telegram Desktop/tdata/D877F783D5D3EF8C/maps', 4096)]:
+        write(rel, blob(size))
+
+
+def comms_files():
+    chrome_profile_files()
+    firefox_profile_files()
+    thunderbird()
+    chat_cloud_files()
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     write('Windows/INF/setupapi.dev.log', SETUPAPI.replace('\n', '\r\n'))
@@ -610,6 +960,7 @@ def main():
     container_files()
     event_logs()
     user_activity_files()
+    comms_files()
     print(PREFETCH_NAME)
 
 

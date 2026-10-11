@@ -26,7 +26,7 @@ class YaraModule(Module):
     description = "Scans every executable, script, document and archive (chosen by content, deleted ones included) with DFIP's YARA rules."
     version = '3'  # 2: in-process, chosen by content type, all users and deleted files; 3: archive members
     requires = ('fileproc',)
-    follows = ('containers',)  # archive members are scanned too
+    follows = ('containers', 'email')  # archive members and email attachments are scanned too
     weight = 10
     collections = ('forensic_artifacts',)
 

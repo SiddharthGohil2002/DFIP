@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added — Email, chat, cloud storage and browser depth
+- **Email** (new `email` module and page): Outlook PST/OST (libpff), MBOX, Thunderbird folders and EML/MSG files, with folders, people, times, bodies and headers. Messages Thunderbird users deleted but that are still in the folder file are found and marked. Attachments become files in the file index, so hash sets, YARA and content search cover them. HTML email is shown sanitised in a sandbox that loads nothing from the internet (tracking pixels are counted, never fetched).
+- **Chat and cloud storage** (new `chat_cloud` module and page): Skype (classic) messages, calls, file transfers and contacts; Teams, WhatsApp, Telegram, Signal and other apps detected with where their (encrypted) data is; every file OneDrive and Google Drive for desktop synced, with OneDrive's SHA-1 linked to the same content on the disk; Dropbox accounts.
+- **Browser depth** (new `browser_depth` module and Browser history tabs): searches, cookies, bookmarks, form history, saved logins (sites and user names; passwords are never decrypted or shown) and **deleted history rows recovered** from SQLite free pages, free space and write-ahead log frames, for Chrome, Edge, Brave, Opera, Vivaldi and Firefox. Opera and Vivaldi history and downloads are read too.
+- Records can be tagged, are found by keyword search, are counted on the overview and have report sections; searches, sent email, calls and file transfers count as user activity on the dashboard.
+- The backend image gains libpff, and pff-tools and the sqlite3 shell for the tests. Five more Plaso samples are pinned (Chrome History, Web Data and Cookies, Firefox places.sqlite, Skype main.db) and put on the samples disk with the PST.
+
 ### Added — NTFS internals
 - **File system journal** (new `ntfs` module, standard and full profiles, and a new page) for every NTFS volume:
   - **Timestomping**: files whose `$STANDARD_INFORMATION` times look set back, compared with their `$FILE_NAME` times, flagged strong or possible with the reasons. No false positives on a real Windows XP `$MFT` of 13,060 entries.

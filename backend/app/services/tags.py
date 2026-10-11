@@ -1,6 +1,6 @@
 """Tags (bookmarks) on case items: a file, a timeline event, a browser record, a USB device, a Windows activity
-record, a registry record, an event log record, a recovered/carved file or a found value (an email address, card number...), marked as Evidence, Notable or
-Follow up with a note.
+record, a registry record, an event log record, an email, a chat or cloud storage record, a recovered/carved file or a found
+value (an email address, card number...), marked as Evidence, Notable or Follow up with a note.
 
 Re-running an analysis replaces its records with new database IDs, so a tag also stores the item's natural key
 (`match`, the fields that identify it within its evidence item) and a snapshot of what it showed. A tag whose ID
@@ -23,16 +23,24 @@ WINDOWS_LABELS = {'JUMPLIST_ENTRY': 'Jump list item', 'TIMELINE_ACTIVITY': 'Wind
                   'SRUM_NETWORK': 'Network usage (SRUM)', 'SRUM_APP_USAGE': 'Application usage (SRUM)',
                   'SRUM_CONNECTIVITY': 'Network connection (SRUM)', 'SEARCH_INDEX_ENTRY': 'Windows Search index entry',
                   'TIMESTOMP_SUSPECT': 'Times possibly altered (NTFS)', 'ALTERNATE_STREAM': 'Alternate data stream'}
+BROWSER_LABELS = {'BROWSER_SEARCH': 'search', 'BROWSER_COOKIE': 'cookie', 'BROWSER_BOOKMARK': 'bookmark', 'BROWSER_AUTOFILL': 'form entry',
+                  'BROWSER_LOGIN': 'saved login', 'BROWSER_RECOVERED': 'deleted history entry (recovered)'}
+CHAT_CLOUD_LABELS = {'CHAT_ACCOUNT': 'Chat account', 'CHAT_CONTACT': 'Chat contact', 'CHAT_MESSAGE': 'Chat message', 'CHAT_CALL': 'Call',
+                     'CHAT_FILE_TRANSFER': 'File transfer', 'CHAT_APP': 'Chat app', 'CLOUD_ACCOUNT': 'Cloud storage account',
+                     'CLOUD_FILE': 'Cloud storage file'}
 KEY_VERSION = 2  # 2: keys use volume_id and never a time that a time-zone correction could change
 
 ITEM_COLLECTIONS = {
     'FILE': 'fs_entries', 'TIMELINE_EVENT': 'timeline_events', 'BROWSER': 'forensic_artifacts',
     'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts', 'ENTITY': 'entities',
     'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records', 'WINDOWS': 'forensic_artifacts', 'USN': 'usn_records',
+    'EMAIL': 'email_messages', 'CHAT_CLOUD': 'forensic_artifacts',
 }
 LABELS = ('EVIDENCE', 'NOTABLE', 'FOLLOW_UP')
 _ARTIFACT_TYPES = {
-    'BROWSER': {'BROWSER_HISTORY', 'BROWSER_DOWNLOAD', 'BROWSER_COOKIE'},
+    'BROWSER': {'BROWSER_HISTORY', 'BROWSER_DOWNLOAD', 'BROWSER_COOKIE', 'BROWSER_SEARCH', 'BROWSER_BOOKMARK', 'BROWSER_AUTOFILL',
+                'BROWSER_LOGIN', 'BROWSER_RECOVERED'},
+    'CHAT_CLOUD': set(CHAT_CLOUD_LABELS),
     'ACTIVITY': {'PROGRAM_RUN', 'RECENT_FILE', 'RECYCLE_BIN_ITEM'},
     'ARTIFACT': {'RECOVERED_FILE', 'CARVED_FILE', 'EXTRACTED_FILE', 'MALWARE_INDICATOR'},
     'REGISTRY': {'USERASSIST', 'SHELLBAG', 'TYPED_PATH', 'TYPED_URL', 'EXPLORER_SEARCH', 'RECENT_DOC', 'RUN_MRU', 'PERSISTENCE',
@@ -71,8 +79,14 @@ def natural_key(item_type: str, doc) -> dict:
             return {'evidence_id': e, 'type': t, 'volume_id': _volume(doc), 'inode': doc.get('inode'),
                     'path': doc.get('path'), 'macb': doc.get('macb')}
         return {'evidence_id': e, 'nk': doc.get('nk') or event_nk(doc)}
+    if item_type == 'BROWSER' and doc.get('nk'):  # the records of the browser_depth module
+        return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
     if item_type == 'BROWSER':
         return {'evidence_id': e, 'type': t, 'source_path': doc.get('source_path'), 'row_id': doc.get('row_id')}
+    if item_type == 'EMAIL':
+        return {'evidence_id': e, 'nk': doc.get('nk')}
+    if item_type == 'CHAT_CLOUD':
+        return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
     if item_type == 'USB':
         return {'evidence_id': e, 'instance_id': doc.get('instance_id')}
     if item_type == 'ACTIVITY':
@@ -114,6 +128,31 @@ def snapshot(item_type: str, doc) -> dict:
         title, detail, when = doc.get('path'), f'inode {doc.get("inode")}{size}{" · deleted" if doc.get("deleted") else ""}', doc.get('mtime')
     elif item_type == 'TIMELINE_EVENT':
         title, detail, when = doc.get('description'), t, doc.get('timestamp')
+    elif item_type == 'BROWSER' and t in BROWSER_LABELS:
+        who = f'{doc.get("browser") or "Browser"} {BROWSER_LABELS[t]}'
+        title, when = {
+            'BROWSER_SEARCH': (doc.get('term'), doc.get('time')), 'BROWSER_COOKIE': (f'{doc.get("host")} {doc.get("name")}', doc.get('created')),
+            'BROWSER_BOOKMARK': (doc.get('title') or doc.get('url'), doc.get('added')),
+            'BROWSER_AUTOFILL': (f'{doc.get("field")} = {doc.get("value")}', doc.get('last_used')),
+            'BROWSER_LOGIN': (f'{doc.get("site")}{" as " + doc["username"] if doc.get("username") else ""}', doc.get('created')),
+            'BROWSER_RECOVERED': (doc.get('title') or doc.get('url'), doc.get('last_visit_time')),
+        }[t]
+        detail = f'{who}{": " + doc["url"] if doc.get("url") and t != "BROWSER_BOOKMARK" else ""}'
+    elif item_type == 'EMAIL':
+        title = doc.get('subject') or '(no subject)'
+        to = ', '.join(x.get('address') or x.get('name') or '' for x in (doc.get('to') or [])[:3])
+        detail = f'Email {doc.get("direction")} · from {doc.get("from_address") or doc.get("from_name")} to {to} · {doc.get("folder")}'
+        return {'title': title, 'detail': detail, 'timestamp': _iso(doc.get('time')), 'source': doc.get('store_path')}
+    elif item_type == 'CHAT_CLOUD':
+        label = CHAT_CLOUD_LABELS.get(t, t)
+        title, when = {
+            'CHAT_MESSAGE': (doc.get('text'), doc.get('time')), 'CHAT_CALL': (', '.join(doc.get('members') or []) or doc.get('host'), doc.get('time')),
+            'CHAT_FILE_TRANSFER': (doc.get('file_name'), doc.get('started')), 'CHAT_CONTACT': (doc.get('handle'), None),
+            'CHAT_ACCOUNT': (doc.get('handle'), None), 'CHAT_APP': (doc.get('app'), doc.get('last_change')),
+            'CLOUD_ACCOUNT': (f'{doc.get("provider")} {doc.get("account")}', None), 'CLOUD_FILE': (doc.get('path'), doc.get('modified')),
+        }.get(t, (doc.get('path'), None))
+        app = doc.get('app') or doc.get('provider')
+        detail = f'{label}{" (" + app + ")" if app else ""}{" · " + doc["user"] if doc.get("user") else ""}'
     elif item_type == 'BROWSER':
         if t == 'BROWSER_DOWNLOAD':
             title, detail, when = doc.get('target_path'), f'{doc.get("browser") or "Browser"} download from {doc.get("tab_url")}', doc.get('start_time')

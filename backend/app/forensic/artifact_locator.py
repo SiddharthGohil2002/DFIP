@@ -15,8 +15,9 @@ from .tools import recover_file
 _USERS = r'/(?:Users|Documents and Settings)/[^/]+'
 TARGETS = [
     ('CHROMIUM_HISTORY', re.compile(
-        _USERS + r'/AppData/Local/(?P<browser>Google/Chrome|Microsoft/Edge|BraveSoftware/Brave-Browser|Chromium)'
-                 r'/User Data/[^/]+/History$', re.I)),
+        _USERS + r'/AppData/(?:Local/(?P<browser>Google/Chrome|Microsoft/Edge|BraveSoftware/Brave-Browser|Chromium|Vivaldi)'
+                 r'/User Data/[^/]+|Roaming/Opera Software/(?P<opera>Opera Stable|Opera GX Stable)(?:/(?:Default|Profile [0-9]+))?)'
+                 r'/History$', re.I)),
     ('FIREFOX_PLACES', re.compile(_USERS + r'/AppData/Roaming/Mozilla/Firefox/Profiles/[^/]+/places\.sqlite$', re.I)),
     ('SYSTEM_HIVE', re.compile(r'^/Windows/System32/config/SYSTEM$', re.I)),
     ('SETUPAPI_LOG', re.compile(r'^/Windows/INF/setupapi\.dev(?:\.\d{8}_\d{6})?\.log$', re.I)),
@@ -30,7 +31,7 @@ RECYCLE_DATA = re.compile(r'^/\$Recycle\.Bin/(?P<sid>[^/]+)/\$R(?P<suffix>[^/]+)
 SQLITE_SIDECARS = ('-journal', '-wal')
 BROWSER_NAMES = {
     'google/chrome': 'Chrome', 'microsoft/edge': 'Edge',
-    'bravesoftware/brave-browser': 'Brave', 'chromium': 'Chromium',
+    'bravesoftware/brave-browser': 'Brave', 'chromium': 'Chromium', 'vivaldi': 'Vivaldi',
 }
 
 
@@ -40,7 +41,9 @@ def classify(path: str) -> tuple[str, dict] | None:
         m = rx.search(path)
         if m:
             details = {}
-            if kind == 'CHROMIUM_HISTORY':
+            if kind == 'CHROMIUM_HISTORY' and m.group('opera'):
+                details['browser'] = 'Opera GX' if 'GX' in m.group('opera') else 'Opera'
+            elif kind == 'CHROMIUM_HISTORY':
                 details['browser'] = BROWSER_NAMES.get(m.group('browser').lower(), 'Chromium')
             elif kind == 'FIREFOX_PLACES':
                 details['browser'] = 'Firefox'

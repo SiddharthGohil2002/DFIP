@@ -71,7 +71,7 @@ export function FilesPage() {
             tabs={[
               { id: 'deleted', label: 'Deleted entries', count: counts?.deleted_files },
               { id: 'all', label: 'All files', count: counts?.files },
-              { id: 'members', label: 'Archive contents', count: counts?.archive_members },
+              { id: 'members', label: 'Archives and attachments', count: counts?.archive_members },
               { id: 'recovered', label: 'Recovered files', count: counts?.recovered_files },
             ]}
           />
@@ -106,6 +106,7 @@ export function FileFlags({ f }: { f: FsEntry }) {
 
 const CONTAINER_KIND: Record<string, string> = {
   zip: 'ZIP archive', '7z': 'archive', ooxml: 'Office document', odf: 'OpenDocument', ole: 'Office (OLE) file', pdf: 'PDF attachment',
+  email: 'email',
 };
 
 function FileIndex({ caseId, evidenceId, deletedOnly, members, initialFlag, onRecovered }: {
@@ -170,7 +171,7 @@ function FileIndex({ caseId, evidenceId, deletedOnly, members, initialFlag, onRe
           Hide known-good files
         </label>
         {filtered && <Button size="sm" variant="ghost" onClick={() => { setQ(''); setSearch(''); setCategory(''); setFlag(''); }}>Clear</Button>}
-        <span className="small muted">{data ? (members ? `${formatNumber(data.total)} file${data.total === 1 ? '' : 's'} inside archives and documents`
+        <span className="small muted">{data ? (members ? `${formatNumber(data.total)} file${data.total === 1 ? '' : 's'} inside archives, documents and emails`
           : `${formatNumber(data.total)} ${deletedOnly ? 'deleted' : ''} ${data.total === 1 ? 'entry' : 'entries'}`.replace('  ', ' ')) : ''}</span>
       </div>
       <ErrorBanner error={error} />
@@ -180,7 +181,7 @@ function FileIndex({ caseId, evidenceId, deletedOnly, members, initialFlag, onRe
         <Empty
           title={filtered ? 'No matching files' : deletedOnly ? 'No deleted entries' : members ? 'No archive contents' : 'No files'}
           text={deletedOnly && !filtered ? 'The filesystem metadata in this image describes no deleted files. File carving can still find data in unallocated space.'
-            : members && !filtered ? 'Archives and documents are opened by the Full analysis profile (Archives and embedded files).' : undefined}
+            : members && !filtered ? 'Archives and documents are opened by the Full analysis profile (Archives and embedded files); email attachments by the Email module.' : undefined}
         />
       ) : (
         <div className="table-wrap">

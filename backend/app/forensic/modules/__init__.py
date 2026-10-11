@@ -4,7 +4,8 @@ Profiles:
   quick     the file system index and the well-known artifacts, for a fast first look
   standard  everything that is cheap enough to run on every disk (the default): also event logs, Jump Lists, the
             Windows Timeline, thumbnails, SRUM and the search index, NTFS timestomping, alternate data streams and the USN
-            journal, file hashes and types, hash sets and YARA
+            journal, browser searches, cookies, bookmarks, logins and deleted history, email, chat and cloud storage, file
+            hashes and types, hash sets and YARA
   full      everything: also archive members and embedded files, the text of every file and of unallocated space
             (content search), and the data found in it
 
@@ -17,7 +18,10 @@ from __future__ import annotations
 
 from .artifacts import ArtifactsModule
 from .base import Cancelled, Module, ModuleContext, run_tool
+from .browser_depth import BrowserDepthModule
+from .chat_cloud import ChatCloudModule
 from .computer import ComputerModule
+from .email_stores import EmailModule
 from .eventlogs import EventLogsModule
 from .content import ContentModule
 from .fileproc import FileProcModule
@@ -33,17 +37,17 @@ from .user_activity import UserActivityModule
 from .yara_scan import YaraModule
 
 MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), RegistryModule(), EventLogsModule(),
-                         UserActivityModule(), NtfsModule(), FileProcModule(), MembersModule(), HashMatchModule(), YaraModule(), ContentModule(),
-                         UnallocatedModule(), FoundDataModule()]
+                         UserActivityModule(), NtfsModule(), BrowserDepthModule(), FileProcModule(), MembersModule(), EmailModule(),
+                         ChatCloudModule(), HashMatchModule(), YaraModule(), ContentModule(), UnallocatedModule(), FoundDataModule()]
 REGISTRY: dict[str, Module] = {m.name: m for m in MODULES}
 ORDER = [m.name for m in MODULES]
 
 PROFILES = {
     'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry'],
-    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc',
-                 'hash_match', 'yara'],
-    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
-             'unallocated', 'found_data'],
+    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth',
+                 'fileproc', 'email', 'chat_cloud', 'hash_match', 'yara'],
+    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc',
+             'containers', 'email', 'chat_cloud', 'hash_match', 'yara', 'content', 'unallocated', 'found_data'],
 }
 DEFAULT_PROFILE = 'standard'
 PROFILE_LABELS = {

@@ -16,7 +16,8 @@ import re
 # Section titles in order; the numbers are checked to run 1, 2, 3, ... rather than listed, so adding a section
 # does not need every later number edited here.
 titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer and users', 'Deleted files', 'Recovered files',
-          'USB device history', 'Browser history', 'Browser downloads', 'Windows activity', 'Execution evidence', 'Folders browsed',
+          'USB device history', 'Browser history', 'Browser downloads', 'Browser searches, bookmarks, logins and recovered history', 'Email',
+          'Chat and cloud storage', 'Windows activity', 'Execution evidence', 'Folders browsed',
           'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives',
           'Jump lists, Timeline, thumbnails, SRUM and search index', 'NTFS: timestomping, alternate data streams and USN journal',
           'Event logs', 'Malware indicators',
@@ -35,6 +36,19 @@ check('Jump lists, Timeline, thumbnails, SRUM and search index has its five subs
 check('Jump lists, the Timeline and thumbnails listed: Notepad, the deleted Timeline entry, the wiped screenshot\'s thumbnail',
       all(x in flat for x in ('Notepad (64-bit)', 'Google Chrome', 'deleted by the user', '9f3a6c21e4d07b58', 'payroll-screenshot.png',
                               'No SRUM database was found.')))
+subs = [m.group(1) for m in re.finditer(r'^\s*\d+\.\d+ (Searches|Deleted history entries \(recovered\)|Bookmarks|Saved logins|Form history|Mailboxes|Messages sent, deleted or with attachments|Chat apps|Messages, calls and file transfers|Cloud storage accounts|Cloud storage files)', a, re.M)]
+check('browser, email, chat and cloud sections have their subsections',
+      subs == ['Searches', 'Deleted history entries (recovered)', 'Bookmarks', 'Saved logins', 'Form history', 'Mailboxes',
+               'Messages sent, deleted or with attachments', 'Chat apps', 'Messages, calls and file transfers', 'Cloud storage accounts', 'Cloud storage files'])
+check('browser depth listed: a recovered search, the deleted upload page, the bookmark folder, the saved login, the private address typed',
+      all(x in flat for x in ('how to permanently delete files from usb', 'filetransfer.example.net/d/7Hq2xK', 'bar/tools',
+                              'filetransfer.example.net/login', 'alice.private@mailbox.example', 'WAL frame 1')))
+check('no saved password, encrypted or not, is in the report', 'password_value' not in flat and 'encryptedPassword' not in flat)
+check('email listed: the Thunderbird folders, the export sent home with its attachment, the deleted reply',
+      all(x in flat for x in ('Thunderbird', 'backup', 'Re: the list', '(deleted)', 'alice.private@mailbox.')))
+check('chat and cloud listed: Skype messages and the transfer, WhatsApp not read, the OneDrive copy of the payroll and where else it is',
+      all(x in flat for x in ('Offer letter attached', 'offer-letter.pdf', 'WhatsApp', 'encrypted', 'OneDrive', '/Backup/payroll-export.csv',
+                              'holiday.jpg', r'C:\Users\alice\Dropbox')))
 check('evidence ID and full SHA-256', exp['evidence'] in a and exp['sha256'] in flat.replace(' ', '') )
 import re
 custody = ' '.join(a[a.index('2. Chain of custody'):a.index('3. Analysis summary')].split())

@@ -7,7 +7,8 @@ How a file's text is obtained depends on its real type (from file processing), n
   * Office Open XML (docx, xlsx, pptx) and OpenDocument: the text of their XML parts, parsed with defusedxml
   * RTF: control words removed, escaped characters decoded
   * SQLite databases: the text values of their tables, one per line, read by a separate process (raw strings would
-    run one field into the next); a database that can't be opened falls back to strings
+    run one field into the next); a database that can't be opened falls back to strings. Their write-ahead logs
+    (-wal) likewise give the text values of the rows in their page copies, each once
   * everything else that may hold text (programs, databases, registry hives, shortcuts, legacy Office, unknown
     binary data): printable ASCII and UTF-16LE strings of at least 6 characters, each with its byte offset
 
@@ -42,7 +43,7 @@ SQLITE_TIMEOUT = 120
 @dataclass
 class Extracted:
     text: str
-    method: str                      # text | strings | pdf | ooxml | odf | rtf | sqlite
+    method: str                      # text | strings | pdf | ooxml | odf | rtf | sqlite | sqlite-wal
     encoding: str | None = None      # text: the encoding the bytes were decoded with
     bom: int = 0                     # text: bytes of byte-order mark before the text
     spans: list = field(default_factory=list)  # strings: [text_start, byte_start, bytes per character]
@@ -66,6 +67,8 @@ def method_for(entry: dict) -> str | None:
         return 'odf'
     if mime in SQLITE_MIMES:
         return 'sqlite'
+    if (entry.get('magic') or '').startswith('SQLite Write-Ahead Log'):
+        return 'sqlite-wal'
     if cat in STRINGS_CATEGORIES:
         return 'strings'
     return None
@@ -87,6 +90,10 @@ def extract(method: str, data: bytes, *, run_tool=None, work: Path | None = None
         return _document(rtf_text(data.decode('latin-1')), 'rtf')
     if method == 'sqlite':
         return sqlite_text(data, run_tool, work)
+    if method == 'sqlite-wal':
+        from .sqlite_recover import wal_text
+        text = wal_text(data, MAX_CHARS)
+        return strings(data) if text is None else _document(text, 'sqlite-wal')
     raise ValueError(f'Unknown text method {method}')
 
 

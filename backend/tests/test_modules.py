@@ -102,9 +102,12 @@ def test_plan_reruns_only_what_is_needed():
     status = _done(*ORDER)
     assert plan(['yara'], status) == ['yara']                       # nothing depends on yara
     assert plan(['hash_match'], status) == ['hash_match']           # a hash set changed: only matching runs again
-    assert plan(['fileproc'], status) == ['fileproc', 'containers', 'hash_match', 'yara', 'content', 'found_data']
+    # Synced cloud files are linked to file hashes (chat_cloud follows fileproc, containers and email).
+    assert plan(['fileproc'], status) == ['fileproc', 'containers', 'chat_cloud', 'hash_match', 'yara', 'content', 'found_data']
     # Modules that follow another (read its output when it ran) are refreshed when it re-runs.
-    assert plan(['containers'], status) == ['containers', 'hash_match', 'yara', 'content', 'found_data']
+    assert plan(['containers'], status) == ['containers', 'chat_cloud', 'hash_match', 'yara', 'content', 'found_data']
+    assert plan(['email'], status) == ['email', 'chat_cloud', 'hash_match', 'yara', 'content', 'found_data']  # attachments
+    assert plan(['browser_depth'], status) == ['browser_depth']
     assert plan(['unallocated'], status) == ['unallocated', 'found_data']
     # Event logs read the accounts (computer) and add to the USB devices (artifacts): both refresh them. SRUM names users
     # through the accounts too.
@@ -115,15 +118,15 @@ def test_plan_reruns_only_what_is_needed():
     assert plan(['eventlogs'], status) == ['eventlogs']
     assert plan(['content'], status) == ['content', 'found_data']
     # Dependents are refreshed.
-    assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc', 'containers',
-                                          'hash_match', 'yara', 'content', 'unallocated', 'found_data']
+    assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc',
+                                          'containers', 'email', 'chat_cloud', 'hash_match', 'yara', 'content', 'unallocated', 'found_data']
     # A new time zone re-indexes the file system (FAT times) and refreshes what was built on the index.
-    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc',
-                                          'containers', 'hash_match', 'yara', 'content', 'unallocated', 'found_data']
+    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth',
+                                          'fileproc', 'containers', 'email', 'chat_cloud', 'hash_match', 'yara', 'content', 'unallocated', 'found_data']
     # On evidence analysed with the standard profile, the content modules are not added by a re-run.
     standard = _done(*PROFILES['standard'])
-    assert plan(['fs_index'], standard) == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc', 'hash_match',
-                                            'yara']
+    assert plan(['fs_index'], standard) == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc',
+                                            'email', 'chat_cloud', 'hash_match', 'yara']
     assert plan(['fs_index'], _done('tz_probe', 'fs_index')) == ['fs_index']  # dependents that never ran are not added
 
 

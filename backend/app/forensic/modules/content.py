@@ -18,11 +18,11 @@ MAX_TOTAL_CHARS = 1_500_000_000  # text kept per evidence item
 class ContentModule(Module):
     name = 'content'
     label = 'File contents'
-    version = '2'  # 2: archive members, and a member flag in the index
+    version = '3'  # 2: archive members, and a member flag in the index; 3: SQLite write-ahead logs by value
     description = ('Text of documents, PDFs, text files and the readable strings of other files, in a full-text index for '
                    'content search (deleted files included).')
     requires = ('fileproc',)
-    follows = ('containers',)  # archive members are indexed too
+    follows = ('containers', 'email')  # archive members and email attachments are indexed too
     weight = 30
     collections = ()
 
@@ -30,7 +30,7 @@ class ContentModule(Module):
         entries = list(ctx.db['fs_entries'].find(
             {'evidence_id': ctx.eid, 'pipeline': True, 'is_dir': False, 'is_virtual': False, 'size': {'$gt': 0}},
             {'path': 1, 'inode': 1, 'volume_id': 1, 'size': 1, 'deleted': 1, 'mime': 1, 'file_category': 1,
-             'encryption': 1, 'hash_error': 1, 'container': 1}))
+             'encryption': 1, 'hash_error': 1, 'container': 1, 'magic': 1}))
         entries.sort(key=_inode_order)
         final = index_path(ctx.eid)
         writer = Writer(final.with_name(f'{final.stem}.{ctx.run_id}.tmp'))

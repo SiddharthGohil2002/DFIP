@@ -167,6 +167,42 @@
           "size": 59442176
         },
         {
+          "name": "chrome/History",
+          "used_by": "Chrome history and search terms (older schema)",
+          "sha256": "c184fd5fdf72b75c26f8bb816619f04892e776ae6e2f5512f796d9807a12fbb3",
+          "size": 79872
+        },
+        {
+          "name": "chrome/History-59.0.3071.86",
+          "used_by": "Chrome history and search terms",
+          "sha256": "946338ebab6d11f7520e9fc3186e8834253e0182c06ca3b2ec1b0ccbe1207b69",
+          "size": 114688
+        },
+        {
+          "name": "chrome/Web Data",
+          "used_by": "Chrome autofill",
+          "sha256": "7779fb8b6dab0d38fd41df3dacfd9f5ca96ec1ee5ecece6b9d276a786bc23812",
+          "size": 63488
+        },
+        {
+          "name": "chrome/Cookies-68.0.3440.106",
+          "used_by": "Chrome cookies",
+          "sha256": "59d1a2c835a5aba67c8e7e31ee853382fcb1b2807ffdad3b79edc53d50acc1e9",
+          "size": 20480
+        },
+        {
+          "name": "firefox/places.sqlite",
+          "used_by": "Firefox history and bookmarks",
+          "sha256": "cd37cc6891ede23c98c6f68395b5aa4c9cc24aff7268d5a6414fab8ae17a4849",
+          "size": 163840
+        },
+        {
+          "name": "sqlite/skype_main.db",
+          "used_by": "Skype (classic) messages, calls and file transfers",
+          "sha256": "fb52eae51d359b2ed060416dcf9725442fa0b495db32972529e9e75b34c533bb",
+          "size": 344064
+        },
+        {
           "name": "test.pcap",
           "used_by": "network capture",
           "sha256": "203c4eee17b73aa3c9ec8faf3bc1a7da4c9ac606bdcb6157f312ed16f84edc5f",

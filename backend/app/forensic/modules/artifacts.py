@@ -36,6 +36,7 @@ class ArtifactsModule(Module):
     name = 'artifacts'
     label = 'Browser, USB and Windows activity'
     description = 'Browser history and downloads, USB device history, programs run, recently opened files and the Recycle Bin.'
+    version = '2'  # 2: Opera and Vivaldi history
     requires = ('fs_index',)
     weight = 30
     collections = ('forensic_artifacts', 'usb_artifacts', 'timeline_events')

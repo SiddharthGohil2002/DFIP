@@ -505,11 +505,14 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
-STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc',
-                    'hash_match', 'yara']
+STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc',
+                    'email', 'chat_cloud', 'hash_match', 'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
-ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc', 'containers',
-               'hash_match', 'yara', 'content', 'unallocated', 'found_data']
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc', 'containers',
+               'email', 'chat_cloud', 'hash_match', 'yara', 'content', 'unallocated', 'found_data']
+# What re-reading the file system index refreshes on evidence analysed with the standard profile.
+AFTER_FS_INDEX = ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc', 'email', 'chat_cloud',
+                  'hash_match', 'yara']
 
 
 def _ids(db, col, q):
@@ -570,13 +573,11 @@ def t_modules():
     j = _analyse(inv, E, {'modules': ['fs_index']})
     s = j['result']['summary']
     check('re-running the file system index also refreshes the modules built on it',
-          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc', 'hash_match', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
+          j['status'] == 'COMPLETED' and s['plan'] == AFTER_FS_INDEX and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
     j = _analyse(inv, E, {'modules': ['tz_probe']})
     s = j['result']['summary']
     check('re-reading the time zone re-indexes the file system and refreshes what is built on it (not the computer module)',
-          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc', 'hash_match',
-                                 'yara']
-          and s['counts'] == C['COUNTS'], s.get('plan'))
+          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe'] + AFTER_FS_INDEX and s['counts'] == C['COUNTS'], s.get('plan'))
 
     # A broker redelivery of a finished job must not run it again.
     sys.path.insert(0, '/app')
@@ -1035,7 +1036,8 @@ def t_computer():
 
     # Every file time equals the UTC time the generator stamped, in daylight and in standard time alike.
     manifest = json.loads(IMG.with_suffix('.manifest.json').read_text())
-    stored = {x['path']: x for x in db.fs_entries.find({'evidence_id': E}, {'path': 1, 'mtime': 1, 'time_zone': 1, 'atime_date_only': 1})}
+    stored = {x['path']: x for x in db.fs_entries.find({'evidence_id': E, 'container': {'$exists': False}},
+                                                       {'path': 1, 'mtime': 1, 'time_zone': 1, 'atime_date_only': 1})}
     wrong = [(f['path'], str((stored.get(f['path']) or {}).get('mtime')), f['mtime']) for f in manifest['files']
              if f['path'] not in stored or stored[f['path']]['mtime'] != _fat_time(f['mtime'])]
     check(f"every file time on the FAT volume equals the true UTC time ({len(manifest['files'])} files)", not wrong, wrong[:5])
@@ -1103,8 +1105,7 @@ def t_computer():
     after = db.fs_entries.find_one({'evidence_id': E, 'path': '/Users/alice/Documents/payroll-export.csv'})
     tz = get(f'/api/evidence/{E}', inv).json.get('time_zone') or {}
     check('setting the time zone re-indexes with it (FAT times as recorded: 05:41:02 = local time read as UTC)',
-          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'fileproc',
-                                                                   'hash_match', 'yara']
+          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe'] + AFTER_FS_INDEX
           and after['mtime'] == utc(2026, 9, 1, 5, 41, 2) and tz.get('source') == 'override' and tz.get('zone') == 'UTC', (j.get('status'), after.get('mtime'), tz.get('source')))
     check('...and tags still follow their items after the times changed', j.get('result', {}).get('summary', {}).get('tags') == {'relinked': 2, 'unresolved': 0},
           j.get('result', {}).get('summary', {}).get('tags'))
@@ -1226,8 +1227,9 @@ def t_fileproc():
     pay_sha = hashlib.sha256(PAYROLL).hexdigest()
     same = get(f'/api/forensics/hash?case_id={A}&digest={pay_sha.upper()}', inv).json
     want = {'/Users/alice/Pictures/holiday.jpg', '/Users/alice/Documents/payroll-export.csv',
-            '/$Recycle.Bin/S-1-5-21-3623811015-3361044348-30300820-1001/$R3K9D2A.csv'}
-    check('the payroll content is found under every name: the renamed copy, the Recycle Bin copy, the deleted original and the recovered file',
+            '/$Recycle.Bin/S-1-5-21-3623811015-3361044348-30300820-1001/$R3K9D2A.csv', EMAILED_PAYROLL}
+    check('the payroll content is found under every name: the renamed copy, the Recycle Bin copy, the deleted original, the copy emailed home '
+          'and the recovered file',
           {x['path'] for x in same['files']} == want and any(a['type'] == 'RECOVERED_FILE' for a in same['artifacts']), same)
     md5 = get(f'/api/forensics/hash?case_id={A}&digest={hashlib.md5(PAYROLL).hexdigest()}', inv).json
     check('...also by MD5', md5['algorithm'] == 'md5' and {x['path'] for x in md5['files']} == want, md5.get('files'))
@@ -1419,8 +1421,10 @@ def t_content():
     cs = lambda q, mode='text', who=inv, case=A: get(f'/api/forensics/content-search?case_id={case}&mode={mode}&q={urllib.parse.quote(q)}', who)
     r = cs('DE89370400440532013').json
     hits = {h['path']: h for h in r['files']}
-    check('searching an IBAN prefix finds the payroll data in the renamed copy, the Recycle Bin copy, the deleted original and the Word document',
-          set(hits) == set(PAYROLL_COPIES) | {HANDOVER_DOCX} and r['complete'], sorted(hits))
+    check('searching an IBAN prefix finds the payroll data in the renamed copy, the Recycle Bin copy, the deleted original, the Word document '
+          'and the copy attached to an email', set(hits) == set(PAYROLL_COPIES) | {HANDOVER_DOCX, EMAILED_PAYROLL} and r['complete'], sorted(hits))
+    check('...the emailed copy as a member of the mailbox, all 60 occurrences', hits.get(EMAILED_PAYROLL, {}).get('member') is True
+          and hits.get(EMAILED_PAYROLL, {}).get('match_count') == 60, hits.get(EMAILED_PAYROLL))
     bad = []
     for p in PAYROLL_COPIES:
         data = icat_bytes(p)
@@ -1452,7 +1456,8 @@ def t_content():
                      == 'payroll-export.csv' for mm in hl['matches']), hl)
     r = cs(r'emp05\d,DE\d{20}', 'regex').json
     check('a regular expression (RE2) finds the ten emp05x rows in each copy',
-          {h['path'] for h in r['files']} == set(PAYROLL_COPIES) and all(h['match_count'] == 10 for h in r['files']), [(h['path'], h['match_count']) for h in r['files']])
+          {h['path'] for h in r['files']} == set(PAYROLL_COPIES) | {EMAILED_PAYROLL} and all(h['match_count'] == 10 for h in r['files']),
+          [(h['path'], h['match_count']) for h in r['files']])
     r = cs(r'[A-Z]:\\[a-z]+-export\.csv', 'regex').json
     check('a regular expression without a long literal scans every file (the drive path in the shortcut)', any(h['path'] == lnk for h in r['files']), [h['path'] for h in r['files']])
     check('an invalid or unsupported regular expression is refused (400)', cs('(unclosed', 'regex').status == 400 and cs(r'(a)\1', 'regex').status == 400)
@@ -1472,15 +1477,16 @@ def t_content():
     by_kind = {}
     for x in rows:
         by_kind.setdefault(x['kind'], {})[x.get('value') or x['display']] = x
-    check('email addresses: exactly the planted ones (contacts file, Word documents)',
-          set(by_kind.get('email', {})) == {'zoe.martin@example.org', 'alice.personal@example.net', 'finance.team@example.com'}, by_kind.get('email'))
+    emails = set(by_kind.get('email', {}))
+    check('email addresses: exactly the planted ones (contacts file, Word documents, the browser, mail and chat profiles)',
+          emails == PLANTED_EMAILS, (sorted(emails - PLANTED_EMAILS), sorted(PLANTED_EMAILS - emails)))
     zoe = get(f"/api/forensics/entities/{by_kind['email']['zoe.martin@example.org']['_id']}", inv).json
     occ = zoe['occurrences'][0]
     check('...each occurrence with its file and byte offset (Zoë: a 2-byte character earlier in the line)',
           occ['path'] == CONTACTS_TXT and occ['byte_offset'] == icat_bytes(CONTACTS_TXT).index(b'zoe.martin@example.org'), occ)
     check('IBANs: only the two with valid check digits (59 payroll IBANs fail mod-97)',
           set(by_kind.get('iban', {})) == {'GB82WEST12345698765432', 'DE89370400440532013000'}
-          and by_kind['iban']['DE89370400440532013000']['count'] == 4 and by_kind['iban']['GB82WEST12345698765432']['file_count'] == 2,
+          and by_kind['iban']['DE89370400440532013000']['count'] == 5 and by_kind['iban']['GB82WEST12345698765432']['file_count'] == 2,
           {k: (v['count'], v['file_count']) for k, v in by_kind.get('iban', {}).items()})
     cards = list(by_kind.get('card', {}).values())
     check('card numbers: the Visa test card, masked; the mistyped one (Luhn fails) is not reported',
@@ -1492,11 +1498,12 @@ def t_content():
     check('Aadhaar: the Verhoeff-valid number, masked', [x['display'] for x in by_kind.get('aadhaar', {}).values()] == ['•••• •••• 0124'], by_kind.get('aadhaar'))
     check('cryptocurrency: the Bitcoin and EIP-55 Ethereum addresses',
           set(by_kind.get('crypto', {})) == {'1BoatSLRHtKNngkdXEeobR76b53LETtpyT', '0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'}, set(by_kind.get('crypto', {})))
-    check('phone numbers: the two planted ones (text file and RTF)', set(by_kind.get('phone', {})) == {'+442079460958', '+12025550143'}, set(by_kind.get('phone', {})))
+    check('phone numbers: the planted ones (text file, RTF, the Skype contact)',
+          set(by_kind.get('phone', {})) == {'+442079460958', '+12025550143', '+12125550147'}, set(by_kind.get('phone', {})))
     ips = set(by_kind.get('ip', {}))
     check('IP addresses include the planted one and the interface in the SYSTEM hive, not its netmask',
           {'10.20.30.40', '192.168.1.57'} <= ips and '255.255.255.0' not in ips, ips)
-    history = {u for _, u, *_ in CHROME_VISITS} | {'https://tools.example.org/securedelete'}  # visits and the download's page
+    history = {u for _, u, *_ in CHROME_VISITS} | {'https://tools.example.org/securedelete'} | PLANTED_URLS  # visits, the download's page, profiles
     # Security.evtx holds the namespace of event 1102's UserData as text, which the strings of the log expose. (The event
     # namespace is there too, but it follows a length byte that reads as "5", so it is not a separate word.)
     history.add('http://manifests.microsoft.com/win/2004/08/windows/eventlog')
@@ -1506,7 +1513,7 @@ def t_content():
     kinds = fd()['kinds']
     check('the count per kind matches the rows', all(kinds[k] == len(by_kind.get(k, {})) for k in kinds), (kinds, {k: len(v) for k, v in by_kind.items()}))
     check('found data can be filtered by kind and searched by what is shown (not by a masked full number)',
-          fd('&kind=email')['total'] == 3 and fd('&q=1111')['total'] >= 1 and fd('&q=4111111111111111')['total'] == 0)
+          fd('&kind=email')['total'] == len(PLANTED_EMAILS) and fd('&q=1111')['total'] >= 1 and fd('&q=4111111111111111')['total'] == 0)
     s = get(f'/api/forensics/search?case_id={A}&q=zoe.martin', inv).json
     check('keyword search finds found data', s['totals'].get('found') == 1, s['totals'])
     check('another investigator gets 404 for the list and a value',
@@ -1563,9 +1570,11 @@ def t_containers():
     j = _analyse(inv, E, {'modules': ['containers', 'unallocated']})
     s = (j.get('result') or {}).get('summary') or {}
     check('the new modules run, and the modules that read their output are refreshed',
-          j.get('status') == 'COMPLETED' and s.get('plan') == ['containers', 'hash_match', 'yara', 'content', 'unallocated', 'found_data'],
+          j.get('status') == 'COMPLETED' and s.get('plan') == ['containers', 'chat_cloud', 'hash_match', 'yara', 'content', 'unallocated', 'found_data'],
           (j.get('status'), s.get('plan'), j.get('error')))
-    members = {x['path']: x for x in db.fs_entries.find({'evidence_id': E, 'container': {'$exists': True}})}
+    # Archive and document members (email attachments are members too, from the email module: see 12m).
+    members = {x['path']: x for x in db.fs_entries.find({'evidence_id': E, 'container': {'$exists': True}, 'container.kind': {'$ne': 'email'}})}
+    attachments = db.fs_entries.count_documents({'evidence_id': E, 'container.kind': 'email'})
     with tempfile.TemporaryDirectory() as tmp:
         truth = _members_truth(Path(tmp))
     got = {p: m.get('sha256') for p, m in members.items() if p in truth}
@@ -1593,7 +1602,7 @@ def t_containers():
     fl = lambda qs: get(f'/api/forensics/evidence/{E}/files?limit=1000&{qs}', inv).json
     real = [e for e in C['TRUTH'] if not e['virtual']]
     check('the Files list keeps file-system files and archive contents apart',
-          fl('')['total'] == len(real) and fl('members=true')['total'] == len(members), (fl('')['total'], len(real), fl('members=true')['total']))
+          fl('')['total'] == len(real) and fl('members=true')['total'] == len(members) + attachments, (fl('')['total'], len(real), fl('members=true')['total']))
     counts = get(f'/api/evidence/{E}', inv).json['modules']['containers']['counts']
     check('the module counts what it found', counts.get('members_found') == len(members) and counts.get('members_encrypted') == 1
           and counts.get('members_extracted') == len(truth), counts)
@@ -1654,7 +1663,8 @@ def t_containers():
     fr = get(f"/api/forensics/entities/{vals[('iban', 'FR7630006000011234567890189')]['_id']}", inv).json
     check('a value found in a member names the member, so it can be viewed', all(o.get('member') and o.get('entry_id') for o in fr['occurrences']), fr['occurrences'])
     ov = get(f'/api/cases/{A}/overview', inv).json['counts']
-    check('the overview counts archive members', ov.get('archive_members') == len(members), (ov.get('archive_members'), len(members)))
+    check('the overview counts archive members and email attachments', ov.get('archive_members') == len(members) + attachments,
+          (ov.get('archive_members'), len(members), attachments))
     C['ARCHIVE_MEMBERS'] = len(members)
 
 
@@ -2271,6 +2281,7 @@ def t_user_activity_samples():
     inv = C['INVESTIGATOR']
     case = post('/api/cases', inv, {'name': 'Real Windows samples', 'priority': 'LOW'}).json['case_id']
     ev = upload(inv, case, SAMPLES_IMG.read_bytes(), 'samples.dd').json['evidence_id']
+    C['SAMPLES_EV'] = ev
     j = _analyse(inv, ev, {'modules': ['user_activity']})
     counts = j.get('result', {}).get('summary', {}).get('counts', {})
     check('the module reads the real files on the samples disk', j['status'] == 'COMPLETED' and counts.get('srum_network_records') == 1840
@@ -2579,6 +2590,379 @@ def t_ntfs_samples():
         local.unlink()
 
 
+# Phase 9 ground truth: what make_artifacts.py put in alice's profiles (its constants of the same names).
+ALICE = '/Users/alice/AppData'
+TB = f'{ALICE}/Roaming/Thunderbird/Profiles/q7w1.default-release/ImapMail/imap.corp.example'
+EMAILED_PAYROLL = f'{TB}/Sent!/message 1/payroll-export.csv'  # the attachment, as a file-index member of the Sent folder file
+# Values found data must report from the Phase 9 files besides the earlier ones (contacts file and Word documents). Message-ID and
+# Content-ID headers have the form of an address, so the mailboxes' IDs are found as addresses too.
+PLANTED_EMAILS = {'zoe.martin@example.org', 'alice.personal@example.net', 'finance.team@example.com', 'alice.private@mailbox.example', 'alice@corp.example',
+                  'payroll@corp.example', 'dmitri.k@rivalcorp.example', 'logo@corp.example',
+                  'a8e2f5c1-77d0-4b8e-9f31-5c2d7e10b4a6@corp.example', '5d0b8a3e-1f9c-4a27-8e64-b3f2c9d0e715@rivalcorp.example',
+                  '7f3c2a10-5b1e-4c55-9d1a-2f0d5e6a7b81@corp.example', 'c19e0b7d-2a44-4e0f-bb61-0f6d2e9a1c33@corp.example'}
+PLANTED_URLS = {'https://filetransfer.example.net/', 'https://filetransfer.example.net/login', 'https://filetransfer.example.net/session',
+                'https://intranet.corp.example/', 'https://mail.example.com/', 'https://mail.example.com/login',
+                'https://onedrive.live.com/?cid=a1b2c3d4e5f60718', 'https://pastebin.example.com', 'https://tracker.example.com/open.gif?u=alice',
+                'https://www.bing.com/search?q=securedelete+wipe+free+space', 'https://intranet.corp.example/hr/payroll',
+                'https://tools.example.org/securedelete', 'https://filetransfer.example.net/upload'}
+CHROME = f'{ALICE}/Local/Google/Chrome/User Data/Default'
+FIREFOX = f'{ALICE}/Roaming/Mozilla/Firefox/Profiles/k2x8.default-release'
+SKYPE_DB = f'{ALICE}/Roaming/Skype/alice.example/main.db'
+ONEDRIVE_DB = f'{ALICE}/Local/Microsoft/OneDrive/settings/Personal/SyncEngineDatabase.db'
+PRIVATE_EMAIL = 'alice.private@mailbox.example'
+CHROME_DELETED = [  # (address, title, last visit, search term)
+    ('https://www.google.com/search?q=how+to+permanently+delete+files+from+usb', 'how to permanently delete files from usb - Google Search',
+     utc(2026, 9, 1, 14, 16, 2), 'how to permanently delete files from usb'),
+    ('https://filetransfer.example.net/d/7Hq2xK', 'Your file is ready - Anonymous File Upload', utc(2026, 9, 1, 14, 22, 18), None),
+    ('https://www.google.com/search?q=clear+chrome+history+for+one+day', 'clear chrome history for one day - Google Search',
+     utc(2026, 9, 1, 14, 38, 51), 'clear chrome history for one day'),
+]
+FIREFOX_DELETED = ('https://www.bing.com/search?q=securedelete+wipe+free+space', 'securedelete wipe free space - Search', utc(2026, 9, 1, 14, 17, 25))
+SKYPE_TEXTS = ['Offer letter attached. Start date is flexible.', 'offer-letter.pdf', 'Thanks. I can bring the payroll & client lists when I move.',
+               "Good. Don't use work email for it ;)"]
+
+
+def _local(path, name=None):
+    p = Path(tempfile.mkdtemp()) / (name or path.rsplit('/', 1)[-1])
+    p.write_bytes(icat_bytes(path))
+    return p
+
+
+@section('12m Email (Thunderbird folders vs Python\'s mailbox module on the files in the image)')
+def t_email():
+    import email as email_lib
+    import email.policy
+    import email.utils
+    import mailbox
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    db = mongo()
+    mods = get(f'/api/evidence/{E}', inv).json['modules']
+    check('the email module ran with the standard analysis', (mods.get('email') or {}).get('status') == 'COMPLETED', mods.get('email'))
+    stores = [s for s in get(f'/api/forensics/email/stores?case_id={A}', inv).json['data'] if s['evidence_id'] == E]
+    truth = {}
+    for folder in ('INBOX', 'Sent'):
+        raw = icat_bytes(f'{TB}/{folder}')
+        p = Path(tempfile.mkdtemp()) / folder
+        p.write_bytes(raw)
+        box = mailbox.mbox(str(p), create=False)
+        truth[folder] = [email_lib.message_from_bytes(box.get_bytes(k), policy=email.policy.default) for k in box.keys()]
+        box.close()
+        st = next((s for s in stores if s['path'] == f'{TB}/{folder}'), {})
+        check(f'{folder}: read as a Thunderbird folder with its SHA-256 and the {len(truth[folder])} messages Python\'s mailbox module finds',
+              st.get('format') == 'THUNDERBIRD' and st.get('client') == 'Thunderbird' and st.get('user') == 'alice'
+              and st.get('sha256') == hashlib.sha256(raw).hexdigest() and st.get('messages') == len(truth[folder]) == 2, st)
+    check('the .msf summary files are not read as mailboxes', len(stores) == 2, [s['path'] for s in stores])
+    msgs = get(f'/api/forensics/email/messages?case_id={A}&evidence_id={E}&limit=500', inv).json['data']
+    got = {(m['folder'], m['subject']): m for m in msgs}
+    want = {(f'imap.corp.example/{f}', str(w['Subject'])): w for f, ws in truth.items() for w in ws}
+    addrs = lambda v: [a for _, a in email.utils.getaddresses([str(v)])]
+    bad = [k for k, w in want.items() if k not in got or got[k]['from_address'] != email.utils.parseaddr(str(w['From']))[1]
+           or [x['address'] for x in got[k]['to']] != addrs(w['To'])
+           or iso(got[k]['sent']) != email.utils.parsedate_to_datetime(str(w['Date'])).astimezone(timezone.utc)]
+    check('every message with the sender, recipients and sent time (the Date header, in UTC) the mailbox module gives',
+          set(got) == set(want) and not bad, (sorted(set(got) ^ set(want)), bad))
+
+    b = got.get(('imap.corp.example/Sent', 'backup'), {})
+    check(f'the payroll export sent to {PRIVATE_EMAIL} at 14:20:31 UTC, with one attachment',
+          b.get('direction') == 'sent' and iso(b.get('time')) == utc(2026, 9, 1, 14, 20, 31) and b.get('attachment_count') == 1
+          and [x['address'] for x in b.get('to', [])] == [PRIVATE_EMAIL], b)
+    d = get(f"/api/forensics/email/messages/{b.get('_id')}", inv).json or {}
+    att = (d.get('attachments') or [{}])[0]
+    page = get(f"/api/forensics/members/{att.get('entry_id')}/content?length=65536", inv).json if att.get('entry_id') else None
+    check('the attachment is the payroll export byte for byte (opened through its file-index entry)',
+          att.get('name') == 'payroll-export.csv' and att.get('sha256') == hashlib.sha256(PAYROLL).hexdigest()
+          and page and base64.b64decode(page['data_b64']) == PAYROLL and page['eof'], (att, page and page.get('size')))
+    m = db.fs_entries.find_one({'evidence_id': E, 'path': att.get('entry_path')}) or {}
+    check('...is an email-attachment member, hashed, typed and matched to the payroll hash set like the copies on the disk',
+          (m.get('container') or {}).get('kind') == 'email' and m.get('sha256') == hashlib.sha256(PAYROLL).hexdigest()
+          and m.get('mime') == 'text/csv' and m.get('hash_status') == 'NOTABLE' and 'Payroll exports' in [s['name'] for s in m.get('hash_sets') or []],
+          {k: m.get(k) for k in ('path', 'container', 'sha256', 'mime', 'hash_status', 'hash_sets')})
+    check('the message body, transport headers and recipients come with the message; the HTML body only from its own endpoint',
+          (d.get('body_text') or '').strip() == 'for home' and 'Message-ID: <7f3c2a10' in (d.get('headers') or '') and d.get('body_html') is None, d.get('body_text'))
+    r = got.get(('imap.corp.example/Sent', 'Re: the list'), {})
+    sent = next((s for s in stores if s['path'].endswith('/Sent')), {})
+    check('the reply alice deleted is still in the Sent file, marked deleted (X-Mozilla-Status 0009)',
+          r.get('deleted') is True and r.get('flags') == ['read', 'deleted'] and sent.get('deleted_messages') == 1, r)
+    h = got.get(('imap.corp.example/INBOX', 'Payroll export ready for review'), {})
+    hh = get(f"/api/forensics/email/messages/{h.get('_id')}/html", inv).json or {}
+    logo = base64.b64encode(next(a for a in truth['INBOX'][1].walk() if a.get_content_type() == 'image/png').get_payload(decode=True)).decode()
+    check('HTML body: the inline logo (cid:) comes back as a data: URI and the remote tracking picture is counted, not fetched',
+          h.get('has_html') and 'cid:' not in hh.get('html', '') and f'data:image/png;base64,{logo}' in hh.get('html', '')
+          and hh.get('remote_references') == 1, {k: hh.get(k) for k in ('remote_references', 'truncated')})
+    check('opening messages is recorded in the audit log', db.audit_logs.count_documents({'action': 'EMAIL_VIEWED', 'resource_id': E}) >= 2)
+    q = lambda extra: get(f'/api/forensics/email/messages?case_id={A}&evidence_id={E}{extra}', inv).json['total']
+    check('filters: 2 sent, 1 deleted, 1 with attachments (an inline picture is not one), 3 mention "payroll", 2 with dmitri',
+          (q('&direction=sent'), q('&deleted=true'), q('&attachments=true'), q('&search=payroll'), q('&address=dmitri')) == (2, 1, 1, 3, 2),
+          (q('&direction=sent'), q('&deleted=true'), q('&attachments=true'), q('&search=payroll'), q('&address=dmitri')))
+    ev = [e for e in get(f'/api/forensics/timeline?case_id={A}&type=EMAIL_SENT,EMAIL_RECEIVED&limit=50', inv).json['data'] if e['evidence_id'] == E]
+    check('the timeline has each message; the export\'s says where it went and what was attached',
+          len(ev) == 4 and any(e['type'] == 'EMAIL_SENT' and iso(e['timestamp']) == utc(2026, 9, 1, 14, 20, 31) and PRIVATE_EMAIL in e['description']
+                               and 'payroll-export.csv' in e['description'] for e in ev), [e['description'] for e in ev])
+    check('bad requests are refused (400) and another investigator sees nothing (404)',
+          get(f'/api/forensics/email/messages?case_id={A}&direction=sideways', inv).status == 400
+          and get(f'/api/forensics/email/messages/{"0" * 24}', inv).status == 404
+          and get(f'/api/forensics/email/stores?case_id={A}', C['INV2']).status == 404
+          and get(f"/api/forensics/email/messages/{b.get('_id')}", C['INV2']).status == 404
+          and get(f"/api/forensics/email/messages/{h.get('_id')}/html", C['INV2']).status == 404)
+    s = get(f'/api/forensics/search?case_id={A}&q=dmitri', inv).json
+    check('keyword search finds the messages and the Skype chat with dmitri', s['totals'].get('email') == 2 and s['totals'].get('chat', 0) >= 1, s['totals'])
+    t = post('/api/tags', inv, {'case_id': A, 'item_type': 'EMAIL', 'item_id': b.get('_id'), 'label': 'EVIDENCE', 'note': 'payroll sent home'}).json
+    j = _analyse(inv, E, {'modules': ['email']})
+    tag = next((x for x in get(f'/api/tags?case_id={A}', inv).json['data'] if x['tag_id'] == t.get('tag_id')), {})
+    check('a tagged email follows the message when the module re-runs (its attachments are re-matched too)',
+          j['status'] == 'COMPLETED' and j['result']['summary'].get('tags', {}).get('unresolved') == 0
+          and tag.get('item_id') != b.get('_id') and (tag.get('snapshot') or {}).get('title') == 'backup'
+          and {'email', 'hash_match', 'yara'} <= set(j['result']['summary'].get('plan', [])), (j['result']['summary'].get('plan'), tag))
+    req('DELETE', f"/api/tags/{t.get('tag_id')}", inv)
+
+
+@section('12n Chat and cloud storage (Skype and OneDrive vs sqlite3, Dropbox vs json, chat apps vs fls, on the files in the image)')
+def t_chat_cloud():
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    mods = get(f'/api/evidence/{E}', inv).json['modules']
+    check('the chat and cloud module ran with the standard analysis', (mods.get('chat_cloud') or {}).get('status') == 'COMPLETED', mods.get('chat_cloud'))
+    rows = lambda t, extra='': get(f'/api/forensics/chat-cloud?case_id={A}&evidence_id={E}&type={t}&limit=1000{extra}', inv).json['data']
+    con = sqlite3.connect(_local(SKYPE_DB))
+    truth = [(datetime.fromtimestamp(t, tz=timezone.utc), a) for t, a in con.execute('SELECT timestamp, author FROM Messages ORDER BY timestamp')]
+    tr = con.execute('SELECT type, partner_handle, status, filename, filepath, filesize, starttime FROM Transfers').fetchall()
+    call = con.execute('SELECT begin_timestamp, duration, is_incoming FROM Calls').fetchall()
+    con.close()
+    msgs = rows('CHAT_MESSAGE')
+    check('Skype: every message sqlite3 reads, in order, with its author and text (markup and entities decoded)',
+          [(iso(m['time']), m['author']) for m in msgs] == truth and [m['text'] for m in msgs] == SKYPE_TEXTS
+          and all(m['conversation'] == 'Dmitri K' and m['account'] == 'alice.example' and m['user'] == 'alice' for m in msgs),
+          [(m['time'], m['author'], m['text']) for m in msgs])
+    manifest = json.loads(IMG.with_suffix('.manifest.json').read_text())
+    size = next(x['size'] for x in manifest['files'] if x['path'] == '/Users/alice/Documents/offer-letter.pdf')
+    t = (rows('CHAT_FILE_TRANSFER') or [{}])[0]
+    check('Skype file transfer: offer-letter.pdf received from dmitri.k.rival and saved to Documents (the size of the file on the disk)',
+          tr == [(1, 'dmitri.k.rival', 8, 'offer-letter.pdf', 'C:\\Users\\alice\\Documents\\offer-letter.pdf', str(size), int(utc(2025, 3, 12, 18, 5, 2).timestamp()))]
+          and (t.get('direction'), t.get('status'), t.get('file_name'), t.get('size'), iso(t.get('started'))) == ('received', 'completed', 'offer-letter.pdf', size, utc(2025, 3, 12, 18, 5, 2)), t)
+    c = (rows('CHAT_CALL') or [{}])[0]
+    check('Skype call: incoming, 12 min 34 s, with dmitri.k.rival', call == [(int(utc(2025, 3, 12, 18, 15).timestamp()), 754, 1)]
+          and (iso(c.get('time')), c.get('duration_seconds'), c.get('incoming'), c.get('members')) == (utc(2025, 3, 12, 18, 15), 754, True, ['dmitri.k.rival']), c)
+    contact = (rows('CHAT_CONTACT') or [{}])[0]
+    acct = (rows('CHAT_ACCOUNT') or [{}])[0]
+    check('Skype account and contact', acct.get('handle') == 'alice.example' and acct.get('emails') == PRIVATE_EMAIL
+          and contact.get('handle') == 'dmitri.k.rival' and contact.get('emails') == 'dmitri.k@rivalcorp.example', (acct, contact))
+    conv = get(f'/api/forensics/chat-cloud/conversations?case_id={A}&evidence_id={E}', inv).json['data']
+    check('conversations: one, with 4 messages', [(x['conversation'], x['messages']) for x in conv] == [('Dmitri K', 4)], conv)
+
+    apps = {a['app']: a for a in rows('CHAT_APP')}
+    def fls_under(prefix):
+        fs = [x for x in C['TRUTH'] if x['path'].startswith(prefix + '/') and not x['virtual'] and x['mode'][:1] != 'd']
+        return len(fs), sum(x['size'] for x in fs)
+    wa = apps.get('WhatsApp', {})
+    wa_dir = f'{ALICE}/Local/Packages/5319275A.WhatsAppDesktop_cv1g1gvanyjgm'
+    tg_dir = f'{ALICE}/Roaming/Telegram Desktop'
+    check('WhatsApp and Telegram are found and described, not read (encrypted): files and size as fls lists them, newest change',
+          (wa.get('files'), wa.get('size')) == fls_under(wa_dir) == (2, 10240) and wa.get('path') == wa_dir and not wa.get('parsed')
+          and 'encrypted' in (wa.get('reason') or '') and iso(wa.get('last_change')) == utc(2026, 9, 1, 14, 24, 50)
+          and (apps.get('Telegram Desktop', {}).get('files'), apps.get('Telegram Desktop', {}).get('size')) == fls_under(tg_dir) == (2, 5120)
+          and apps.get('Skype', {}).get('parsed') is True and apps['Skype'].get('messages') == 4, apps)
+
+    accounts = {a['provider']: a for a in rows('CLOUD_ACCOUNT')}
+    info = json.loads(icat_bytes(f'{ALICE}/Local/Dropbox/info.json'))
+    check('cloud accounts: OneDrive (personal, synced to C:\\Users\\alice\\OneDrive, 2 files) and Dropbox (its folder from info.json)',
+          accounts.get('OneDrive', {}).get('sync_folder') == 'C:\\Users\\alice\\OneDrive' and accounts['OneDrive'].get('files') == 2
+          and accounts.get('Dropbox', {}).get('sync_folder') == info['personal']['path'] == 'C:\\Users\\alice\\Dropbox', accounts)
+    con = sqlite3.connect(_local(ONEDRIVE_DB))
+    od = {r[0]: r[1:] for r in con.execute('SELECT fileName, size, lastChange, localHashDigest FROM od_ClientFile_Records')}
+    con.close()
+    files = {f['path']: f for f in rows('CLOUD_FILE', '&files_only=true')}
+    pay = files.get('/Backup/payroll-export.csv', {})
+    check('OneDrive: every synced file sqlite3 reads, with size, change time and SHA-1; the payroll export went to Backup at 14:26:10',
+          {p.rsplit('/', 1)[-1] for p in files} == set(od)
+          and all((f['size'], int(iso(f['modified']).timestamp()), f['hash'].upper()) == od[f['name']] for f in files.values())
+          and pay.get('hash') == hashlib.sha1(PAYROLL).hexdigest() and iso(pay.get('modified')) == utc(2026, 9, 1, 14, 26, 10), files)
+    db = mongo()
+    same = {x['path'] for x in db.fs_entries.find({'evidence_id': E, 'sha1': hashlib.sha1(PAYROLL).hexdigest()}, {'path': 1})}
+    check("the synced payroll export is linked to the same content on this disk: the renamed copy, the Recycle Bin, the archive and the email",
+          {x['path'] for x in pay.get('same_content', [])} == same and '/Users/alice/Pictures/holiday.jpg' in same
+          and any(p.startswith(f'{TB}/Sent!/') for p in same), (pay.get('same_content'), same))
+    ev = [e for e in get(f'/api/forensics/timeline?case_id={A}&type=CLOUD_FILE,CHAT_MESSAGE,CHAT_CALL,CHAT_FILE_TRANSFER,CHAT_APP&limit=100', inv).json['data']
+          if e['evidence_id'] == E]
+    check('timeline: the OneDrive upload, the Skype messages, call and transfer, and the WhatsApp data change',
+          any(e['type'] == 'CLOUD_FILE' and iso(e['timestamp']) == utc(2026, 9, 1, 14, 26, 10) and '/Backup/payroll-export.csv' in e['description'] for e in ev)
+          and sum(e['type'] == 'CHAT_MESSAGE' for e in ev) == 4 and sum(e['type'] in ('CHAT_CALL', 'CHAT_FILE_TRANSFER') for e in ev) == 2
+          and any(e['type'] == 'CHAT_APP' and 'WhatsApp' in e['description'] for e in ev), [e['description'] for e in ev])
+    check('an unknown type is 400; another investigator gets 404',
+          get(f'/api/forensics/chat-cloud?case_id={A}&type=NOPE', inv).status == 400
+          and get(f'/api/forensics/chat-cloud?case_id={A}&type=CHAT_MESSAGE', C['INV2']).status == 404
+          and get(f'/api/forensics/chat-cloud/conversations?case_id={A}', C['INV2']).status == 404)
+    t = post('/api/tags', inv, {'case_id': A, 'item_type': 'CHAT_CLOUD', 'item_id': pay.get('_id'), 'label': 'NOTABLE'}).json
+    check('a synced file can be tagged', (t.get('snapshot') or {}).get('title') == '/Backup/payroll-export.csv'
+          and (t.get('snapshot') or {}).get('detail') == 'Cloud storage file (OneDrive) · alice', t)
+    req('DELETE', f"/api/tags/{t.get('tag_id')}", inv)
+
+
+@section('12o Browser searches, cookies, bookmarks, form history, logins and deleted history (vs sqlite3 and json on the files in the image, and their bytes)')
+def t_browser_depth():
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    mods = get(f'/api/evidence/{E}', inv).json['modules']
+    check('the browser module ran with the standard analysis', (mods.get('browser_depth') or {}).get('status') == 'COMPLETED', mods.get('browser_depth'))
+    rows = lambda k, extra='': [r for r in get(f'/api/forensics/browser?case_id={A}&kind={k}&limit=1000{extra}', inv).json['data'] if r['evidence_id'] == E]
+    hist = _local(f'{CHROME}/History')
+    con = sqlite3.connect(f'file:{hist}?mode=ro&immutable=1', uri=True)
+    live = {u for (u,) in con.execute('SELECT url FROM urls')}
+    terms = con.execute('SELECT term FROM keyword_search_terms').fetchall()
+    con.close()
+    raw = hist.read_bytes()
+    wal = icat_bytes(f'{FIREFOX}/places.sqlite-wal')
+    rec = rows('BROWSER_RECOVERED')
+    got = {(r['browser'], r['url'], r['title'], iso(r['last_visit_time'])) for r in rec}
+    want = {('Chrome', u, t, w) for u, t, w, _ in CHROME_DELETED} | {('Firefox', *FIREFOX_DELETED)}
+    check('deleted history: exactly the 3 Chrome rows and the Firefox row alice deleted, with their titles and visit times',
+          got == want and not any(u in live for u, *_ in CHROME_DELETED), got ^ want)
+    where = {r['url']: r for r in rec}
+    check('Chrome\'s rows from free space in History, the Firefox row from an older page copy in places.sqlite-wal; each at the byte offset given',
+          all(where[u]['recovered_from'] == 'free space' and where[u]['file'] == 'database' and 0 <= raw.find(u.encode(), where[u]['file_offset']) - where[u]['file_offset'] < 32
+              for u, *_ in CHROME_DELETED)
+          and where[FIREFOX_DELETED[0]]['recovered_from'] == 'WAL frame' and where[FIREFOX_DELETED[0]]['wal_frame'] >= 1
+          and 0 <= wal.find(FIREFOX_DELETED[0].encode(), where[FIREFOX_DELETED[0]]['file_offset']) - where[FIREFOX_DELETED[0]]['file_offset'] < 32,
+          {u: (r['recovered_from'], r['file_offset'], r.get('wal_frame')) for u, r in where.items()})
+    check('the last row deleted kept its row ID (7); the others lost it to the freeblock headers SQLite wrote over them',
+          where[CHROME_DELETED[2][0]]['row_id'] == 7 and where[CHROME_DELETED[0][0]]['row_id'] is None, {u: r['row_id'] for u, r in where.items()})
+    s = rows('BROWSER_SEARCH')
+    got = {(r['browser'], r['term'], bool(r.get('recovered')), r['source_table']) for r in s}
+    check('searches: the live Chrome search term (as sqlite3 reads it), and the searches in the deleted rows of both browsers',
+          got == {('Chrome', 'how to wipe usb drive', False, 'keyword_search_terms'), ('Chrome', CHROME_DELETED[0][3], True, 'urls'),
+                  ('Chrome', CHROME_DELETED[2][3], True, 'urls'), ('Firefox', 'securedelete wipe free space', True, 'moz_places')}
+          and terms == [('how to wipe usb drive',)] and len(rows('BROWSER_SEARCH', '&recovered=true')) == 3, got)
+    con = sqlite3.connect(_local(f'{CHROME}/Network/Cookies', 'Cookies'))
+    ck = {(h, n, w) for h, n, w in con.execute('SELECT host_key, name, creation_utc FROM cookies')}
+    con.close()
+    cookies = rows('BROWSER_COOKIE')
+    check('cookies: every Chrome cookie sqlite3 reads (Network/Cookies), values left encrypted',
+          {(c['host'], c['name'], int((iso(c['created']).timestamp() + 11_644_473_600) * 1_000_000)) for c in cookies} == ck and len(ck) == 3
+          and all(c['value_encrypted'] and c.get('value') is None for c in cookies), cookies)
+    marks = json.loads(icat_bytes(f'{CHROME}/Bookmarks'))
+    def urls(node):
+        return ([node['url']] if node.get('type') == 'url' else []) + [u for ch in node.get('children', []) for u in urls(ch)]
+    chrome_marks = {u for root in marks['roots'].values() for u in urls(root)}
+    bm = rows('BROWSER_BOOKMARK')
+    check('bookmarks: the Chrome bookmarks in the JSON file (in their folders) and Firefox\'s toolbar bookmark',
+          {b['url'] for b in bm if b['browser'] == 'Chrome'} == chrome_marks and len(chrome_marks) == 3
+          and any(b['folder'] == 'Bookmarks bar/tools' and b['url'] == 'https://tools.example.org/securedelete' and iso(b['added']) == utc(2026, 9, 1, 10, 4, 41) for b in bm)
+          and [(b['folder'], b['title']) for b in bm if b['browser'] == 'Firefox'] == [('Bookmarks toolbar', 'Paste')], bm)
+    af = rows('BROWSER_AUTOFILL')
+    check('form history: what alice typed (her private address 4 times in Chrome, the Firefox search box), and a saved card without its number',
+          any(a['browser'] == 'Chrome' and a['value'] == PRIVATE_EMAIL and a['times_used'] == 4 and iso(a['last_used']) == utc(2026, 9, 1, 14, 19, 4) for a in af)
+          and any(a['browser'] == 'Firefox' and a['kind'] == 'search bar' and a['value'] == 'securedelete wipe free space' for a in af)
+          and any(a['kind'] == 'saved card' and 'number encrypted' in a['value'] for a in af) and len(af) == 6, af)
+    con = sqlite3.connect(_local(f'{CHROME}/Login Data'))
+    lt = {(o, u or None) for o, u in con.execute('SELECT origin_url, username_value FROM logins')}
+    con.close()
+    lg = rows('BROWSER_LOGIN')
+    body = get(f'/api/forensics/browser?case_id={A}&kind=BROWSER_LOGIN', inv).body
+    check('saved logins: every site and user name sqlite3 reads (and Firefox\'s, user name encrypted); no password, encrypted or not, ever leaves the server',
+          {(x['site'], x['username']) for x in lg if x['browser'] == 'Chrome'} == lt and len(lt) == 3
+          and [x['username_encrypted'] for x in lg if x['browser'] == 'Firefox'] == [True]
+          and b'password_value' not in body and b'v10' not in body and b'encryptedPassword' not in body, lg)
+    ev = [e for e in get(f'/api/forensics/timeline?case_id={A}&type=BROWSER_SEARCH,BROWSER_RECOVERED,BROWSER_LOGIN&limit=100', inv).json['data']
+          if e['evidence_id'] == E]
+    check('timeline: the live search, the 4 deleted visits at their times, and the login saved on the upload site',
+          any(e['type'] == 'BROWSER_SEARCH' and 'how to wipe usb drive' in e['description'] and iso(e['timestamp']) == utc(2026, 9, 1, 10, 2) for e in ev)
+          and sorted(iso(e['timestamp']) for e in ev if e['type'] == 'BROWSER_RECOVERED') == sorted([w for _, _, w, _ in CHROME_DELETED] + [FIREFOX_DELETED[2]])
+          and any(e['type'] == 'BROWSER_LOGIN' and 'filetransfer.example.net' in e['description'] for e in ev), [e['description'] for e in ev])
+    check('another investigator gets 404 for the new kinds', get(f'/api/forensics/browser?case_id={A}&kind=BROWSER_RECOVERED', C['INV2']).status == 404)
+
+
+@section('12p Real mailboxes, chat and browser databases (Plaso samples on a disk: the PST vs pffexport, the rest vs sqlite3)')
+def t_comms_samples():
+    if not C.get('SAMPLES_EV'):
+        note('real-sample disk', 'section 12j did not upload the samples disk')
+        return
+    inv, ev = C['INVESTIGATOR'], C['SAMPLES_EV']
+    j = _analyse(inv, ev, {'modules': ['email', 'browser_depth', 'chat_cloud']})
+    counts = j.get('result', {}).get('summary', {}).get('counts', {})
+    check('the modules read the real files on the samples disk', j['status'] == 'COMPLETED' and counts.get('email_messages') == 543, counts)
+    db = mongo()
+    pst = SAMPLES / 'plaso' / 'nromanoff@stark-research-labs.com.pst'
+    out = Path(tempfile.mkdtemp()) / 'pst'
+    sh('pffexport', '-q', '-f', 'text', '-t', str(out), str(pst))
+    top = out.with_name('pst.export') / 'Top of Outlook data file'
+    item = re.compile(r'^(Message|Contact|Appointment|Meeting|Task|Note|Activity|Distribution list)\d{5}$')
+    truth = {}
+    for d in top.rglob('*'):
+        if d.is_dir() and item.match(d.name):
+            folder = d.parent.relative_to(top).as_posix()
+            truth[folder] = truth.get(folder, 0) + 1
+    store = db.forensic_artifacts.find_one({'evidence_id': ev, 'type': 'EMAIL_STORE'}) or {}
+    ours = {f['name']: f['messages'] for f in store.get('folders', [])}
+    check(f'PST: every folder holds the items pffexport exports ({sum(truth.values())} in all), and the store\'s SHA-256 is the sample\'s',
+          ours == truth and store.get('messages') == 543 and store.get('sha256') == file_sha256(pst) and store.get('format') == 'PST', (ours, truth))
+    msgs = list(db.email_messages.find({'evidence_id': ev, 'folder': 'Inbox'}, {'subject': 1, 'received': 1, 'number': 1}))
+    want = []
+    for d in sorted((top / 'Inbox').iterdir()):
+        if d.is_dir() and d.name.startswith('Message'):
+            hdr = (d / 'OutlookHeaders.txt').read_text('utf-8', 'replace')
+            subj = re.search(r'^Subject:\t+(.*)$', hdr, re.M)
+            deliv = re.search(r'^Delivery time:\t+(.*) UTC$', hdr, re.M)
+            want.append((subj.group(1) if subj else None,
+                         datetime.strptime(deliv.group(1).split('.')[0], '%b %d, %Y %H:%M:%S').replace(tzinfo=timezone.utc) if deliv else None))
+    got = [(m.get('subject'), m.get('received').replace(microsecond=0) if m.get('received') else None) for m in sorted(msgs, key=lambda m: m['number'])]
+    check(f'PST Inbox: the {len(want)} messages in order, with the subject and delivery time pffexport gives',
+          got == want and len(want) == 527, [x for x in zip(got, want) if x[0] != x[1]][:3])
+    atts = list((top).rglob('Attachments/*'))
+    members = list(db.fs_entries.find({'evidence_id': ev, 'container.kind': 'email'}, {'name': 1, 'sha256': 1}))
+    check(f'PST attachments: the {len(atts)} files pffexport writes, byte for byte (by SHA-256), as file-index members',
+          sorted(file_sha256(a) for a in atts) == sorted(m['sha256'] for m in members) and len(atts) == 6
+          and {m['name'] for m in members} == {a.name.split('_', 1)[1] for a in atts}, (len(atts), len(members)))
+    sky = SAMPLES / 'plaso' / 'sqlite' / 'skype_main.db'
+    con = sqlite3.connect(f'file:{sky}?mode=ro&immutable=1', uri=True)
+    n = {t: con.execute(f'SELECT count(*) FROM {t}').fetchone()[0] for t in ('Messages', 'Calls', 'Transfers', 'Contacts', 'Accounts')}
+    times = sorted(datetime.fromtimestamp(t, tz=timezone.utc) for (t,) in con.execute('SELECT timestamp FROM Messages'))
+    files = sorted(f for (f,) in con.execute('SELECT filename FROM Transfers'))
+    con.close()
+    of = lambda t: list(db.forensic_artifacts.find({'evidence_id': ev, 'type': t}))
+    check(f'Skype (Plaso\'s main.db): {n["Messages"]} messages, {n["Calls"]} call, {n["Transfers"]} transfers, {n["Contacts"]} contacts as sqlite3 counts, at the same times',
+          (len(of('CHAT_MESSAGE')), len(of('CHAT_CALL')), len(of('CHAT_FILE_TRANSFER')), len(of('CHAT_CONTACT')), len(of('CHAT_ACCOUNT')))
+          == (n['Messages'], n['Calls'], n['Transfers'], n['Contacts'], n['Accounts'])
+          and sorted(m['time'] for m in of('CHAT_MESSAGE')) == times and sorted(t['file_name'] for t in of('CHAT_FILE_TRANSFER')) == files, n)
+    hist = SAMPLES / 'plaso' / 'chrome' / 'History'
+    con = sqlite3.connect(f'file:{hist}?mode=ro&immutable=1', uri=True)
+    kst = sorted((t, (datetime(1601, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=v)).replace(microsecond=0)) for t, v in con.execute(
+        'SELECT k.term, u.last_visit_time FROM keyword_search_terms k JOIN urls u ON u.id = k.url_id'))
+    con.close()
+    srch = sorted((s['term'], s['time'].replace(microsecond=0)) for s in of('BROWSER_SEARCH') if s['source_table'] == 'keyword_search_terms')
+    check('Chrome (an older History): the search terms sqlite3 reads (funny cats...), with the time of their visit',
+          srch == kst and len(kst) == 3 and 'funny cats' in {t for t, _ in kst}, (srch, kst))
+    wd = SAMPLES / 'plaso' / 'chrome' / 'Web Data'
+    con = sqlite3.connect(f'file:{wd}?mode=ro&immutable=1', uri=True)
+    fill = sorted(con.execute('SELECT name, value, count FROM autofill').fetchall())
+    con.close()
+    check('Chrome Web Data: the form entries sqlite3 reads', sorted((a['field'], a['value'], a['times_used']) for a in of('BROWSER_AUTOFILL')) == fill and len(fill) == 3,
+          fill)
+    ck = SAMPLES / 'plaso' / 'chrome' / 'Cookies-68.0.3440.106'
+    con = sqlite3.connect(f'file:{ck}?mode=ro&immutable=1', uri=True)
+    cks = sorted(con.execute('SELECT host_key, name FROM cookies').fetchall())
+    con.close()
+    check('Chrome 68 cookies: the 5 cookies sqlite3 reads', sorted((c['host'], c['name']) for c in of('BROWSER_COOKIE')) == cks and len(cks) == 5, cks)
+    pl = SAMPLES / 'plaso' / 'firefox' / 'places.sqlite'
+    con = sqlite3.connect(f'file:{pl}?mode=ro&immutable=1', uri=True)
+    nb = con.execute('SELECT count(*) FROM moz_bookmarks b JOIN moz_places p ON p.id = b.fk WHERE b.type = 1').fetchone()[0]
+    live = {u for (u,) in con.execute('SELECT url FROM moz_places')}
+    con.close()
+    check(f'Firefox: the {nb} bookmarks sqlite3 joins to their places', len([b for b in of('BROWSER_BOOKMARK') if b['browser'] == 'Firefox']) == nb > 0, nb)
+    rec = of('BROWSER_RECOVERED')
+    sample_files = {'Default/History': hist, 'Profile 1/History': SAMPLES / 'plaso' / 'chrome' / 'History-59.0.3071.86',
+                    'plaso.default/places.sqlite': pl}
+
+    def live_urls(f):
+        con = sqlite3.connect(f'file:{f}?mode=ro&immutable=1', uri=True)
+        urls_ = {u for (u,) in con.execute(f"SELECT url FROM {'moz_places' if f.name.endswith('places.sqlite') else 'urls'}")}
+        con.close()
+        return urls_
+    bad = []
+    for r in rec:
+        f = next((v for k, v in sample_files.items() if r['source_path'].endswith(k)), None)
+        if not f or r['file'] != 'database' or f.read_bytes().find(r['url'].encode()) < 0 or r['url'] in live_urls(f):
+            bad.append((r['source_path'], r['url']))
+    check(f'deleted rows found in the real samples ({len(rec)}): each is in the bytes of its file and is not a live row', not bad, bad[:5])
+    note('recovered rows in real samples', [(r['browser'], r['url'][:80], r['recovered_from']) for r in rec][:10])
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -2683,7 +3067,7 @@ def t_tags():
     check("an item cannot be tagged under a different case (404)",
           post('/api/tags', inv, {'case_id': C['B'], 'item_type': 'USB', 'item_id': sandisk['_id']}).status == 404)
     check('an unknown label or item type is refused (400)', tag({'item_type': 'FILE', 'item_id': C['PAY']['_id'], 'label': 'HOT'}).status == 400
-          and tag({'item_type': 'EMAIL', 'item_id': C['PAY']['_id']}).status == 400)
+          and tag({'item_type': 'MAILBOX', 'item_id': C['PAY']['_id']}).status == 400)
     tid = made['BROWSER'].json['tag_id']
     p = patch(f'/api/tags/{tid}', inv, {'label': 'FOLLOW_UP', 'note': '  Check who uploaded what  '})
     check('a tag\'s label and note can be changed (note trimmed)', p.status == 200 and p.json['label'] == 'FOLLOW_UP' and p.json['note'] == 'Check who uploaded what', p)
@@ -3065,7 +3449,23 @@ def t_overview():
         'notable_files': q(f'/api/forensics/flagged?case_id={A}&kind=notable&limit=1')['total'],
         'found_data': q(f'/api/forensics/entities?case_id={A}&limit=1')['total'],
         'archive_members': q(f'/api/forensics/evidence/{E}/files?members=true&limit=1')['total'],
+        'browser_searches': q(f'/api/forensics/browser?case_id={A}&kind=BROWSER_SEARCH&limit=1')['total'],
+        'browser_cookies': q(f'/api/forensics/browser?case_id={A}&kind=BROWSER_COOKIE&limit=1')['total'],
+        'browser_bookmarks': q(f'/api/forensics/browser?case_id={A}&kind=BROWSER_BOOKMARK&limit=1')['total'],
+        'browser_autofill': q(f'/api/forensics/browser?case_id={A}&kind=BROWSER_AUTOFILL&limit=1')['total'],
+        'browser_logins': q(f'/api/forensics/browser?case_id={A}&kind=BROWSER_LOGIN&limit=1')['total'],
+        'browser_recovered': q(f'/api/forensics/browser?case_id={A}&kind=BROWSER_RECOVERED&limit=1')['total'],
+        'email_stores': len(q(f'/api/forensics/email/stores?case_id={A}')['data']),
+        'email_messages': q(f'/api/forensics/email/messages?case_id={A}&limit=1')['total'],
+        'chat_messages': q(f'/api/forensics/chat-cloud?case_id={A}&type=CHAT_MESSAGE&limit=1')['total'],
+        'chat_calls': q(f'/api/forensics/chat-cloud?case_id={A}&type=CHAT_CALL&limit=1')['total'],
+        'chat_file_transfers': q(f'/api/forensics/chat-cloud?case_id={A}&type=CHAT_FILE_TRANSFER&limit=1')['total'],
+        'chat_contacts': q(f'/api/forensics/chat-cloud?case_id={A}&type=CHAT_CONTACT&limit=1')['total'],
+        'chat_apps': q(f'/api/forensics/chat-cloud?case_id={A}&type=CHAT_APP&limit=1')['total'],
+        'cloud_accounts': q(f'/api/forensics/chat-cloud?case_id={A}&type=CLOUD_ACCOUNT&limit=1')['total'],
+        'cloud_files': q(f'/api/forensics/chat-cloud?case_id={A}&type=CLOUD_FILE&files_only=true&limit=1')['total'],
     }
+    check('email attachments are counted', c.get('email_attachments') == 1, c.get('email_attachments'))
     diff = {k: (c.get(k), v) for k, v in exp.items() if c.get(k) != v}
     check('every overview count equals the matching list', not diff, diff)
     check('overview lists recent jobs', len(o['jobs']) >= 1)
@@ -3073,7 +3473,7 @@ def t_overview():
 
 ACTIVITY_EVENT_TYPES = ('BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY,PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN,'
                         'PROGRAM_RUN_USERASSIST,PROGRAM_RUN_BAM,FOLDER_BROWSED,EXPLORER_SEARCH,TYPED_PATH,RECENT_DOC_OPENED,RUN_DIALOG,RDP_CONNECTION,'
-                        'LOGON,LOGOFF,JUMPLIST_OPENED,TIMELINE_ACTIVITY,FILE_DOWNLOADED')
+                        'LOGON,LOGOFF,JUMPLIST_OPENED,TIMELINE_ACTIVITY,FILE_DOWNLOADED,BROWSER_SEARCH,EMAIL_SENT,CHAT_CALL,CHAT_FILE_TRANSFER')
 
 
 @section('28b Activity dashboard')
@@ -3201,9 +3601,9 @@ def t_delete():
     post('/api/findings', inv, {'case_id': case, 'title': 'Linked to the deleted image', 'description': 'x', 'evidence_ids': [eid]})
     tagged = post('/api/tags', inv, {'case_id': case, 'item_type': 'FILE', 'item_id': pay['_id'], 'note': 'on the image to delete'})
     rep = post(f'/api/reports?case_id={case}', inv).json
-    results = ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts', 'entities')
+    results = ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts', 'entities', 'email_messages')
     before = {c: db[c].count_documents({'evidence_id': eid}) for c in results}
-    stored = [p for p in glob.glob(f'/app/storage/analysis/*/{eid}') if os.path.isdir(p)]
+    stored = [p for p in glob.glob(f'/app/storage/analysis/*/{eid}') + glob.glob(f'/app/storage/analysis/members/mail/{eid}') if os.path.isdir(p)]
     text_index = Path(f'/app/storage/analysis/text/{eid}.sqlite')
     indexed = text_index.is_file()
     check('viewer cannot delete evidence (403)', req('DELETE', path, C['VIEWER'], {'reason': 'Not allowed here'}).status == 403)
@@ -3220,8 +3620,8 @@ def t_delete():
     check('its analysis jobs are removed', db.jobs.count_documents({'payload.evidence_id': eid}) == 0)
     check('tags on its items are removed', tagged.status == 200 and r.json['removed'].get('tags') == 1
           and not get(f'/api/tags?case_id={case}', inv).json['data'], (tagged, r.json.get('removed')))
-    check('the stored image and its recovered, carved and pipeline files are removed',
-          len(stored) >= 3 and not original.exists() and not any(os.path.exists(p) for p in stored), stored)
+    check('the stored image and its recovered, carved, pipeline and email-attachment files are removed',
+          len(stored) >= 4 and any(p.endswith(f'/mail/{eid}') for p in stored) and not original.exists() and not any(os.path.exists(p) for p in stored), stored)
     check('its content index is removed', indexed and not text_index.exists(), (indexed, text_index.exists()))
     fnd = next(x for x in get(f'/api/findings?case_id={case}', inv).json['data'] if x['title'] == 'Linked to the deleted image')
     check('a finding that cited it is kept, without the link', eid not in (fnd.get('evidence_ids') or []) and r.json['findings_unlinked'] == 1, fnd)
@@ -3344,7 +3744,8 @@ def t_reg_disabled():
 PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
-             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_email, t_chat_cloud, t_browser_depth,
+             t_comms_samples, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

@@ -206,6 +206,101 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
              [[d.get('browser'), d.get('start_time'), d.get('target_path'), d.get('tab_url')] for d in downloads],
              [0.8, 1.5, 3, 3], 'No browser downloads were found.')
 
+    # Browser depth (module browser_depth).
+    art = db['forensic_artifacts']
+    bd_title = T('Browser searches, bookmarks, logins and recovered history')
+    story.append(Paragraph(escape(bd_title), H2))
+    story.append(Paragraph('Search terms come from the browsers\' own search-term tables and from search addresses in their history. '
+                           'Deleted history rows were recovered from free space in the history databases and from their write-ahead '
+                           'logs. Saved logins list the site and user name only: passwords stay encrypted and are never shown. '
+                           f'{art.count_documents({"case_id": cid, "type": "BROWSER_COOKIE"}):,} cookies were read (listed in DFIP, not here).', NOTE))
+    n = bd_title.split('.')[0]
+    q = {'case_id': cid, 'type': 'BROWSER_SEARCH'}
+    _section(story, f'{n}.1 Searches', ['Time', 'Browser', 'User', 'Engine', 'Search term', 'Source'],
+             [[s.get('time'), s.get('browser'), s.get('user'), s.get('engine'), s.get('term'),
+               ('recovered: ' if s.get('recovered') else '') + (s.get('source_table') or '')] for s in art.find(q).sort('time', -1).limit(MAX_ROWS)],
+             [1.3, 0.7, 0.6, 0.8, 2.6, 1.3], 'No browser searches were found.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'BROWSER_RECOVERED'}
+    _section(story, f'{n}.2 Deleted history entries (recovered)', ['Last visit', 'Browser', 'Address', 'Title', 'Found in'],
+             [[r.get('last_visit_time'), r.get('browser'), r.get('url'), r.get('title'),
+               f'WAL frame {r["wal_frame"]}' if r.get('wal_frame') else f'{r.get("recovered_from")}, page {r.get("page")}']
+              for r in art.find(q).sort('last_visit_time', -1).limit(MAX_ROWS)],
+             [1.3, 0.7, 2.8, 1.8, 1.3], 'No deleted history rows were found in the browser databases.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'BROWSER_BOOKMARK'}
+    _section(story, f'{n}.3 Bookmarks', ['Added', 'Browser', 'Folder', 'Title', 'Address'],
+             [[b.get('added'), b.get('browser'), b.get('folder'), b.get('title'), b.get('url')] for b in art.find(q).sort('added', -1).limit(MAX_ROWS)],
+             [1.3, 0.7, 1.2, 1.8, 2.8], 'No bookmarks were found.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'BROWSER_LOGIN'}
+    _section(story, f'{n}.4 Saved logins (passwords are not shown)', ['Browser', 'Site', 'User name', 'Saved', 'Last used', 'Uses'],
+             [[x.get('browser'), x.get('site'), x.get('username') or ('(encrypted)' if x.get('username_encrypted') else None),
+               x.get('created'), x.get('last_used'), x.get('times_used')] for x in art.find(q).sort('created', -1).limit(MAX_ROWS)],
+             [0.7, 2.4, 1.8, 1.3, 1.3, 0.5], 'No saved logins were found.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'BROWSER_AUTOFILL'}
+    _section(story, f'{n}.5 Form history (autofill)', ['Browser', 'Field', 'Value', 'Uses', 'First used', 'Last used'],
+             [[x.get('browser'), x.get('field'), x.get('value'), x.get('times_used'), x.get('first_used'), x.get('last_used')]
+              for x in art.find(q).sort('last_used', -1).limit(MAX_ROWS)],
+             [0.7, 1.3, 2.4, 0.5, 1.3, 1.3], 'No form history was found.', total=art.count_documents(q), heading=H3)
+
+    # Email (module email).
+    mail_title = T('Email')
+    story.append(Paragraph(escape(mail_title), H2))
+    story.append(Paragraph('Mailboxes read from Outlook PST/OST files, MBOX files, Thunderbird folders and single message files. '
+                           'Attachments were extracted, hashed and checked like other files. Thunderbird keeps messages deleted by '
+                           'the user in its folder files until they are compacted; they are marked deleted.', NOTE))
+    n = mail_title.split('.')[0]
+    q = {'case_id': cid, 'type': 'EMAIL_STORE'}
+    _section(story, f'{n}.1 Mailboxes', ['Mailbox', 'Format', 'User', 'Messages', 'Attachments', 'Deleted', 'SHA-256'],
+             [[s.get('path'), s.get('client') or s.get('format'), s.get('user'), s.get('messages'), s.get('attachments'), s.get('deleted_messages'),
+               s.get('sha256')] for s in art.find(q).sort('path', 1).limit(MAX_ROWS)],
+             [2.3, 0.95, 0.55, 0.85, 1.0, 0.75, 1.9], 'No mailboxes were found.', mono_cols=(6,), total=art.count_documents(q), heading=H3)
+    mq = {'case_id': cid, '$or': [{'direction': 'sent'}, {'attachment_count': {'$gt': 0}}, {'deleted': True}]}
+    em = db['email_messages']
+    _section(story, f'{n}.2 Messages sent, deleted or with attachments', ['Time', 'Folder', 'From', 'To', 'Subject', 'Attachments'],
+             [[m.get('time'), m.get('folder') + (' (deleted)' if m.get('deleted') else ''), m.get('from_address') or m.get('from_name'),
+               ', '.join(x.get('address') or x.get('name') or '' for x in (m.get('to') or [])[:5]), m.get('subject'),
+               ', '.join(a.get('name') for a in m.get('attachments', []) if not a.get('inline'))]
+              for m in em.find(mq, {'body_text': 0, 'body_html': 0, 'headers': 0}).sort('time', -1).limit(MAX_ROWS)],
+             [1.3, 1.5, 1.4, 1.5, 1.3, 1.3], 'No messages were sent, deleted or carry attachments.', total=em.count_documents(mq), heading=H3)
+
+    # Chat and cloud storage (module chat_cloud).
+    cc_title = T('Chat and cloud storage')
+    story.append(Paragraph(escape(cc_title), H2))
+    story.append(Paragraph('Skype (classic) databases are read in full. Teams, WhatsApp, Telegram, Signal and other chat apps keep their '
+                           'messages encrypted or in browser caches: they are listed with where their data is, not read. OneDrive '
+                           'and Google Drive keep a list of every synced file; Dropbox shows its account and folder only.', NOTE))
+    n = cc_title.split('.')[0]
+    q = {'case_id': cid, 'type': 'CHAT_APP'}
+    _section(story, f'{n}.1 Chat apps', ['App', 'User', 'Read', 'Files', 'Last change', 'Folder'],
+             [[a.get('app'), a.get('user'), 'yes' if a.get('parsed') else (a.get('reason') or 'no'), a.get('files') if a.get('files') is not None else a.get('messages'),
+               a.get('last_change'), a.get('path')] for a in art.find(q).sort([('app', 1), ('user', 1)]).limit(MAX_ROWS)],
+             [1.2, 0.6, 2.3, 0.5, 1.3, 2.3], 'No chat applications were found.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': {'$in': ['CHAT_MESSAGE', 'CHAT_CALL', 'CHAT_FILE_TRANSFER']}}
+    rows_ = []
+    for x in art.find(q).sort([('time', 1), ('started', 1)]).limit(MAX_ROWS):
+        if x['type'] == 'CHAT_MESSAGE':
+            rows_.append([x.get('time'), x.get('app'), x.get('conversation'), x.get('author_name') or x.get('author'), x.get('text')])
+        elif x['type'] == 'CHAT_CALL':
+            rows_.append([x.get('time'), x.get('app'), ', '.join(x.get('members') or []) or x.get('host'), 'call',
+                          f'{"incoming" if x.get("incoming") else "outgoing"}, {x.get("duration_seconds")} s'])
+        else:
+            rows_.append([x.get('started'), x.get('app'), x.get('partner_name') or x.get('partner'), f'file {x.get("direction")}',
+                          f'{x.get("file_name")} ({x.get("status")})'])
+    _section(story, f'{n}.2 Messages, calls and file transfers', ['Time', 'App', 'Conversation / with', 'From', 'Text or detail'],
+             rows_, [1.3, 0.6, 1.5, 1.2, 3.4], 'No chat messages, calls or file transfers were read.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'CLOUD_ACCOUNT'}
+    _section(story, f'{n}.3 Cloud storage accounts', ['Provider', 'Account', 'User', 'Synced folder', 'Files'],
+             [[a.get('provider'), a.get('account'), a.get('user'), a.get('sync_folder'), a.get('files')]
+              for a in art.find(q).sort([('provider', 1), ('account', 1)]).limit(MAX_ROWS)],
+             [1, 1, 0.8, 2.8, 0.6], 'No cloud storage clients were found.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'CLOUD_FILE', 'is_folder': False}
+    _section(story, f'{n}.4 Cloud storage files', ['Provider', 'File', 'Size', 'Changed', 'Hash', 'Same content on this evidence'],
+             [[f.get('provider'), f.get('path'), f.get('size'), f.get('modified'),
+               f'{f.get("hash_algorithm")} {f.get("hash")}' if f.get('hash') else None,
+               ', '.join(x['path'] + (' (deleted)' if x.get('deleted') else '') for x in (f.get('same_content') or [])[:5]) or None]
+              for f in art.find(q).sort('modified', -1).limit(MAX_ROWS)],
+             [0.8, 2.0, 0.6, 1.3, 1.6, 2.1], 'No synced files were listed by a cloud storage client.', mono_cols=(4,),
+             total=art.count_documents(q), heading=H3)
+
     art = db['forensic_artifacts']
     activity_title = T('Windows activity')
     story.append(Paragraph(escape(activity_title), H2))
@@ -432,7 +527,8 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     tagged = sorted(db['tags'].find({'case_id': cid}), key=lambda t: (tag_order.get(t.get('label'), 9), str((t.get('snapshot') or {}).get('timestamp') or '')))
     item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
                  'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file', 'ENTITY': 'Found data',
-                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity', 'USN': 'USN journal record'}
+                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity', 'USN': 'USN journal record',
+                 'EMAIL': 'Email', 'CHAT_CLOUD': 'Chat or cloud storage record'}
     _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
              [[(t.get('label') or '').replace('_', ' ').capitalize(),
                f'{(t.get("snapshot") or {}).get("title")}' + ('' if resolve(db, t) is not None else ' (not in the latest analysis)'),

@@ -333,7 +333,7 @@ def delete(eid, body: DeleteEvidence, u=Depends(require_write('EVIDENCE_DELETE')
     q = {'evidence_id': eid}
     counts = {col: db[col].delete_many(q).deleted_count
               for col in ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts', 'entities', 'event_records',
-                          'usn_records')}
+                          'usn_records', 'email_messages')}
     counts['jobs'] = db['jobs'].delete_many({'payload.evidence_id': eid}).deleted_count
     counts['tags'] = db['tags'].delete_many({'evidence_id': eid}).deleted_count
     for col in ('analysis_facts', 'pipeline_warnings'):  # module bookkeeping, not counted as results
@@ -348,7 +348,7 @@ def delete(eid, body: DeleteEvidence, u=Depends(require_write('EVIDENCE_DELETE')
         _remove(Path(x['storage_path']), storage, removed, problems)
     for p in (analysis / 'working').glob(f'{eid}.*'):
         _remove(p, storage, removed, problems)
-    for area in ('recovered', 'carved', 'pipeline', 'members', 'thumbs'):
+    for area in ('recovered', 'carved', 'pipeline', 'members', 'members/mail', 'thumbs'):
         _remove(analysis / area / eid, storage, removed, problems)
     for p in (analysis / 'text').glob(f'{eid}.*'):  # the content index (and an unfinished rebuild)
         _remove(p, storage, removed, problems)

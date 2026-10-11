@@ -45,3 +45,5 @@ libolecf-python==20260526
 # NTFS internals ($MFT, alternate data streams, USN journal), and QCOW images for the tests' samples, libyal
 libfsntfs-python==20260827
 libqcow-python==20260703
+# Outlook PST/OST mailboxes (libyal)
+libpff-python==20260926

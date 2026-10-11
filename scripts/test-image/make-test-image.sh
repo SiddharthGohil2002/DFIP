@@ -52,6 +52,26 @@ stamp '2026-09-01 09:41:02' 'Users/alice/Documents/payroll-export.csv'
 stamp '2026-09-01 10:06:30' 'Users/alice/Downloads/cleanup.ps1'
 stamp '2026-09-01 10:20:15' 'Users/alice/AppData/Local/Google/Chrome/User Data/Default/History'
 stamp '2026-09-01 10:33:05' 'Users/alice/AppData/Roaming/Mozilla/Firefox/Profiles/k2x8.default-release/places.sqlite'
+# Browser profiles, email, chat and cloud storage (Phase 9): written when last used.
+CH='Users/alice/AppData/Local/Google/Chrome/User Data/Default'
+FF='Users/alice/AppData/Roaming/Mozilla/Firefox/Profiles/k2x8.default-release'
+TB='Users/alice/AppData/Roaming/Thunderbird/Profiles/q7w1.default-release/ImapMail/imap.corp.example'
+stamp '2026-09-01 14:21:40' "$CH/Web Data"
+stamp '2026-09-01 14:19:06' "$CH/Login Data"
+stamp '2026-09-01 10:04:41' "$CH/Bookmarks"
+stamp '2026-09-01 14:40:00' "$CH/Network/Cookies"
+stamp '2026-09-01 14:31:41' "$FF/places.sqlite-wal"
+stamp '2026-09-01 14:30:58' "$FF/formhistory.sqlite"
+stamp '2026-09-01 14:31:30' "$FF/logins.json"
+stamp '2026-09-01 13:35:14' "$TB/INBOX"
+stamp '2026-09-01 13:35:14' "$TB/INBOX.msf"
+stamp '2026-09-01 14:41:07' "$TB/Sent"
+stamp '2026-09-01 14:41:07' "$TB/Sent.msf"
+stamp '2025-03-12 18:27:34' 'Users/alice/AppData/Roaming/Skype/alice.example/main.db'
+stamp '2026-09-01 14:26:12' 'Users/alice/AppData/Local/Microsoft/OneDrive/settings/Personal/SyncEngineDatabase.db'
+stamp '2025-06-02 09:00:00' 'Users/alice/AppData/Local/Dropbox/info.json'
+find "$TREE/Users/alice/AppData/Local/Packages/5319275A.WhatsAppDesktop_cv1g1gvanyjgm" -type f -exec touch -d '2026-09-01 14:24:50 UTC' {} +
+find "$TREE/Users/alice/AppData/Roaming/Telegram Desktop" -type f -exec touch -d '2026-08-31 22:10:00 UTC' {} +
 # Windows activity (the times Windows would have written): shortcut written when the payroll export was
 # opened from E:, the $I index when it went to the Recycle Bin ($R keeps the file's own time), Prefetch ~10 s after a run.
 stamp '2026-09-01 14:14:06' 'Users/alice/AppData/Roaming/Microsoft/Windows/Recent/payroll-export.csv.lnk'

@@ -448,9 +448,10 @@ def computer(case_id:str,evidence_id:str|None=None,u=Depends(current_user)):
 @r.get('/search')
 def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
     """Keyword search across a case: file paths, timeline events, browser
-    records, USB devices, Windows activity, registry records, event log records, Jump Lists, Timeline activities, thumbnails
-    and search index entries, NTFS timestomping suspects, alternate data streams and USN journal records, findings, user
-    accounts and found data (case-insensitive substring match)."""
+    records (history, downloads, searches, cookies, bookmarks, form history, saved logins, recovered history), USB devices,
+    Windows activity, registry records, event log records, Jump Lists, Timeline activities, thumbnails and search index
+    entries, NTFS timestomping suspects, alternate data streams and USN journal records, email (subject, people, attachment
+    names, text), chat and cloud storage records, findings, user accounts and found data (case-insensitive substring match)."""
     if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
     term=q.strip()
     if len(term)<2: raise HTTPException(400,'Search term must be at least 2 characters')
@@ -460,8 +461,16 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
         'files':('fs_entries',{'evidence_id':{'$in':eids},'is_virtual':False,**({'$or':[{'path':rx},_hash_query(term)]} if _hash_query(term) else {'path':rx})},
                  [('deleted',-1),('path',1)]),
         'timeline':('timeline_events',{'case_id':case_id,'description':rx},[('timestamp',1)]),
-        'browser':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['BROWSER_HISTORY','BROWSER_DOWNLOAD']},
-                   '$or':[{'url':rx},{'title':rx},{'target_path':rx},{'tab_url':rx}]},[('timestamp',-1)]),
+        'browser':('forensic_artifacts',{'case_id':case_id,'type':{'$in':list(BROWSER_KINDS)},
+                   '$or':[{f:rx} for f in ('url','title','target_path','tab_url','term','host','site','username','field','value','folder')]},
+                   [('type',1),('timestamp',-1)]),
+        'email':('email_messages',{'case_id':case_id,'$or':[{f:rx} for f in ('subject','from_name','from_address','to.address','to.name',
+                 'cc.address','attachments.name','body_text')]},[('time',-1)]),
+        'chat':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['CHAT_MESSAGE','CHAT_CALL','CHAT_FILE_TRANSFER','CHAT_CONTACT','CHAT_ACCOUNT','CHAT_APP']},
+                '$or':[{f:rx} for f in ('text','author','author_name','conversation','file_name','partner','handle','name','display_name','app','members')]},
+                [('type',1),('time',-1)]),
+        'cloud':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['CLOUD_FILE','CLOUD_ACCOUNT']},
+                 '$or':[{f:rx} for f in ('path','name','hash','account','sync_folder','web_url')]},[('type',1),('path',1)]),
         'usb':('usb_artifacts',{'case_id':case_id,'$or':[{'friendly_name':rx},{'vendor':rx},{'product':rx},{'serial':rx}]},[('serial',1)]),
         'activity':('forensic_artifacts',{'case_id':case_id,'type':{'$in':list(ACTIVITY_SORT)},'$or':_activity_text(rx)},[('timestamp',-1)]),
         'findings':('findings',{'case_id':case_id,'$or':[{'title':rx},{'description':rx}]},[('created_at',-1)]),
@@ -482,22 +491,35 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
     results,totals={},{}
     for key,(col,query,sort) in queries.items():
         totals[key]=db[col].count_documents(query)
-        projection={'xml':0,'text':0} if key=='eventlogs' else {'occurrences':0}
+        projection={'xml':0,'text':0} if key=='eventlogs' else {'body_text':0,'body_html':0,'headers':0} if key=='email' else {'occurrences':0}
         results[key]=[serial(dict(x,_id=str(x['_id']))) for x in db[col].find(query,projection).sort(sort).limit(limit)]
     for x in results['found']:
         if x.get('sensitive'): x.pop('value',None)
     return {'query':term,'results':results,'totals':totals}
 
+# Browser record kinds: the field they are sorted on (newest first) and the fields a search looks in.
+BROWSER_KINDS={'BROWSER_HISTORY':('last_visit_time',('url','title','target_path','tab_url')),
+               'BROWSER_DOWNLOAD':('start_time',('url','title','target_path','tab_url')),
+               'BROWSER_COOKIE':('created',('host','name','path')),'BROWSER_SEARCH':('time',('term','url','engine')),
+               'BROWSER_BOOKMARK':('added',('title','url','folder')),'BROWSER_AUTOFILL':('last_used',('field','value')),
+               'BROWSER_LOGIN':('created',('site','username','action_url')),'BROWSER_RECOVERED':('last_visit_time',('url','title'))}
+
 @r.get('/browser')
-def browser(case_id:str,evidence_id:str|None=None,kind:str='BROWSER_HISTORY',browser:str|None=None,search:str|None=None,skip:int=0,limit:int=500,u=Depends(current_user)):
+def browser(case_id:str,evidence_id:str|None=None,kind:str='BROWSER_HISTORY',browser:str|None=None,search:str|None=None,
+            recovered:bool|None=None,user:str|None=None,skip:int=0,limit:int=500,u=Depends(current_user)):
+    """Browser records of one kind: BROWSER_HISTORY, BROWSER_DOWNLOAD, BROWSER_COOKIE, BROWSER_SEARCH, BROWSER_BOOKMARK,
+    BROWSER_AUTOFILL, BROWSER_LOGIN (never a password) or BROWSER_RECOVERED (deleted history rows). recovered=true lists only
+    searches recovered from deleted history rows."""
     if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
-    if kind not in {'BROWSER_HISTORY','BROWSER_DOWNLOAD','BROWSER_COOKIE'}: raise HTTPException(400,'Invalid kind')
+    if kind not in BROWSER_KINDS: raise HTTPException(400,'Invalid kind')
     q={'case_id':case_id,'type':kind}
     if evidence_id: q['evidence_id']=evidence_id
     if browser: q['browser']=browser
+    if user: q['user']=user
+    if recovered is not None: q['recovered']=True if recovered else {'$ne':True}
+    sort,fields=BROWSER_KINDS[kind]
     if search:
-        rx={'$regex':re.escape(search),'$options':'i'}; q['$or']=[{'url':rx},{'title':rx},{'target_path':rx},{'tab_url':rx}]
-    sort='start_time' if kind=='BROWSER_DOWNLOAD' else 'last_visit_time' if kind=='BROWSER_HISTORY' else 'created'
+        rx={'$regex':re.escape(search),'$options':'i'}; q['$or']=[{f:rx} for f in fields]
     col=get_db()['forensic_artifacts']
     rows=[serial(dict(x,_id=str(x['_id']))) for x in col.find(q).sort(sort,-1).skip(max(0,skip)).limit(max(1,min(limit,1000)))]
     return {'data':rows,'total':col.count_documents(q)}

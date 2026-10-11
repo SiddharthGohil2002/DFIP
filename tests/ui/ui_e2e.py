@@ -184,7 +184,8 @@ with sync_playwright() as p:
     shot(page, '07e-encrypted-files')
 
     step['v'] = 'archive contents'
-    page.get_by_role('tab', name='Archive contents').click()
+    page.get_by_role('tab', name='Archives and attachments').click()
+    expect(page.locator('main table tbody tr', has_text='Sent!/message 1/payroll-export.csv')).to_contain_text('IN EMAIL')
     nested = page.locator('main table tbody tr', has_text='export-backup.zip!/archive.7z!/q3-salaries.csv')
     expect(nested.get_by_text('IN ARCHIVE (NESTED)')).to_be_visible()
     expect(page.locator('main table tbody tr', has_text='private.zip!/payroll-export.csv').get_by_text('ENCRYPTED', exact=True)).to_be_visible()

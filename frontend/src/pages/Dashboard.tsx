@@ -16,7 +16,7 @@ interface Dashboard {
   usb_spans: UsbSpan[];
 }
 
-const GROUP_NAMES: Record<string, string> = { web: 'web', usb: 'USB', windows: 'Windows activity', logon: 'logon and logoff', files: 'filesystem', other: 'other' };
+const GROUP_NAMES: Record<string, string> = { web: 'web', usb: 'USB', windows: 'Windows activity', logon: 'logon and logoff', comms: 'email and chat', files: 'filesystem', other: 'other' };
 const MAX_DAYS = 14;
 
 export function DashboardPage() {
@@ -53,7 +53,7 @@ export function DashboardPage() {
         <>
           <Card
             title="Activity by day of the week and hour"
-            subtitle={`${data.heatmap.total.toLocaleString()} ${all ? 'events, including filesystem times' : 'user activity events: web, USB, Windows activity, logons and logoffs'} · ${zone}`}
+            subtitle={`${data.heatmap.total.toLocaleString()} ${all ? 'events, including filesystem times' : 'user activity events: web, USB, Windows activity, logons and logoffs, email sent, calls and file transfers'} · ${zone}`}
           >
             {data.heatmap.total ? <Heatmap cells={data.heatmap.cells} max={data.heatmap.max} zone={zone} /> : <Empty title="No events" />}
           </Card>

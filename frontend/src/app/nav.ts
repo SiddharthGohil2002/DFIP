@@ -1,6 +1,6 @@
 import {
-  Activity, BarChart3, Monitor, Bookmark, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen, ScanSearch,
-  ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
+  Activity, BarChart3, Monitor, Bookmark, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, Mail,
+  MessagesSquare, NotebookPen, ScanSearch, ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
 
@@ -64,8 +64,21 @@ export const NAV: NavGroup[] = [
       },
       {
         to: '/app/browser', label: 'Browser history', icon: Globe, tone: 'teal',
-        description: 'Visits and downloads from Chrome, Edge, Brave and Firefox.',
-        count: (c) => c.browser_history + c.browser_downloads, countLabel: (c) => `${n(c.browser_history)} visits · ${n(c.browser_downloads)} downloads`,
+        description: 'Visits, downloads, searches, cookies, bookmarks, form history, saved logins and deleted history from Chrome, Edge, Brave, Opera, Vivaldi and Firefox.',
+        count: (c) => c.browser_history + c.browser_downloads, alert: (c) => (c.browser_recovered ?? 0) > 0,
+        countLabel: (c) => `${n(c.browser_history)} visits · ${n(c.browser_searches ?? 0)} searches · ${n(c.browser_recovered ?? 0)} recovered`,
+      },
+      {
+        to: '/app/email', label: 'Email', icon: Mail, tone: 'teal',
+        description: 'Messages and attachments from Outlook PST/OST, MBOX, Thunderbird and EML/MSG files.',
+        count: (c) => c.email_messages ?? 0,
+        countLabel: (c) => `${n(c.email_messages ?? 0)} messages · ${n(c.email_attachments ?? 0)} attachments`,
+      },
+      {
+        to: '/app/chat-cloud', label: 'Chat and cloud', icon: MessagesSquare, tone: 'teal',
+        description: 'Skype messages, calls and file transfers, encrypted chat apps found, and files synced by OneDrive, Google Drive and Dropbox.',
+        count: (c) => (c.chat_messages ?? 0) + (c.cloud_files ?? 0),
+        countLabel: (c) => `${n(c.chat_messages ?? 0)} messages · ${n(c.chat_apps ?? 0)} apps · ${n(c.cloud_files ?? 0)} cloud files`,
       },
       {
         to: '/app/usb', label: 'USB devices', icon: Usb, tone: 'amber',

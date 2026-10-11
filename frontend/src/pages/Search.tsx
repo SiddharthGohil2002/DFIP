@@ -17,6 +17,10 @@ interface Results {
 }
 
 type Mode = 'records' | 'text' | 'regex';
+const BROWSER_TYPE: Record<string, string> = { BROWSER_HISTORY: 'Visit', BROWSER_DOWNLOAD: 'Download', BROWSER_SEARCH: 'Search', BROWSER_COOKIE: 'Cookie',
+  BROWSER_BOOKMARK: 'Bookmark', BROWSER_AUTOFILL: 'Form entry', BROWSER_LOGIN: 'Saved login', BROWSER_RECOVERED: 'Deleted visit (recovered)' };
+const CHAT_TYPE: Record<string, string> = { CHAT_MESSAGE: 'message', CHAT_CALL: 'call', CHAT_FILE_TRANSFER: 'file transfer', CHAT_CONTACT: 'contact',
+  CHAT_ACCOUNT: 'account', CHAT_APP: 'app', CLOUD_FILE: 'synced file', CLOUD_ACCOUNT: 'account' };
 const MODES: { id: Mode; label: string }[] = [
   { id: 'records', label: 'Names and records' },
   { id: 'text', label: 'File contents' },
@@ -103,7 +107,7 @@ export function SearchPage() {
     <div className="stack">
       <PageHeader
         title="Keyword search"
-        subtitle="Names and records: file paths (including deleted files), timeline, browser, USB, Windows activity, findings, user accounts and found data. File contents: the text inside documents, PDFs, text files and the strings of other files (Full analysis). Every content search is recorded in the audit log."
+        subtitle="Names and records: file paths (including deleted files), timeline, browser, email, chat and cloud storage, USB, Windows activity, findings, user accounts and found data. File contents: the text inside documents, PDFs, text files and the strings of other files (Full analysis). Every content search is recorded in the audit log."
       />
       <Card flush>
         <Tabs<Mode> value={mode} onChange={switchMode} tabs={MODES} />
@@ -144,8 +148,30 @@ export function SearchPage() {
             {res.results.browser.map((b) => (
               <tr key={b._id}>
                 <td className="small">{b.browser}</td>
-                <td className="small">{b.type === 'BROWSER_DOWNLOAD' ? 'Download' : 'Visit'}</td>
-                <td className="cell-path small mono" colSpan={2}>{b.type === 'BROWSER_DOWNLOAD' ? `${b.target_path} ← ${b.tab_url}` : `${b.url}${b.title ? ` — ${b.title}` : ''}`}</td>
+                <td className="small">{BROWSER_TYPE[b.type] || 'Visit'}</td>
+                <td className="cell-path small mono" colSpan={2}>{b.type === 'BROWSER_DOWNLOAD' ? `${b.target_path} ← ${b.tab_url}`
+                  : b.type === 'BROWSER_SEARCH' ? b.term : b.type === 'BROWSER_COOKIE' ? `${b.host} ${b.name}` : b.type === 'BROWSER_LOGIN' ? `${b.site}${b.username ? ` as ${b.username}` : ''}`
+                  : b.type === 'BROWSER_AUTOFILL' ? `${b.field} = ${b.value}` : `${b.url}${b.title ? ` — ${b.title}` : ''}`}</td>
+              </tr>
+            ))}
+          </Group>
+          <Group title="Email" total={res.totals.email ?? 0} shown={(res.results.email || []).length} link={{ to: '/app/email', label: 'Open email' }}>
+            {(res.results.email || []).map((m) => (
+              <tr key={m._id}>
+                <td className="small strong">{m.subject || '(no subject)'}</td>
+                <td className="mono small nowrap">{time(m.time)}</td>
+                <td className="small" colSpan={2}>{m.from_address || m.from_name} → {(m.to || []).map((x: any) => x.address || x.name).join(', ')}
+                  {m.attachment_count > 0 && <span className="muted"> · {m.attachment_count} attachment(s)</span>}</td>
+              </tr>
+            ))}
+          </Group>
+          <Group title="Chat and cloud storage" total={(res.totals.chat ?? 0) + (res.totals.cloud ?? 0)}
+            shown={(res.results.chat || []).length + (res.results.cloud || []).length} link={{ to: '/app/chat-cloud', label: 'Open chat and cloud' }}>
+            {[...(res.results.chat || []), ...(res.results.cloud || [])].map((x) => (
+              <tr key={x._id}>
+                <td className="small nowrap">{(x.app || x.provider)} · {CHAT_TYPE[x.type] || x.type}</td>
+                <td className="mono small nowrap">{time(x.time || x.started || x.modified || x.last_change)}</td>
+                <td className="cell-path small" colSpan={2}>{x.text || x.file_name || x.path || x.handle || x.app}</td>
               </tr>
             ))}
           </Group>
