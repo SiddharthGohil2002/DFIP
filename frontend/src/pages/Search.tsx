@@ -7,7 +7,7 @@ import { api, post } from '../lib/api';
 import { formatBytes, formatNumber, useTime } from '../lib/format';
 import { TagButton } from '../lib/tags';
 import type { ContentHit, ContentResults } from '../lib/types';
-import { ViewButton } from '../ui/FileViewer';
+import { ViewButton, locate } from '../ui/FileViewer';
 import { Badge, Banner, Button, Card, Empty, PageHeader, Pager, Tabs, useToast } from '../ui';
 
 interface Results {
@@ -30,6 +30,7 @@ const PLACEHOLDER: Record<Mode, string> = {
 };
 const METHOD: Record<ContentHit['method'], string> = {
   text: 'text file', strings: 'strings', pdf: 'PDF text', ooxml: 'Office document', odf: 'OpenDocument', rtf: 'RTF',
+  sqlite: 'database values', unallocated: 'unallocated space',
 };
 const LIMIT = 50;
 
@@ -229,29 +230,30 @@ function ContentResultsView({ r, skip, onPage }: { r: ContentResults; skip: numb
       </p>
       {!r.complete && <Banner tone="warn">The search stopped at its time limit or result limit, so more files may match. Use a longer or more specific term.</Banner>}
       {!r.files.length && r.not_indexed.length < 1 && <Card><Empty title="No matches" text="No indexed file contains this text." /></Card>}
-      {r.files.map((h) => (
+      {r.files.map((h) => { const src = locate(h); return (
         <Card key={`${h.evidence_id}:${h.volume_id}:${h.inode}:${h.path}`} flush>
           <div className="row" style={{ padding: '12px 14px', justifyContent: 'space-between', borderBottom: '1px solid var(--border)' }}>
             <div className="stack" style={{ gap: 4, minWidth: 0 }}>
               <span className="mono small strong" style={{ wordBreak: 'break-all' }}>{h.path}</span>
               <span className="row" style={{ gap: 6 }}>
                 {h.deleted && <Badge tone="danger">DELETED</Badge>}
+                {h.member && <Badge tone="accent">IN ARCHIVE</Badge>}
+                {h.unallocated && <Badge tone="warn">UNALLOCATED</Badge>}
                 <Badge>{METHOD[h.method]}{h.encoding && h.method === 'text' ? ` · ${h.encoding}` : ''}</Badge>
-                <span className="small muted">{h.evidence_id} · {formatBytes(h.size)} · {formatNumber(h.match_count)} match{h.match_count === 1 ? '' : 'es'}</span>
+                <span className="small muted">{h.evidence_id}{h.size !== null && h.size !== undefined ? ` · ${formatBytes(h.size)}` : ''} · {formatNumber(h.match_count)} match{h.match_count === 1 ? '' : 'es'}</span>
               </span>
             </div>
             <span className="row nowrap" style={{ gap: 6 }}>
               {h.entry_id && <TagButton type="FILE" id={h.entry_id} title={h.path} />}
-              {h.partition_offset !== null && <ViewButton source={{ kind: 'image', evidenceId: h.evidence_id, inode: h.inode, offset: h.partition_offset, name: h.path }} />}
+              {src && !h.unallocated && <ViewButton source={src} />}
             </span>
           </div>
           <div className="snippets" style={{ padding: '4px 14px 12px' }}>
             {h.matches.map((m) => (
               <div key={m.text_offset} className="snippet-row">
                 <span className="snippet">{m.before}<mark>{m.match}</mark>{m.after}</span>
-                {m.byte_offset !== null && h.partition_offset !== null ? (
-                  <ViewButton source={{ kind: 'image', evidenceId: h.evidence_id, inode: h.inode, offset: h.partition_offset, name: h.path }}
-                    at={{ offset: m.byte_offset, length: m.byte_length }} />
+                {m.byte_offset !== null && src ? (
+                  <ViewButton source={src} at={{ offset: m.byte_offset, length: m.byte_length }} />
                 ) : (
                   <span className="tiny muted nowrap" title="The text was taken out of the document (for example a compressed Word file), so it has no position in the file's bytes.">in extracted text</span>
                 )}
@@ -261,7 +263,7 @@ function ContentResultsView({ r, skip, onPage }: { r: ContentResults; skip: numb
             {h.truncated && <div className="tiny muted">Only the start of this file was indexed (its text is longer than the index keeps per file).</div>}
           </div>
         </Card>
-      ))}
+      ); })}
       <Pager skip={skip} limit={LIMIT} total={r.total_files} onChange={onPage} />
     </>
   );

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added — archives, embedded files and unallocated space
+- **Archive contents** (new `containers` module and Files tab): members of ZIP, 7z, RAR, tar, gzip and other archives, pictures and objects embedded in Word, Excel, PowerPoint and OpenDocument files, packages embedded in legacy Office (OLE) files and PDF attachments, two levels deep. Members are hashed, typed, matched with hash sets, scanned with YARA, searchable and scanned for found data like any file; they can be viewed and recovered (with a chain-of-custody record). Encrypted members are listed and flagged, not extracted.
+- **Archive-bomb and path safety:** members are stored under generated names; 7-Zip unpacks into an empty folder from which only regular files are taken, under a file-size limit; per-member size, expansion-ratio and per-container and per-evidence limits.
+- **Unallocated space** (new `unallocated` module): the strings in every file system's free blocks are streamed from `blkls` (never written to disk), mapped to their byte offset in the volume and indexed, so content search and found data cover deleted data whose directory entry is gone. Hits open the volume's raw bytes at the offset, highlighted.
+- Analysis modules can *follow* another module: re-running archive extraction refreshes hash sets, YARA and the content index; re-reading unallocated space refreshes found data.
+- The backend image gains 7-Zip. Test disk: `export-backup.zip` with a nested 7z, a Word document with an embedded picture and OLE package, and a PDF with an attachment.
+
 ### Added — content search and found data
 - **Search inside files** (Keyword search → File contents, or Regular expression): the text of documents, PDFs, text files, SQLite databases and the readable strings of every other file, deleted files included, in a per-evidence full-text index (new `content` module, Full profile). Case-insensitive substring search, or RE2 regular expressions; each hit shows a snippet and, where the text is stored in the file as such, **View at offset** opens the hex view at the match, highlighted. Every content search is recorded in the audit log.
 - **Found data** (new page and `found_data` module): email, web and IP addresses, phone numbers, card numbers (Luhn), IBANs (mod-97), Bitcoin and Ethereum addresses (checksums) and Aadhaar numbers (Verhoeff), with every occurrence's file and byte offset. Card and Aadhaar numbers are masked; showing one in full is audited. Found values can be tagged, are searchable by name, counted on the case desktop and listed in a new report section.

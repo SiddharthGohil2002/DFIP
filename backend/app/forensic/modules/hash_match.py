@@ -17,6 +17,7 @@ class HashMatchModule(Module):
     label = 'Hash sets'
     description = 'Compares every file hash with the imported hash sets: known-good files can be hidden, known-bad and notable files are flagged.'
     requires = ('fileproc',)
+    follows = ('containers',)  # archive members are matched too
     weight = 3
     collections = ('forensic_artifacts',)
     fields = {'fs_entries': ('hash_sets', 'hash_status')}

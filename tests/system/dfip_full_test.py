@@ -503,7 +503,9 @@ def t_analysis():
 
 
 STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'hash_match', 'yara']
-ALL_MODULES = STANDARD_MODULES + ['content', 'found_data']  # the full profile adds file contents and found data
+# The full profile adds archive members, file contents, unallocated space and found data.
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
+               'unallocated', 'found_data']
 
 
 def _ids(db, col, q):
@@ -650,7 +652,7 @@ def t_filesystem():
     check('deleted file modified time is 2026-09-01 09:41:02 UTC', iso(pay['mtime']) == utc(2026, 9, 1, 9, 41, 2), pay['mtime'])
     q = get(f'/api/forensics/evidence/{E}/files?q=PAYROLL', inv).json
     want = {e['path'] for e in C['TRUTH'] if 'payroll' in e['path'].lower() and not e['virtual']}
-    check('path filter is case-insensitive (the CSV and its Recent shortcut)', q['total'] == len(want) == 2
+    check('path filter is case-insensitive (the CSV, its Recent shortcut, q3-payroll.docx)', q['total'] == len(want) == 3
           and {d['path'] for d in q['data']} == want, (q['total'], want))
     check('regex characters in the filter are treated literally', get(f'/api/forensics/evidence/{E}/files?q=.%2A', inv).json['total'] == 0)
     check('deleted=false excludes the deleted file', all(not f['deleted'] for f in get(f'/api/forensics/evidence/{E}/files?deleted=false&limit=1000', inv).json['data']))
@@ -1210,7 +1212,7 @@ def t_fileproc():
     # The Files page filters, and finding the same content anywhere in the case.
     fl = lambda qs: get(f'/api/forensics/evidence/{E}/files?limit=1000&{qs}', inv).json
     check('files can be filtered by category, renamed and encrypted',
-          {x['path'] for x in fl('category=archive')['data']} == {'/Users/alice/Documents/private.zip'}
+          {x['path'] for x in fl('category=archive')['data']} == {'/Users/alice/Documents/private.zip', '/Users/alice/Documents/export-backup.zip'}
           and {x['path'] for x in fl('renamed=true')['data']} == set(RENAMED)
           and {x['path'] for x in fl('encrypted=true')['data']} == set(ENCRYPTED)
           and fl('encrypted=false')['total'] == fl('')['total'] - len(ENCRYPTED))
@@ -1463,7 +1465,8 @@ def t_content():
     by_kind = {}
     for x in rows:
         by_kind.setdefault(x['kind'], {})[x.get('value') or x['display']] = x
-    check('email addresses: exactly the two planted ones', set(by_kind.get('email', {})) == {'zoe.martin@example.org', 'alice.personal@example.net'}, by_kind.get('email'))
+    check('email addresses: exactly the planted ones (contacts file, Word documents)',
+          set(by_kind.get('email', {})) == {'zoe.martin@example.org', 'alice.personal@example.net', 'finance.team@example.com'}, by_kind.get('email'))
     zoe = get(f"/api/forensics/entities/{by_kind['email']['zoe.martin@example.org']['_id']}", inv).json
     occ = zoe['occurrences'][0]
     check('...each occurrence with its file and byte offset (Zoë: a 2-byte character earlier in the line)',
@@ -1493,7 +1496,7 @@ def t_content():
     kinds = fd()['kinds']
     check('the count per kind matches the rows', all(kinds[k] == len(by_kind.get(k, {})) for k in kinds), (kinds, {k: len(v) for k, v in by_kind.items()}))
     check('found data can be filtered by kind and searched by what is shown (not by a masked full number)',
-          fd('&kind=email')['total'] == 2 and fd('&q=1111')['total'] >= 1 and fd('&q=4111111111111111')['total'] == 0)
+          fd('&kind=email')['total'] == 3 and fd('&q=1111')['total'] >= 1 and fd('&q=4111111111111111')['total'] == 0)
     s = get(f'/api/forensics/search?case_id={A}&q=zoe.martin', inv).json
     check('keyword search finds found data', s['totals'].get('found') == 1, s['totals'])
     check('another investigator gets 404 for the list and a value',
@@ -1508,6 +1511,141 @@ def t_content():
     ov = get(f'/api/cases/{A}/overview', inv).json['counts']
     check('the overview counts found data', ov.get('found_data') == len(rows), (ov.get('found_data'), len(rows)))
     C['CONTENT_INDEXED'] = True
+
+
+EXPORT_ZIP = '/Users/alice/Documents/export-backup.zip'
+Q3_DOCX = '/Users/alice/Documents/q3-payroll.docx'
+STATEMENT_PDF = '/Users/alice/Documents/statement.pdf'
+
+
+def _members_truth(tmp: Path) -> dict:
+    """Every member the generator embedded, read with tools independent of DFIP: {member path: SHA-256}."""
+    import io
+    import zipfile
+    import olefile
+    truth = {}
+    z = zipfile.ZipFile(io.BytesIO(icat_bytes(EXPORT_ZIP)))
+    for name in z.namelist():
+        truth[f'{EXPORT_ZIP}!/{name}'] = hashlib.sha256(z.read(name)).hexdigest()
+    (tmp / 'archive.7z').write_bytes(z.read('archive.7z'))
+    inner = sh('7z', 'x', '-so', str(tmp / 'archive.7z'), 'q3-salaries.csv').stdout
+    truth[f'{EXPORT_ZIP}!/archive.7z!/q3-salaries.csv'] = hashlib.sha256(inner).hexdigest()
+    d = zipfile.ZipFile(io.BytesIO(icat_bytes(Q3_DOCX)))
+    for name in ('word/media/image1.png', 'word/embeddings/oleObject1.bin'):
+        truth[f'{Q3_DOCX}!/{name}'] = hashlib.sha256(d.read(name)).hexdigest()
+    native = olefile.OleFileIO(io.BytesIO(d.read('word/embeddings/oleObject1.bin'))).openstream('\x01Ole10Native').read()
+    # Ole10Native: total size, flags, label, source path, two longs, temporary path, data size, data.
+    parts = native[6:].split(b'\x00', 2)
+    rest = parts[2][8:]
+    rest = rest[rest.index(b'\x00') + 1:]
+    size = struct.unpack('<I', rest[:4])[0]
+    truth[f'{Q3_DOCX}!/word/embeddings/oleObject1.bin!/payroll-summary.txt'] = hashlib.sha256(rest[4:4 + size]).hexdigest()
+    (tmp / 'statement.pdf').write_bytes(icat_bytes(STATEMENT_PDF))
+    sh('pdfdetach', '-save', '1', '-o', str(tmp / 'att.bin'), str(tmp / 'statement.pdf'))
+    truth[f'{STATEMENT_PDF}!/transfer-details.txt'] = hashlib.sha256((tmp / 'att.bin').read_bytes()).hexdigest()
+    return truth
+
+
+@section('12f Archives, embedded files and unallocated space (vs zipfile, 7-Zip, olefile, pdfdetach, istat and the raw image)')
+def t_containers():
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    db = mongo()
+    j = _analyse(inv, E, {'modules': ['containers', 'unallocated']})
+    s = (j.get('result') or {}).get('summary') or {}
+    check('the new modules run, and the modules that read their output are refreshed',
+          j.get('status') == 'COMPLETED' and s.get('plan') == ['containers', 'hash_match', 'yara', 'content', 'unallocated', 'found_data'],
+          (j.get('status'), s.get('plan'), j.get('error')))
+    members = {x['path']: x for x in db.fs_entries.find({'evidence_id': E, 'container': {'$exists': True}})}
+    with tempfile.TemporaryDirectory() as tmp:
+        truth = _members_truth(Path(tmp))
+    got = {p: m.get('sha256') for p, m in members.items() if p in truth}
+    check(f'every embedded file ({len(truth)}) is found, two levels deep, with the SHA-256 of its true content',
+          got == truth, {p: (got.get(p), h) for p, h in truth.items() if got.get(p) != h})
+    nested = members.get(f'{EXPORT_ZIP}!/archive.7z!/q3-salaries.csv', {})
+    ole = members.get(f'{Q3_DOCX}!/word/embeddings/oleObject1.bin!/payroll-summary.txt', {})
+    check('nested members record their depth and parent (a 7z inside a ZIP, a package inside an OLE object inside a Word file)',
+          nested.get('container', {}).get('depth') == 2 and nested['container']['parent'] == f'{EXPORT_ZIP}!/archive.7z'
+          and nested['container']['kind'] == '7z' and ole.get('container', {}).get('kind') == 'ole' and ole['container']['depth'] == 2,
+          (nested.get('container'), ole.get('container')))
+    enc = members.get('/Users/alice/Documents/private.zip!/payroll-export.csv', {})
+    check('the encrypted ZIP: its member is listed and flagged, not extracted',
+          enc.get('container', {}).get('encrypted') is True and not enc.get('sha256') and not enc['container'].get('store')
+          and (enc.get('encryption') or {}).get('kind') == 'ZIP' and enc.get('size') == len(PAYROLL), enc)
+    unexpected = sorted(set(members) - set(truth) - {enc.get('path')})
+    check('no other member is reported (Word and OpenDocument XML parts are not members; plain PDFs have no attachments)', not unexpected, unexpected)
+    zipdoc = db.fs_entries.find_one({'evidence_id': E, 'path': EXPORT_ZIP})
+    check("the container's record says what it holds", (zipdoc.get('archive') or {}).get('members') == 3 and zipdoc['archive']['extracted'] == 3,
+          zipdoc.get('archive'))
+    m_pay = members.get(f'{EXPORT_ZIP}!/payroll-export.csv', {})
+    check('a member is hashed, typed and matched with the hash sets like any file (the payroll copy is notable)',
+          m_pay.get('mime') == 'text/csv' and m_pay.get('hash_status') == 'NOTABLE'
+          and members.get(f'{Q3_DOCX}!/word/media/image1.png', {}).get('file_category') == 'image', (m_pay.get('mime'), m_pay.get('hash_status')))
+    fl = lambda qs: get(f'/api/forensics/evidence/{E}/files?limit=1000&{qs}', inv).json
+    real = [e for e in C['TRUTH'] if not e['virtual']]
+    check('the Files list keeps file-system files and archive contents apart',
+          fl('')['total'] == len(real) and fl('members=true')['total'] == len(members), (fl('')['total'], len(real), fl('members=true')['total']))
+    counts = get(f'/api/evidence/{E}', inv).json['modules']['containers']['counts']
+    check('the module counts what it found', counts.get('members_found') == len(members) and counts.get('members_encrypted') == 1
+          and counts.get('members_extracted') == len(truth), counts)
+
+    # Viewing and recovering a member.
+    readme = members[f'{EXPORT_ZIP}!/notes/readme.txt']
+    mid = str(readme['_id'])
+    pv = get(f'/api/forensics/members/{mid}/preview', inv).json or {}
+    check('a member can be viewed (text preview of notes/readme.txt)', pv.get('kind') == 'text' and 'Backup of the September payroll export' in pv.get('text', ''), pv)
+    check('an encrypted member cannot be viewed (409); another investigator gets 404',
+          get(f"/api/forensics/members/{enc['_id']}/preview", inv).status == 409 and get(f'/api/forensics/members/{mid}/preview', C['INV2']).status == 404)
+    rec = post(f"/api/forensics/members/{nested['_id']}/recover", inv)
+    art = rec.json or {}
+    check('a member can be recovered: hashed, in the chain of custody', rec.status == 200 and art.get('sha256') == truth[f'{EXPORT_ZIP}!/archive.7z!/q3-salaries.csv']
+          and any(c.get('artifact_id') == art.get('artifact_id') and c['action'] == 'FILE_RECOVERED' for c in get(f'/api/chain?case_id={A}', inv).json['data']), rec)
+    check('viewers and analysts cannot recover members (403)', post(f"/api/forensics/members/{nested['_id']}/recover", C['VIEWER']).status == 403)
+
+    # Content search and found data over members and unallocated space.
+    cs = lambda q: get(f'/api/forensics/content-search?case_id={A}&q={urllib.parse.quote(q)}', inv).json
+    r = cs('DE89370400440532013')
+    paths = {h['path'] for h in r['files']}
+    check('the payroll data is now also found inside export-backup.zip', f'{EXPORT_ZIP}!/payroll-export.csv' in paths, sorted(paths))
+    un = [h for h in r['files'] if h.get('unallocated')]
+    pay = next(e for e in C['TRUTH'] if e['path'] == '/Users/alice/Documents/payroll-export.csv' and e['deleted'])
+    ist = sh('istat', '-o', '2048', str(IMG), pay['inode']).stdout.decode()
+    sectors = {int(x) for x in re.findall(r'\d+', ist.split('Sectors:', 1)[-1])}
+    with IMG.open('rb') as f:
+        def raw(off, n):
+            f.seek(2048 * 512 + off)
+            return f.read(n)
+        bad = [(m['byte_offset'], raw(m['byte_offset'], 19)) for h in un for m in h['matches'] if raw(m['byte_offset'], 19) != b'DE89370400440532013']
+        check('...and in unallocated space, where the deleted export\'s clusters still hold it: every hit\'s volume offset holds the bytes',
+              un and not bad and sum(h['match_count'] for h in un) >= 60, (len(un), bad[:3]))
+        check("...inside the deleted file's own sectors (istat)", all(m['byte_offset'] // 512 in sectors for h in un for m in h['matches']),
+              [m['byte_offset'] // 512 for h in un for m in h['matches']][:5])
+        page = get(f"/api/forensics/evidence/{E}/volume?volume_id=p2048&start={un[0]['matches'][0]['byte_offset']}&length=19", inv).json
+        import base64
+        check('the volume viewer shows the bytes at an unallocated hit', base64.b64decode(page['data_b64']) == b'DE89370400440532013', page)
+    check('the volume viewer refuses an unknown volume (400); another investigator gets 404',
+          get(f'/api/forensics/evidence/{E}/volume?volume_id=x', inv).status == 400 and get(f'/api/forensics/evidence/{E}/volume?volume_id=p2048', C['INV2']).status == 404)
+    r = cs('finance.team@example.com')
+    hit = next((h for h in r['files'] if h['path'].endswith('!/payroll-summary.txt')), {})
+    m0 = (hit.get('matches') or [{}])[0]
+    mem = get(f"/api/forensics/members/{hit.get('entry_id')}/content?start={m0.get('byte_offset')}&length=24", inv).json or {}
+    import base64
+    check('text inside a nested member is searchable, with its byte offset in the member',
+          hit.get('member') is True and base64.b64decode(mem.get('data_b64', '')) == b'finance.team@example.com', (hit, mem))
+    rows = get(f'/api/forensics/entities?case_id={A}&limit=500', inv).json['data']
+    vals = {(x['kind'], x.get('value') or x['display']): x for x in rows}
+    check('found data includes values from members (the IBAN in the embedded package, the e-mails in the nested 7z and the PDF attachment)',
+          ('iban', 'FR7630006000011234567890189') in vals and ('email', 'finance.team@example.com') in vals and ('email', 'bob.smith@example.org') in vals,
+          sorted(k for k in vals if k[0] in ('iban', 'email')))
+    de = get(f"/api/forensics/entities/{vals[('iban', 'DE89370400440532013000')]['_id']}", inv).json
+    unocc = [o for o in de['occurrences'] if o['method'] == 'unallocated']
+    with IMG.open('rb') as f:
+        f.seek(2048 * 512 + (unocc[0]['byte_offset'] if unocc else 0))
+        check('...and from unallocated space, at volume offsets that hold the value', unocc and f.read(22) == b'DE89370400440532013000', unocc[:1])
+    fr = get(f"/api/forensics/entities/{vals[('iban', 'FR7630006000011234567890189')]['_id']}", inv).json
+    check('a value found in a member names the member, so it can be viewed', all(o.get('member') and o.get('entry_id') for o in fr['occurrences']), fr['occurrences'])
+    ov = get(f'/api/cases/{A}/overview', inv).json['counts']
+    check('the overview counts archive members', ov.get('archive_members') == len(members), (ov.get('archive_members'), len(members)))
+    C['ARCHIVE_MEMBERS'] = len(members)
 
 
 @section('13 Indicators, patterns and anomalies')
@@ -1995,6 +2133,7 @@ def t_overview():
         'known_bad_files': q(f'/api/forensics/flagged?case_id={A}&kind=known_bad&limit=1')['total'],
         'notable_files': q(f'/api/forensics/flagged?case_id={A}&kind=notable&limit=1')['total'],
         'found_data': q(f'/api/forensics/entities?case_id={A}&limit=1')['total'],
+        'archive_members': q(f'/api/forensics/evidence/{E}/files?members=true&limit=1')['total'],
     }
     diff = {k: (c.get(k), v) for k, v in exp.items() if c.get(k) != v}
     check('every overview count equals the matching list', not diff, diff)
@@ -2271,7 +2410,7 @@ def t_reg_disabled():
 PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
-             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

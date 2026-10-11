@@ -41,7 +41,7 @@ class FileProcModule(Module):
         describe = magic.Magic()
         src = TskImageSource(ctx.image)
         entries = list(ctx.db['fs_entries'].find(
-            {'evidence_id': ctx.eid, 'pipeline': True, 'is_dir': False, 'is_virtual': False},
+            {'evidence_id': ctx.eid, 'pipeline': True, 'is_dir': False, 'is_virtual': False, 'container': {'$exists': False}},
             {'path': 1, 'name': 1, 'inode': 1, 'volume_id': 1, 'size': 1, 'deleted': 1}))
         entries.sort(key=_inode_order)  # roughly the order of the data on the disk
         total = sum(max(0, e.get('size') or 0) for e in entries) or 1
@@ -76,34 +76,44 @@ class FileProcModule(Module):
         basis = 'deleted: content as currently on the disk' if e.get('deleted') else 'allocated'
         try:
             blob = src.open(BlobRef(ctx.eid, e.get('volume_id') or 'p0', inode=e.get('inode')))
-            md5, sha1, sha256 = hashlib.md5(), hashlib.sha1(), hashlib.sha256()
-            head = b''
-            hist = None
-            for start in range(0, blob.size, CHUNK):
-                data = blob.read(start, min(CHUNK, blob.size - start))
-                md5.update(data)
-                sha1.update(data)
-                sha256.update(data)
-                if start == 0:
-                    head = data[:HEAD_BYTES]
-                if start < ENTROPY_BYTES:
-                    h = histogram(data[:ENTROPY_BYTES - start])
-                    hist = h if hist is None else hist + h
-                if start // CHUNK % 64 == 63:
-                    ctx.checkpoint()
         except Exception as exc:
             return {'hash_basis': basis, 'hash_error': str(exc)[:300]}
-        mime = mime_of.from_buffer(head) if head else 'inode/x-empty'
-        desc = describe.from_buffer(head) if head else 'empty'
-        if head[:4] == ZIP_LOCAL and mime in ('application/octet-stream', 'application/zip'):
-            mime, desc = refine_zip(blob, mime, desc)
-        ent = round(entropy(hist), 4) if hist is not None else 0.0
-        expected = mismatch(e.get('name') or e.get('path', '').rsplit('/', 1)[-1], mime)
-        try:
-            enc = encryption(blob, head, mime, ent) if head else None
-        except Exception as exc:
-            enc = None
-            ctx.warn(f'{e.get("path")}: encryption check failed: {exc}')
-        return {'md5': md5.hexdigest(), 'sha1': sha1.hexdigest(), 'sha256': sha256.hexdigest(), 'mime': mime, 'magic': desc[:200],
-                'file_category': category(mime, e.get('name') or '', desc), 'ext_mismatch': bool(expected), 'expected_type': expected,
-                'entropy': ent, 'encryption': enc, 'hash_basis': basis, 'hash_error': None}
+        return process_blob(blob, e.get('name') or e.get('path', '').rsplit('/', 1)[-1], basis, mime_of, describe,
+                            checkpoint=ctx.checkpoint, warn=lambda m: ctx.warn(f'{e.get("path")}: {m}'))
+
+
+def process_blob(blob, name: str, basis: str, mime_of, describe, checkpoint=lambda: None, warn=lambda m: None) -> dict:
+    """Hashes, type, entropy and encryption of one piece of content (a file on the evidence or a member taken out
+    of a container), from a single read."""
+    try:
+        md5, sha1, sha256 = hashlib.md5(), hashlib.sha1(), hashlib.sha256()
+        head = b''
+        hist = None
+        for start in range(0, blob.size, CHUNK):
+            data = blob.read(start, min(CHUNK, blob.size - start))
+            md5.update(data)
+            sha1.update(data)
+            sha256.update(data)
+            if start == 0:
+                head = data[:HEAD_BYTES]
+            if start < ENTROPY_BYTES:
+                h = histogram(data[:ENTROPY_BYTES - start])
+                hist = h if hist is None else hist + h
+            if start // CHUNK % 64 == 63:
+                checkpoint()
+    except Exception as exc:
+        return {'hash_basis': basis, 'hash_error': str(exc)[:300]}
+    mime = mime_of.from_buffer(head) if head else 'inode/x-empty'
+    desc = describe.from_buffer(head) if head else 'empty'
+    if head[:4] == ZIP_LOCAL and mime in ('application/octet-stream', 'application/zip'):
+        mime, desc = refine_zip(blob, mime, desc)
+    ent = round(entropy(hist), 4) if hist is not None else 0.0
+    expected = mismatch(name, mime)
+    try:
+        enc = encryption(blob, head, mime, ent) if head else None
+    except Exception as exc:
+        enc = None
+        warn(f'encryption check failed: {exc}')
+    return {'md5': md5.hexdigest(), 'sha1': sha1.hexdigest(), 'sha256': sha256.hexdigest(), 'mime': mime, 'magic': desc[:200],
+            'file_category': category(mime, name, desc), 'ext_mismatch': bool(expected), 'expected_type': expected,
+            'entropy': ent, 'encryption': enc, 'hash_basis': basis, 'hash_error': None}

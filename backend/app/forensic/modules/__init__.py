@@ -3,11 +3,13 @@
 Profiles:
   quick     the file system index and the well-known artifacts, for a fast first look
   standard  everything that is cheap enough to run on every disk (the default)
-  full      everything: also the text of every file (content search) and the data found in it
+  full      everything: also archive members and embedded files, the text of every file and of unallocated space
+            (content search), and the data found in it
 
 Planning a job: the requested modules, plus any prerequisite that has not completed (or was produced by an
-older module version), plus every module that depends on something being re-run and had completed before, so
-results built on replaced data are refreshed. The plan is always in dependency order.
+older module version), plus every module that depends on something being re-run (or follows it: reads its output
+when it ran) and had completed before, so results built on replaced data are refreshed. The plan is always in
+dependency order.
 """
 from __future__ import annotations
 
@@ -19,18 +21,21 @@ from .fileproc import FileProcModule
 from .found import FoundDataModule
 from .fs_index import FsIndexModule
 from .hash_match import HashMatchModule
+from .members import MembersModule
 from .tz_probe import TzProbeModule
+from .unallocated import UnallocatedModule
 from .yara_scan import YaraModule
 
 MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), FileProcModule(),
-                         HashMatchModule(), YaraModule(), ContentModule(), FoundDataModule()]
+                         MembersModule(), HashMatchModule(), YaraModule(), ContentModule(), UnallocatedModule(), FoundDataModule()]
 REGISTRY: dict[str, Module] = {m.name: m for m in MODULES}
 ORDER = [m.name for m in MODULES]
 
 PROFILES = {
     'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts'],
     'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'hash_match', 'yara'],
-    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'hash_match', 'yara', 'content', 'found_data'],
+    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
+             'unallocated', 'found_data'],
 }
 DEFAULT_PROFILE = 'standard'
 PROFILE_LABELS = {
@@ -43,7 +48,7 @@ PROFILE_LABELS = {
 def _check_graph():
     """Every requirement exists and comes earlier in ORDER (so ORDER is a valid dependency order)."""
     for i, m in enumerate(MODULES):
-        for r in m.requires:
+        for r in m.requires + m.follows:
             if r not in REGISTRY or ORDER.index(r) >= i:
                 raise RuntimeError(f'Module {m.name} requires {r}, which is unknown or not earlier in the order')
 
@@ -82,7 +87,7 @@ def plan(requested: list[str], status: dict[str, dict] | None = None) -> list[st
                     selected.add(req)
                     changed = True
         for m in MODULES:
-            if m.name not in selected and current(m.name) and any(r in selected for r in m.requires):
+            if m.name not in selected and current(m.name) and any(r in selected for r in m.requires + m.follows):
                 selected.add(m.name)
                 changed = True
     return [n for n in ORDER if n in selected]

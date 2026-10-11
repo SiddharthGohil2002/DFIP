@@ -16,6 +16,9 @@ Recent additions:
 | `GET /api/forensics/content-search?case_id&q&mode=text\|regex&evidence_id&skip&limit` | Files whose text contains `q` (case-insensitive, 3+ characters) or matches the RE2 regular expression `q`; first 20 matches per file with snippet, byte offset and length; evidence without a content index is listed in `not_indexed`; `complete` is false when the 15 s limit was reached. 400 for a short term or an invalid pattern. Audited |
 | `GET /api/forensics/entities?case_id&kind&q&evidence_id` | Found data: one row per value per evidence item (card and Aadhaar numbers without `value`), count per kind, which evidence has been analysed |
 | `GET /api/forensics/entities/{id}`, `POST /api/forensics/entities/{id}/reveal` | One found value with its occurrences (file, byte offset); the full value of a masked number (audited) |
+| `GET /api/forensics/evidence/{id}/files?members=true` | Files taken out of archives and documents (each with `container`: kind, parent, member, depth, encrypted, note); without it, only file-system files |
+| `GET /api/forensics/members/{entry_id}/content\|preview\|raw`, `POST /api/forensics/members/{entry_id}/recover` | View an archive member (409 when it was not extracted), or recover it as a hashed, custody-logged file |
+| `GET /api/forensics/evidence/{id}/volume?volume_id&start&length` | Raw bytes of a volume at a byte offset (unallocated-space hits); every page is audited |
 | `GET /api/forensics/hash?case_id&digest` | Every file in the case with this MD5, SHA-1 or SHA-256, and recovered, carved and extracted copies with this SHA-256; 400 if the value is not a hash |
 | `GET /api/forensics/flagged?case_id&kind=renamed\|encrypted\|known_bad\|notable` | Flagged files of the case |
 | `GET /api/hashsets` | Imported hash sets (every signed-in user): kind, status, format, counts per algorithm, invalid lines, source file and SHA-256 |

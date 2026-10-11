@@ -12,9 +12,9 @@
 #   docker run --rm -v "$PWD:/repo" -w /repo python:3.11-slim sh scripts/test-image/make-test-image.sh
 set -eu
 
-apt-get update -qq >/dev/null && apt-get install -y -qq mtools dosfstools fdisk tzdata python3-hivex >/dev/null
-# Encrypted ZIP and Office test files.
-pip install -q --root-user-action=ignore pyzipper==0.4.0 msoffcrypto-tool==6.0.0
+apt-get update -qq >/dev/null && apt-get install -y -qq mtools dosfstools fdisk tzdata python3-hivex 7zip >/dev/null
+# Encrypted ZIP and Office test files, and a PDF with an attachment.
+pip install -q --root-user-action=ignore pyzipper==0.4.0 msoffcrypto-tool==6.0.0 pypdf==6.19.0
 
 WORK=$(mktemp -d)
 TREE="$WORK/tree"
@@ -56,6 +56,10 @@ stamp '2026-09-01 13:05:00' 'Users/alice/Documents/handover.docx'
 stamp '2026-09-01 11:20:00' 'Users/alice/Documents/meeting-notes.rtf'
 stamp '2026-09-01 14:11:30' 'Users/alice/Documents/notes-utf16.txt'
 stamp '2026-08-26 09:15:00' 'Users/alice/Documents/budget.odt'
+# Archives and documents with embedded files.
+stamp '2026-09-01 14:16:20' 'Users/alice/Documents/export-backup.zip'
+stamp '2026-08-31 16:45:00' 'Users/alice/Documents/q3-payroll.docx'
+stamp '2026-08-29 09:30:00' 'Users/alice/Documents/statement.pdf'
 # Standard time (EST, UTC-5): proves the conversion follows daylight saving by date, not one fixed offset.
 stamp '2026-01-15 15:30:00' 'Users/alice/Documents/q1-forecast.txt'
 stamp '2025-11-02 14:00:00' 'Users/alice/Documents/year-end-checklist.txt'

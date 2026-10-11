@@ -76,7 +76,7 @@ def test_profiles_and_requests():
     assert resolve_request() == PROFILES['standard']
     assert resolve_request('quick') == ['tz_probe', 'fs_index', 'computer', 'artifacts']
     # Standard adds file processing (hashes, types, hash sets, YARA) on every file; full also indexes file contents.
-    assert PROFILES['standard'] == [m for m in ORDER if m not in ('content', 'found_data')]
+    assert PROFILES['standard'] == [m for m in ORDER if m not in ('containers', 'content', 'unallocated', 'found_data')]
     assert PROFILES['full'] == ORDER
     assert resolve_request(modules=['yara', 'yara']) == ['yara']
     with pytest.raises(ValueError):
@@ -92,7 +92,8 @@ def _done(*names):
 def test_plan_adds_missing_prerequisites():
     assert plan(['yara'], {}) == ['tz_probe', 'fs_index', 'fileproc', 'yara']  # YARA chooses files by their real type
     assert plan(['hash_match'], {}) == ['tz_probe', 'fs_index', 'fileproc', 'hash_match']
-    assert plan(['found_data'], {}) == ['tz_probe', 'fs_index', 'fileproc', 'content', 'found_data']
+    assert plan(['found_data'], {}) == ['tz_probe', 'fs_index', 'fileproc', 'content', 'found_data']  # follows adds nothing
+    assert plan(['unallocated'], {}) == ['tz_probe', 'fs_index', 'unallocated']
     assert plan(['artifacts'], {}) == ['tz_probe', 'fs_index', 'artifacts']
     assert plan(['computer'], {}) == ['computer']  # reads its hives directly
 
@@ -101,12 +102,17 @@ def test_plan_reruns_only_what_is_needed():
     status = _done(*ORDER)
     assert plan(['yara'], status) == ['yara']                       # nothing depends on yara
     assert plan(['hash_match'], status) == ['hash_match']           # a hash set changed: only matching runs again
-    assert plan(['fileproc'], status) == ['fileproc', 'hash_match', 'yara', 'content', 'found_data']
+    assert plan(['fileproc'], status) == ['fileproc', 'containers', 'hash_match', 'yara', 'content', 'found_data']
+    # Modules that follow another (read its output when it ran) are refreshed when it re-runs.
+    assert plan(['containers'], status) == ['containers', 'hash_match', 'yara', 'content', 'found_data']
+    assert plan(['unallocated'], status) == ['unallocated', 'found_data']
     assert plan(['content'], status) == ['content', 'found_data']
     # Dependents are refreshed.
-    assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara', 'content', 'found_data']
+    assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
+                                          'unallocated', 'found_data']
     # A new time zone re-indexes the file system (FAT times) and refreshes what was built on the index.
-    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara', 'content', 'found_data']
+    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'fileproc', 'containers', 'hash_match', 'yara',
+                                          'content', 'unallocated', 'found_data']
     # On evidence analysed with the standard profile, the content modules are not added by a re-run.
     standard = _done(*PROFILES['standard'])
     assert plan(['fs_index'], standard) == ['fs_index', 'artifacts', 'fileproc', 'hash_match', 'yara']

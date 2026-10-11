@@ -130,3 +130,96 @@ def prefetch_v30(executable: str, *, run_times: list[datetime], run_count: int, 
     body = head + info + metrics + names
     body += b'\0' * (volumes_off - len(body))
     return body + volumes
+
+
+# ---------------------------------------------------------------- OLE compound files ([MS-CFB] version 3)
+ENDOFCHAIN, FREESECT, FATSECT, NOSTREAM = 0xFFFFFFFE, 0xFFFFFFFF, 0xFFFFFFFD, 0xFFFFFFFF
+
+
+def compound_file(streams: dict[str, bytes]) -> bytes:
+    """A compound file (512-byte sectors) holding `streams` ({'Storage/Stream': bytes}); streams under 4096 bytes
+    go to the mini stream, as the format requires. Siblings are chained as a right-leaning tree in [MS-CFB] name
+    order (a valid binary search tree; colouring every node black is accepted by readers)."""
+    ss, mss, cutoff = 512, 64, 4096
+    nodes = [{'name': 'Root Entry', 'type': 5, 'children': [], 'data': b''}]
+    index = {'': 0}
+    for path, data in streams.items():
+        parent, prefix = 0, ''
+        parts = path.split('/')
+        for i, part in enumerate(parts):
+            prefix = f'{prefix}/{part}' if prefix else part
+            if prefix not in index:
+                stream = i == len(parts) - 1
+                nodes.append({'name': part, 'type': 2 if stream else 1, 'children': [], 'data': data if stream else b''})
+                index[prefix] = len(nodes) - 1
+                nodes[parent]['children'].append(index[prefix])
+            parent = index[prefix]
+    sectors, fat = [], []
+
+    def chain(data: bytes) -> int:
+        if not data:
+            return ENDOFCHAIN
+        n, start = -(-len(data) // ss), len(sectors)
+        for i in range(n):
+            sectors.append(data[i * ss:(i + 1) * ss].ljust(ss, b'\0'))
+            fat.append(start + i + 1 if i < n - 1 else ENDOFCHAIN)
+        return start
+
+    mini, minifat = b'', []
+    for nd in nodes[1:]:
+        d = nd['data']
+        nd['size'] = len(d)
+        if nd['type'] != 2:
+            nd['start'] = 0
+        elif len(d) >= cutoff:
+            nd['start'] = chain(d)
+        elif d:
+            n, start = -(-len(d) // mss), len(minifat)
+            mini += d.ljust(n * mss, b'\0')
+            minifat += [start + i + 1 if i < n - 1 else ENDOFCHAIN for i in range(n)]
+            nd['start'] = start
+        else:
+            nd['start'] = ENDOFCHAIN
+    nodes[0]['start'], nodes[0]['size'] = chain(mini), len(mini)
+    minifat_bytes = b''.join(struct.pack('<I', x) for x in minifat)
+    minifat_bytes += b'\xff' * (-len(minifat_bytes) % ss)
+    first_minifat = chain(minifat_bytes) if minifat else ENDOFCHAIN
+    n_minifat = len(minifat_bytes) // ss
+    for nd in nodes:
+        kids = sorted(nd['children'], key=lambda k: (len(nodes[k]['name']), nodes[k]['name'].upper()))
+        nd['child'] = kids[0] if kids else NOSTREAM
+        for a, b in zip(kids, kids[1:]):
+            nodes[a]['right'] = b
+
+    def entry(nd) -> bytes:
+        name = nd['name'].encode('utf-16-le') + b'\0\0'
+        return struct.pack('<64sHBBIII16sIQQIQ', name, len(name), nd['type'], 1, NOSTREAM, nd.get('right', NOSTREAM),
+                           nd['child'], b'\0' * 16, 0, 0, 0, nd['start'], nd['size'])
+
+    empty = struct.pack('<64sHBBIII16sIQQIQ', b'', 0, 0, 0, NOSTREAM, NOSTREAM, NOSTREAM, b'\0' * 16, 0, 0, 0, 0, 0)
+    directory = b''.join(entry(nd) for nd in nodes)
+    directory += empty * (-len(nodes) % 4)
+    first_dir = chain(directory)
+    n_fat = 1
+    while n_fat * 128 < len(sectors) + n_fat:
+        n_fat += 1
+    fat_start = len(sectors)
+    fat += [FATSECT] * n_fat
+    fat += [FREESECT] * (n_fat * 128 - len(fat))
+    fat_bytes = b''.join(struct.pack('<I', x) for x in fat)
+    sectors += [fat_bytes[i * ss:(i + 1) * ss] for i in range(n_fat)]
+    if n_fat > 109:
+        raise ValueError('compound_file supports files up to about 7 MB')
+    header = struct.pack('<8s16sHHHHH6sIIIIIIIII', b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1', b'\0' * 16, 0x3E, 3, 0xFFFE, 9, 6,
+                         b'\0' * 6, 0, n_fat, first_dir, 0, cutoff, first_minifat, n_minifat, ENDOFCHAIN, 0)
+    header += struct.pack('<109I', *([fat_start + i for i in range(n_fat)] + [FREESECT] * (109 - n_fat)))
+    return header + b''.join(sectors)
+
+
+def ole10native(filename: str, data: bytes) -> bytes:
+    """The '\x01Ole10Native' stream of an embedded package (an 'Insert > Object > Create from file' attachment)."""
+    src = f'C:\\Users\\alice\\Documents\\{filename}'.encode('latin-1') + b'\0'
+    tmp = f'C:\\Users\\alice\\AppData\\Local\\Temp\\{filename}'.encode('latin-1') + b'\0'
+    body = (struct.pack('<H', 2) + filename.encode('latin-1') + b'\0' + src + struct.pack('<II', 0x00030000, len(tmp)) + tmp
+            + struct.pack('<I', len(data)) + data)
+    return struct.pack('<I', len(body)) + body

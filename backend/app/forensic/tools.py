@@ -13,6 +13,7 @@ TOOLS = {
     'sleuthkit_fsstat': 'fsstat',
     'sleuthkit_mmls': 'mmls',
     'sleuthkit_icat': 'icat',
+    'sleuthkit_blkls': 'blkls',
     'exiftool': 'exiftool',
     'tshark': 'tshark',
     'yara': 'yara',

@@ -174,7 +174,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
                              for u in users], [0.8, 0.9, 1.0, 2.0, 1.2, 0.5, 1.0, 0.7], mono_cols=(3,)))
         story.append(Spacer(1, 10))
 
-    deleted_q = {'evidence_id': {'$in': eids}, 'deleted': True, 'is_virtual': False}
+    deleted_q = {'evidence_id': {'$in': eids}, 'deleted': True, 'is_virtual': False, 'container': {'$exists': False}}
     deleted = list(db['fs_entries'].find(deleted_q).sort('path', 1).limit(MAX_ROWS))
     _section(story, T('Deleted files (filesystem metadata)'), ['Evidence', 'Path', 'Inode', 'Size', 'Modified', 'Created'],
              [[d['evidence_id'], d['path'], d.get('inode'), d.get('size'), d.get('mtime'), d.get('crtime')] for d in deleted],

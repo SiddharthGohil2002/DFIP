@@ -4,10 +4,13 @@ import { api, fetchBlob } from '../lib/api';
 import { formatBytes, formatNumber } from '../lib/format';
 import { Banner, Button, Loading, Modal, Tabs } from './index';
 
-/** A file inside an evidence image (by inode) or a file DFIP stored (recovered, carved, extracted). */
+/** A file inside an evidence image (by inode), a file DFIP stored (recovered, carved, extracted), a file taken out
+ * of an archive or document (by its file-index record), or the raw bytes of a volume (unallocated space). */
 export type ViewSource =
   | { kind: 'image'; evidenceId: string; inode: string; offset: number; name: string }
-  | { kind: 'artifact'; artifactId: string; name: string };
+  | { kind: 'artifact'; artifactId: string; name: string }
+  | { kind: 'member'; entryId: string; name: string }
+  | { kind: 'volume'; evidenceId: string; volumeId: string; name: string };
 
 interface Preview {
   path?: string;
@@ -30,6 +33,16 @@ interface Page {
 
 const PAGE = 4096;
 
+/** Where a search hit or found value can be viewed: the file on the disk, the archive member, or the raw volume
+ * (unallocated space). Null when it can't be shown (for example a member that was not extracted). */
+export function locate(h: { evidence_id: string; path: string; inode: string | null; volume_id: string; partition_offset: number | null;
+  member?: boolean; unallocated?: boolean; method?: string; entry_id?: string | null }): ViewSource | null {
+  if (h.unallocated || h.method === 'unallocated') return { kind: 'volume', evidenceId: h.evidence_id, volumeId: h.volume_id, name: `Unallocated space (${h.volume_id})` };
+  if (h.member) return h.entry_id ? { kind: 'member', entryId: h.entry_id, name: h.path } : null;
+  if (h.partition_offset === null || !h.inode) return null;
+  return { kind: 'image', evidenceId: h.evidence_id, inode: h.inode, offset: h.partition_offset, name: h.path };
+}
+
 /** Bytes to show highlighted when the viewer opens at a search hit. */
 export interface ViewAt {
   offset: number;
@@ -38,6 +51,8 @@ export interface ViewAt {
 
 function endpoint(src: ViewSource, what: 'content' | 'preview' | 'raw', extra = '') {
   if (src.kind === 'artifact') return `/forensics/artifacts/${encodeURIComponent(src.artifactId)}/${what}${extra ? `?${extra}` : ''}`;
+  if (src.kind === 'member') return `/forensics/members/${encodeURIComponent(src.entryId)}/${what}${extra ? `?${extra}` : ''}`;
+  if (src.kind === 'volume') return `/forensics/evidence/${encodeURIComponent(src.evidenceId)}/volume?volume_id=${encodeURIComponent(src.volumeId)}${extra ? `&${extra}` : ''}`;
   return `/forensics/evidence/${encodeURIComponent(src.evidenceId)}/${what}?inode=${encodeURIComponent(src.inode)}&offset=${src.offset}${extra ? `&${extra}` : ''}`;
 }
 
@@ -88,10 +103,11 @@ export function ViewButton({ source, at }: { source: ViewSource; at?: ViewAt }) 
 
 /** Preview (text, image or PDF, decided from the file's content) and a paged hex view. Nothing is written or downloaded. */
 export function FileViewer({ source, at, onClose }: { source: ViewSource; at?: ViewAt; onClose: () => void }) {
-  const [tab, setTab] = useState<'preview' | 'hex'>(at ? 'hex' : 'preview');
+  const hexOnly = source.kind === 'volume';  // raw volume bytes have no file type to preview
+  const [tab, setTab] = useState<'preview' | 'hex'>(at || hexOnly ? 'hex' : 'preview');
   return (
     <Modal open title={source.name} onClose={onClose} wide>
-      <Tabs<'preview' | 'hex'> value={tab} onChange={setTab} tabs={[{ id: 'preview', label: 'Preview' }, { id: 'hex', label: 'Hex' }]} />
+      <Tabs<'preview' | 'hex'> value={tab} onChange={setTab} tabs={hexOnly ? [{ id: 'hex', label: 'Hex' }] : [{ id: 'preview', label: 'Preview' }, { id: 'hex', label: 'Hex' }]} />
       <div style={{ paddingTop: 12 }}>{tab === 'preview' ? <PreviewPane source={source} onHex={() => setTab('hex')} /> : <HexPane source={source} at={at} />}</div>
     </Modal>
   );

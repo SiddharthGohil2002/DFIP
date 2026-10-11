@@ -290,6 +290,74 @@ def content_files():
     write('Users/alice/Documents/budget.odt', odt(*BUDGET_ODT_TEXT))
 
 
+# Archives and embedded files (Phase 4).
+README_TXT = 'Backup of the September payroll export, made before the transfer.\n'
+Q3_SALARIES = 'name,email,salary\nalice,alice.personal@example.net,72000\nbob,bob.smith@example.org,68000\n'
+PAYROLL_SUMMARY = ('Q3 payroll summary for finance.team@example.com: total 4,140,000 EUR, '
+                   'account FR76 3000 6000 0112 3456 7890 189.\n')
+Q3_DOCX_TEXT = 'Q3 payroll summary attached as an embedded file. Contact finance.team@example.com.'
+TRANSFER_DETAILS = 'Transfer approved by alice: IBAN GB82 WEST 1234 5698 7654 32, reference PAY-2026-09.\n'
+
+
+def seven_zip(members: dict) -> bytes:
+    """A 7z archive made with the 7-Zip command line (installed by make-test-image.sh)."""
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / 'src'
+        for name, data in members.items():
+            (src / name).parent.mkdir(parents=True, exist_ok=True)
+            (src / name).write_bytes(data.encode() if isinstance(data, str) else data)
+        out = Path(tmp) / 'archive.7z'
+        subprocess.run(['7z', 'a', '-bd', '-mtm=off', str(out), '.'], cwd=src, check=True, capture_output=True)
+        return out.read_bytes()
+
+
+def docx_with_embeddings(text: str, media: dict, embeddings: dict) -> bytes:
+    """A Word document with pictures (word/media) and embedded objects (word/embeddings)."""
+    plain = zipfile.ZipFile(io.BytesIO(docx(text)))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for info in plain.infolist():
+            data = plain.read(info)
+            if info.filename == '[Content_Types].xml':
+                data = data.replace(b'<Default Extension="xml"', b'<Default Extension="png" ContentType="image/png"/>'
+                                    b'<Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/>'
+                                    b'<Default Extension="xml"')
+            z.writestr(info.filename, data)
+        for name, data in media.items():
+            z.writestr(f'word/media/{name}', data)
+        for name, data in embeddings.items():
+            z.writestr(f'word/embeddings/{name}', data)
+    return buf.getvalue()
+
+
+def pdf_with_attachment(name: str, data: bytes) -> bytes:
+    from pypdf import PdfReader, PdfWriter
+    writer = PdfWriter(clone_from=PdfReader(io.BytesIO(pdf('Bank statement - September 2026 - see the attached transfer details'))))
+    writer.add_attachment(name, data)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def container_files():
+    write('Users/alice/Documents/export-backup.zip', _plain_zip({
+        'payroll-export.csv': PAYROLL, 'notes/readme.txt': README_TXT,
+        'archive.7z': seven_zip({'q3-salaries.csv': Q3_SALARIES})}))
+    ole = winfmt.compound_file({'\x01Ole10Native': winfmt.ole10native('payroll-summary.txt', PAYROLL_SUMMARY.encode())})
+    write('Users/alice/Documents/q3-payroll.docx', docx_with_embeddings(Q3_DOCX_TEXT, {'image1.png': png()}, {'oleObject1.bin': ole}))
+    write('Users/alice/Documents/statement.pdf', pdf_with_attachment('transfer-details.txt', TRANSFER_DETAILS.encode()))
+
+
+def _plain_zip(members: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name, data in members.items():
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     write('Windows/INF/setupapi.dev.log', SETUPAPI.replace('\n', '\r\n'))
@@ -308,6 +376,7 @@ def main():
     write('Users/alice/Documents/offer-letter.pdf', pdf())
     hidden_files()
     content_files()
+    container_files()
     print(PREFETCH_NAME)
 
 

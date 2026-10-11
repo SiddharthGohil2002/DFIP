@@ -31,6 +31,8 @@ class Module:
     requires: tuple[str, ...] = ()
     weight = 10
     collections: tuple[str, ...] = ()   # collections whose documents this module owns
+    # Earlier modules this one also reads when they ran (without needing them): re-running one refreshes this one.
+    follows: tuple[str, ...] = ()
     fields: dict[str, tuple[str, ...]] = {}  # fields this module sets on other modules' documents
 
     def clear(self, db, evidence_id: str):
@@ -124,16 +126,20 @@ class ModuleContext:
         self._progress_cb(pct, self.module.name + (f'@{detail}' if detail else ''))
         self.checkpoint()
 
+    def _should_stop(self):
+        self._heartbeat()  # a long tool run must not look like a dead worker
+        return self._cancel_check()
+
     def run_tool(self, argv: list[str], *, timeout: float, stdout_path: Path | None = None,
-                 max_output: int = 500_000, memory_bytes: int | None = DEFAULT_TOOL_MEMORY) -> dict:
-        def should_stop():
-            self._heartbeat()  # a long tool run must not look like a dead worker
-            return self._cancel_check()
+                 max_output: int = 500_000, memory_bytes: int | None = DEFAULT_TOOL_MEMORY, file_bytes: int | None = None) -> dict:
         return run_tool(argv, timeout=timeout, stdout_path=stdout_path, max_output=max_output,
-                        memory_bytes=memory_bytes, should_stop=should_stop)
+                        memory_bytes=memory_bytes, file_bytes=file_bytes, should_stop=self._should_stop)
+
+    def stream_tool(self, argv: list[str], on_data, *, timeout: float, memory_bytes: int | None = DEFAULT_TOOL_MEMORY) -> dict:
+        return stream_tool(argv, on_data, timeout=timeout, memory_bytes=memory_bytes, should_stop=self._should_stop)
 
 
-def _limits(memory_bytes):
+def _limits(memory_bytes, file_bytes=None):
     def apply():
         os.setsid()  # own process group, so the whole tool tree can be killed
         if memory_bytes:
@@ -141,6 +147,9 @@ def _limits(memory_bytes):
                 resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
             except (ValueError, OSError):
                 pass
+        if file_bytes:
+            # No file the tool writes may grow past this (an archive bomb is stopped, not unpacked to fill the disk).
+            resource.setrlimit(resource.RLIMIT_FSIZE, (file_bytes, file_bytes))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     return apply
 
@@ -157,7 +166,7 @@ def _kill_group(proc):
 
 
 def run_tool(argv: list[str], *, timeout: float, stdout_path: Path | None = None, max_output: int = 500_000,
-             memory_bytes: int | None = DEFAULT_TOOL_MEMORY, should_stop=None) -> dict:
+             memory_bytes: int | None = DEFAULT_TOOL_MEMORY, file_bytes: int | None = None, should_stop=None) -> dict:
     """Runs an external tool without a shell, in its own process group, under a memory limit and a timeout.
 
     stdout goes to `stdout_path` when given (large outputs such as bodyfiles), otherwise it is captured up to
@@ -175,7 +184,7 @@ def run_tool(argv: list[str], *, timeout: float, stdout_path: Path | None = None
     try:
         try:
             proc = subprocess.Popen(argv, stdout=out, stderr=err, stdin=subprocess.DEVNULL, shell=False,
-                                    preexec_fn=_limits(memory_bytes))
+                                    preexec_fn=_limits(memory_bytes, file_bytes))
         except FileNotFoundError:
             return {'status': 'TOOL_UNAVAILABLE', 'tool': argv[0], 'returncode': None, 'stdout': '', 'stderr': ''}
         started = time.monotonic()
@@ -210,4 +219,58 @@ def run_tool(argv: list[str], *, timeout: float, stdout_path: Path | None = None
         return {'status': status, 'tool': argv[0], 'returncode': proc.returncode, 'stdout': stdout, 'stderr': stderr}
     finally:
         out.close()
+        err.close()
+
+
+def stream_tool(argv: list[str], on_data, *, timeout: float, memory_bytes: int | None = DEFAULT_TOOL_MEMORY,
+                should_stop=None, chunk: int = 4 << 20) -> dict:
+    """Runs an external tool like run_tool, handing its output to `on_data(bytes)` as it arrives instead of
+    storing it (for example the unallocated space of a disk from blkls, which is never written out)."""
+    import selectors
+    import tempfile
+    should_stop = should_stop or (lambda: False)
+    err = tempfile.TemporaryFile()
+    try:
+        try:
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=err, stdin=subprocess.DEVNULL, shell=False,
+                                    preexec_fn=_limits(memory_bytes), bufsize=0)
+        except FileNotFoundError:
+            return {'status': 'TOOL_UNAVAILABLE', 'tool': argv[0], 'returncode': None, 'stderr': ''}
+        sel = selectors.DefaultSelector()
+        sel.register(proc.stdout, selectors.EVENT_READ)
+        started = last_poll = time.monotonic()
+        status = None
+        try:
+            while True:
+                now = time.monotonic()
+                if now - started > timeout:
+                    status = 'TIMEOUT'
+                elif now - last_poll >= CANCEL_POLL_SECONDS:
+                    last_poll = now
+                    if should_stop():
+                        status = 'CANCELLED'
+                if status:
+                    _kill_group(proc)
+                    break
+                if not sel.select(timeout=0.25):
+                    continue
+                data = os.read(proc.stdout.fileno(), chunk)
+                if not data:
+                    proc.wait()
+                    break
+                on_data(data)
+        except BaseException:
+            _kill_group(proc)
+            raise
+        finally:
+            sel.close()
+            proc.stdout.close()
+        if status is None:
+            status = 'COMPLETED' if proc.returncode == 0 else 'FAILED'
+        err.seek(0)
+        stderr = err.read(20_000).decode(errors='replace')
+        if status == 'CANCELLED':
+            raise Cancelled()
+        return {'status': status, 'tool': argv[0], 'returncode': proc.returncode, 'stderr': stderr}
+    finally:
         err.close()

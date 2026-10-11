@@ -12,7 +12,7 @@ import type { Artifact, FsEntry, HashKind } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Hash, Loading, Modal, PageHeader, Pager, Tabs, useToast, type Tone } from '../ui';
 
 const LIMIT = 100;
-type Tab = 'deleted' | 'all' | 'recovered';
+type Tab = 'deleted' | 'all' | 'members' | 'recovered';
 type Flag = '' | 'renamed' | 'encrypted' | HashKind;
 
 /** The file categories file processing assigns (from the content, never the name). */
@@ -71,6 +71,7 @@ export function FilesPage() {
             tabs={[
               { id: 'deleted', label: 'Deleted entries', count: counts?.deleted_files },
               { id: 'all', label: 'All files', count: counts?.files },
+              { id: 'members', label: 'Archive contents', count: counts?.archive_members },
               { id: 'recovered', label: 'Recovered files', count: counts?.recovered_files },
             ]}
           />
@@ -78,7 +79,7 @@ export function FilesPage() {
             <RecoveredFiles caseId={caseId} />
           ) : (
             <FileIndex key={`${evidenceId}-${tab}`} caseId={caseId} evidenceId={evidenceId} deletedOnly={tab === 'deleted'}
-              initialFlag={tab === 'all' ? initialFlag : ''} onRecovered={reloadOverview} />
+              members={tab === 'members'} initialFlag={tab === 'all' ? initialFlag : ''} onRecovered={reloadOverview} />
           )}
         </Card>
       )}
@@ -103,8 +104,12 @@ export function FileFlags({ f }: { f: FsEntry }) {
   );
 }
 
-function FileIndex({ caseId, evidenceId, deletedOnly, initialFlag, onRecovered }: {
-  caseId: string; evidenceId: string; deletedOnly: boolean; initialFlag: Flag; onRecovered: () => void;
+const CONTAINER_KIND: Record<string, string> = {
+  zip: 'ZIP archive', '7z': 'archive', ooxml: 'Office document', odf: 'OpenDocument', ole: 'Office (OLE) file', pdf: 'PDF attachment',
+};
+
+function FileIndex({ caseId, evidenceId, deletedOnly, members, initialFlag, onRecovered }: {
+  caseId: string; evidenceId: string; deletedOnly: boolean; members: boolean; initialFlag: Flag; onRecovered: () => void;
 }) {
   const { can } = useAuth();
   const toast = useToast();
@@ -121,6 +126,7 @@ function FileIndex({ caseId, evidenceId, deletedOnly, initialFlag, onRecovered }
   useEffect(() => setSkip(0), [search, category, flag, hideKnown]);
   const qs = new URLSearchParams({ limit: String(LIMIT), skip: String(skip) });
   if (deletedOnly) qs.set('deleted', 'true');
+  if (members) qs.set('members', 'true');
   if (search) qs.set('q', search);
   if (category) qs.set('category', category);
   if (flag === 'renamed') qs.set('renamed', 'true');
@@ -131,10 +137,11 @@ function FileIndex({ caseId, evidenceId, deletedOnly, initialFlag, onRecovered }
   const filtered = Boolean(search || category || flag);
 
   async function recover(f: FsEntry) {
-    const key = `${f.partition_offset}:${f.inode}`;
+    const key = f.container ? f._id : `${f.partition_offset}:${f.inode}`;
     setBusy(key);
     try {
-      const r = await post<any>(`/forensics/evidence/${encodeURIComponent(evidenceId)}/recover?inode=${encodeURIComponent(f.inode)}&offset=${f.partition_offset}`);
+      const r = await post<any>(f.container ? `/forensics/members/${f._id}/recover`
+        : `/forensics/evidence/${encodeURIComponent(evidenceId)}/recover?inode=${encodeURIComponent(f.inode)}&offset=${f.partition_offset}`);
       if (r.status !== 'COMPLETED') throw new Error(r.stderr || `icat ${r.status}`);
       setRecovered((m) => ({ ...m, [key]: r }));
       toast(`Recovered ${r.filename} (${formatBytes(r.size)}) — SHA-256 ${r.sha256.slice(0, 12)}…`, 'ok');
@@ -163,15 +170,17 @@ function FileIndex({ caseId, evidenceId, deletedOnly, initialFlag, onRecovered }
           Hide known-good files
         </label>
         {filtered && <Button size="sm" variant="ghost" onClick={() => { setQ(''); setSearch(''); setCategory(''); setFlag(''); }}>Clear</Button>}
-        <span className="small muted">{data ? `${formatNumber(data.total)} ${deletedOnly ? 'deleted' : ''} ${data.total === 1 ? 'entry' : 'entries'}`.replace('  ', ' ') : ''}</span>
+        <span className="small muted">{data ? (members ? `${formatNumber(data.total)} file${data.total === 1 ? '' : 's'} inside archives and documents`
+          : `${formatNumber(data.total)} ${deletedOnly ? 'deleted' : ''} ${data.total === 1 ? 'entry' : 'entries'}`.replace('  ', ' ')) : ''}</span>
       </div>
       <ErrorBanner error={error} />
       {loading && !data ? (
         <Loading />
       ) : !data?.data.length ? (
         <Empty
-          title={filtered ? 'No matching files' : deletedOnly ? 'No deleted entries' : 'No files'}
-          text={deletedOnly && !filtered ? 'The filesystem metadata in this image describes no deleted files. File carving can still find data in unallocated space.' : undefined}
+          title={filtered ? 'No matching files' : deletedOnly ? 'No deleted entries' : members ? 'No archive contents' : 'No files'}
+          text={deletedOnly && !filtered ? 'The filesystem metadata in this image describes no deleted files. File carving can still find data in unallocated space.'
+            : members && !filtered ? 'Archives and documents are opened by the Full analysis profile (Archives and embedded files).' : undefined}
         />
       ) : (
         <div className="table-wrap">
@@ -179,8 +188,9 @@ function FileIndex({ caseId, evidenceId, deletedOnly, initialFlag, onRecovered }
             <thead><tr><th>Path</th><th>Type</th><th>Size</th><th>Modified</th><th>Accessed</th><th>Created</th><th /></tr></thead>
             <tbody>
               {data.data.map((f) => {
-                const key = `${f.partition_offset}:${f.inode}`;
+                const key = f.container ? f._id : `${f.partition_offset}:${f.inode}`;
                 const rec = recovered[key];
+                const viewable = !f.is_dir && (!f.container || !!f.container.store);
                 return (
                   <tr key={f._id} className={f.deleted ? 'is-deleted' : ''}>
                     <td className="cell-path">
@@ -189,9 +199,11 @@ function FileIndex({ caseId, evidenceId, deletedOnly, initialFlag, onRecovered }
                         <span className={f.deleted ? 'strong' : ''}>{f.path}</span>
                       </span>
                       <span className="row" style={{ gap: 4 }}>
-                        {f.deleted && <Badge tone="danger">{(f.deleted_status || 'deleted').toUpperCase()}</Badge>}
+                        {f.deleted && <Badge tone="danger">{f.container ? 'IN A DELETED FILE' : (f.deleted_status || 'deleted').toUpperCase()}</Badge>}
+                        {f.container && <Badge tone="accent">{`IN ${CONTAINER_KIND[f.container.kind] || 'container'}`.toUpperCase()}{f.container.depth > 1 ? ' (NESTED)' : ''}</Badge>}
                         <FileFlags f={f} />
                       </span>
+                      {f.container?.note && <div className="tiny muted">{f.container.note}</div>}
                     </td>
                     <td className="small">
                       {f.is_dir ? '—' : f.file_category ? (
@@ -199,19 +211,19 @@ function FileIndex({ caseId, evidenceId, deletedOnly, initialFlag, onRecovered }
                       ) : <span className="muted">—</span>}
                     </td>
                     <td className="small nowrap">{f.is_dir ? '—' : formatBytes(f.size)}</td>
-                    <td className="mono tiny nowrap">{time(f.mtime, false)}</td>
+                    <td className="mono tiny nowrap">{f.container ? <span title="As recorded in the container (no time zone)">{f.container.modified || '—'}</span> : time(f.mtime, false)}</td>
                     <td className="mono tiny nowrap">{time(f.atime, false)}</td>
                     <td className="mono tiny nowrap">{time(f.crtime, false)}</td>
                     <td className="nowrap right">
                       {!f.is_dir && <Button size="sm" variant="ghost" className="icon-btn" icon={<Info size={15} />} onClick={() => setDetails(f)} aria-label={`Details of ${f.path}`} title="Hashes, type and same content" />}{' '}
                       <TagButton type="FILE" id={f._id} title={f.path} />{' '}
-                      {!f.is_dir && <ViewButton source={{ kind: 'image', evidenceId, inode: f.inode, offset: f.partition_offset, name: f.path }} />}{' '}
+                      {viewable && <ViewButton source={f.container ? { kind: 'member', entryId: f._id, name: f.path } : { kind: 'image', evidenceId, inode: f.inode, offset: f.partition_offset, name: f.path }} />}{' '}
                       {rec ? (
                         <Button size="sm" icon={<Download size={13} />} onClick={() => downloadFile(`/forensics/artifacts/${rec.artifact_id}/download`, rec.filename).catch((e) => toast(e.message, 'danger'))}>
                           Download
                         </Button>
                       ) : (
-                        !f.is_dir && can('ANALYSIS_RUN') && (
+                        viewable && can('ANALYSIS_RUN') && (
                           <Button size="sm" icon={<RotateCcw size={13} />} busy={busy === key} onClick={() => recover(f)}>Recover</Button>
                         )
                       )}
@@ -247,6 +259,20 @@ export function FileDetails({ caseId, file: f, onClose }: { caseId: string; file
           <dl className="kv">
             <dt>Path</dt><dd className="mono small">{f.path}</dd>
             <dt>Evidence</dt><dd className="small">{f.evidence_id} · volume {f.volume_id || `offset ${f.partition_offset}`} · inode <span className="mono">{f.inode}</span>{f.deleted && ' · deleted'}</dd>
+            {f.container && (<>
+              <dt>Taken out of</dt>
+              <dd className="small"><span className="mono">{f.container.parent}</span> ({CONTAINER_KIND[f.container.kind] || f.container.kind}
+                {f.container.depth > 1 ? `, ${f.container.depth} containers deep` : ''})
+                <div className="tiny muted">Member <span className="mono">{f.container.member}</span>{f.container.modified ? ` · modified ${f.container.modified} as recorded (no time zone)` : ''}
+                  {f.container.packed_size !== null && f.container.packed_size !== undefined ? ` · ${formatBytes(f.container.packed_size)} compressed` : ''}</div>
+                {f.container.note && <div className="tiny">{f.container.note}</div>}</dd>
+            </>)}
+            {f.archive && (<>
+              <dt>Contains</dt>
+              <dd className="small">{f.archive.error ? `Could not be opened: ${f.archive.error}` : f.archive.note ? f.archive.note
+                : `${formatNumber(f.archive.members || 0)} file(s): ${formatNumber(f.archive.extracted || 0)} extracted${f.archive.encrypted ? `, ${f.archive.encrypted} encrypted (listed only)` : ''}${f.archive.not_extracted ? `, ${f.archive.not_extracted} not extracted` : ''}${f.archive.names_encrypted ? ' · the member names are encrypted too' : ''}`}
+                {!!f.archive.members && <> — see the Archive contents tab</>}</dd>
+            </>)}
             <dt>Size</dt><dd className="small">{formatBytes(f.size)} ({formatNumber(f.size)} bytes)</dd>
             {f.mime && (<>
               <dt>Type (from content)</dt>

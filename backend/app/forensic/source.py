@@ -247,3 +247,27 @@ class DirectorySource(EvidenceSource):
                 if p.is_symlink():
                     continue
                 yield {'path': f'{rel}/{name}', 'inode': None, 'size': p.stat().st_size, 'is_dir': False, 'deleted': False}
+
+
+# --------------------------------------------------------------------------------------------- container members
+def members_root() -> Path:
+    """Where members taken out of archives and documents are kept, under generated names (never their own)."""
+    from ..core.config import settings
+    return Path(settings.storage_path).resolve() / 'analysis' / 'members'
+
+
+def member_path(entry: dict) -> Path:
+    root = members_root()
+    p = (root / entry['container']['store']).resolve()
+    if root not in p.parents:
+        raise ValueError('Member store path outside the members folder')
+    return p
+
+
+def open_entry(src: EvidenceSource, evidence_id: str, entry: dict) -> Blob:
+    """The content of a file-index entry: a file on the evidence, or a member taken out of a container."""
+    if entry.get('container'):
+        if not (entry['container'].get('store')):
+            raise ValueError('This member was not extracted (encrypted, or over a size limit)')
+        return _FileBlob(member_path(entry))
+    return src.open(BlobRef(evidence_id, entry.get('volume_id') or 'p0', inode=entry.get('inode')))

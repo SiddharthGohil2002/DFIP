@@ -96,10 +96,11 @@ def istat(eid:str,inode:str,offset:int=0,u=Depends(require_write('ANALYSIS_RUN')
 @r.get('/evidence/{eid}/files')
 def files(eid:str,deleted:bool|None=None,q:str|None=None,offset:int|None=None,volume_id:str|None=None,category:str|None=None,
           renamed:bool|None=None,encrypted:bool|None=None,hash_status:str|None=None,hide_known:bool=False,sha256:str|None=None,
-          skip:int=0,limit:int=200,u=Depends(current_user)):
+          members:bool=False,skip:int=0,limit:int=200,u=Depends(current_user)):
     """Filesystem index built by the analysis pipeline (Sleuth Kit fls), with each file's hashes, type and flags."""
     e=auth_evidence(eid,u)
-    query={'evidence_id':e['evidence_id'],'is_virtual':False}
+    # Files of the file systems, or (members=true) files taken out of archives and documents on them.
+    query={'evidence_id':e['evidence_id'],'is_virtual':False,'container':{'$exists':members}}
     if deleted is not None: query['deleted']=deleted
     if category: query['file_category']=category
     if renamed is not None: query['ext_mismatch']=True if renamed else {'$ne':True}
@@ -163,7 +164,7 @@ def recover(eid:str,inode:str,offset:int=0,volume_id:str|None=None,u=Depends(req
     e=auth_evidence(eid,u)
     if e.get('demo'): raise HTTPException(400,'Demo evidence cannot be recovered')
     if not INODE_RE.match(inode): raise HTTPException(400,'Invalid inode address')
-    entry=get_db()['fs_entries'].find_one({'evidence_id':e['evidence_id'],'inode':inode,'partition_offset':offset})
+    entry=get_db()['fs_entries'].find_one({'evidence_id':e['evidence_id'],'inode':inode,'partition_offset':offset,'container':{'$exists':False}})
     image=tsk_image(e); aid=str(uuid.uuid4())
     original=entry['path'] if entry else None
     # Keep the original file name (in a per-recovery folder) so viewers and parsers can use it.
@@ -198,7 +199,8 @@ def _image_file(eid, inode, offset, u):
     e = auth_evidence(eid, u)
     if e.get('demo'): raise HTTPException(400, 'Demo evidence has no file content')
     if not INODE_RE.match(inode or ''): raise HTTPException(400, 'Invalid inode address')
-    entry = get_db()['fs_entries'].find_one({'evidence_id': e['evidence_id'], 'inode': inode, 'partition_offset': offset})
+    entry = get_db()['fs_entries'].find_one({'evidence_id': e['evidence_id'], 'inode': inode, 'partition_offset': offset,
+                                             'container': {'$exists': False}})
     if not entry: raise HTTPException(404, 'File not found in the file index')
     if entry.get('is_dir') or entry.get('is_virtual'): raise HTTPException(400, 'Folders and filesystem metadata entries cannot be viewed')
     image = tsk_image(e)
@@ -294,6 +296,96 @@ def artifact_preview(artifact_id: str, u=Depends(require_permission('EVIDENCE_RE
 @r.get('/artifacts/{artifact_id}/raw')
 def artifact_raw(artifact_id: str, u=Depends(require_permission('EVIDENCE_READ'))):
     return _raw(_artifact_file(artifact_id, u), u, 'artifact')
+
+
+# ---------------------------------------------------------------- files taken out of archives and documents
+def _member_doc(entry_id: str, u) -> tuple[dict, dict]:
+    from bson import ObjectId
+    doc = get_db()['fs_entries'].find_one({'_id': ObjectId(entry_id), 'container': {'$exists': True}}) if ObjectId.is_valid(entry_id) else None
+    if not doc: raise HTTPException(404, 'Archive member not found')
+    return auth_evidence(doc['evidence_id'], u), doc
+
+
+def _member_file(entry_id: str, u):
+    """A member taken out of an archive or document on the evidence (stored under a generated name)."""
+    from ..forensic.source import member_path
+    e, doc = _member_doc(entry_id, u)
+    c = doc['container']
+    if not c.get('store'): raise HTTPException(409, f"This member was not extracted: {c.get('note') or 'encrypted'}")
+    p = member_path(doc)
+    if not p.is_file(): raise HTTPException(410, 'The member content is no longer stored; run Archives and embedded files again')
+    return e, doc['path'], p.stat().st_size, (lambda start, length: content.read_file_range(p, start, length)), \
+        {'evidence_id': e['evidence_id'], 'member': entry_id, 'path': doc['path']}
+
+
+@r.get('/members/{entry_id}/content')
+def member_content(entry_id: str, start: int = 0, length: int = 4096, u=Depends(require_permission('EVIDENCE_READ'))):
+    return _page(_member_file(entry_id, u), start, length, u, 'member')
+
+
+@r.get('/members/{entry_id}/preview')
+def member_preview(entry_id: str, u=Depends(require_permission('EVIDENCE_READ'))):
+    return _preview(_member_file(entry_id, u), u, 'member')
+
+
+@r.get('/members/{entry_id}/raw')
+def member_raw(entry_id: str, u=Depends(require_permission('EVIDENCE_READ'))):
+    return _raw(_member_file(entry_id, u), u, 'member')
+
+
+@r.post('/members/{entry_id}/recover')
+def recover_member(entry_id: str, u=Depends(require_write('ANALYSIS_RUN'))):
+    """Copies an archive member out as a recovered file: hashed, recorded in the chain of custody, downloadable."""
+    import shutil
+    e, path, size, _, _ = _member_file(entry_id, u)
+    _, doc = _member_doc(entry_id, u)
+    from ..forensic.source import member_path
+    aid = str(uuid.uuid4())
+    name = doc.get('name') or 'member.bin'
+    dest = Path(settings.storage_path).resolve() / 'analysis' / 'recovered' / e['evidence_id'] / aid / Path(name).name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(member_path(doc), dest)
+    digest = sha256_file(dest)
+    dest.chmod(0o440)
+    if doc.get('sha256') and digest != doc['sha256']:
+        raise HTTPException(409, 'The stored member no longer matches its recorded SHA-256')
+    now = datetime.now(timezone.utc)
+    art = {'artifact_id': aid, 'case_id': e['case_id'], 'evidence_id': e['evidence_id'], 'type': 'RECOVERED_FILE', 'timestamp': now,
+           'path': str(dest), 'filename': dest.name, 'original_path': doc['path'], 'was_deleted': bool(doc.get('deleted')),
+           'inode': doc.get('inode'), 'offset': doc.get('partition_offset'), 'size': size, 'sha256': digest, 'source': 'CONTAINER_MEMBER',
+           'container': {'parent': doc['container'].get('parent'), 'member': doc['container'].get('member'), 'kind': doc['container'].get('kind')}}
+    get_db()['forensic_artifacts'].insert_one(art)
+    log(u, 'FILE_RECOVERED', 'evidence', e['_id'], {'artifact_id': aid, 'original_path': doc['path'], 'sha256': digest, 'member': True})
+    get_db()['chain_of_custody'].insert_one({'evidence_id': e['evidence_id'], 'case_id': e['case_id'], 'timestamp': now, 'user_id': str(u['_id']),
+                                             'user_name': u.get('name'), 'action': 'FILE_RECOVERED', 'artifact_id': aid,
+                                             'original_path': doc['path'], 'inode': doc.get('inode'), 'sha256': digest})
+    manager.emit_sync('ARTIFACT_CREATED', {'artifact_id': aid, 'case_id': e['case_id'], 'type': 'RECOVERED_FILE', 'filename': dest.name})
+    return serial({'status': 'COMPLETED', 'artifact_id': aid, 'size': size, 'sha256': digest, 'filename': dest.name,
+                   'original_path': doc['path'], 'was_deleted': art['was_deleted']})
+
+
+# ---------------------------------------------------------------- raw bytes of a volume (unallocated-space hits)
+@r.get('/evidence/{eid}/volume')
+def volume_content(eid: str, volume_id: str, start: int = 0, length: int = 4096, u=Depends(require_permission('EVIDENCE_READ'))):
+    """One page of a volume's raw bytes (base64) at a byte offset within the volume, for the hex viewer. Every
+    page read is recorded in the audit log."""
+    e = auth_evidence(eid, u)
+    if e.get('demo'): raise HTTPException(400, 'Demo evidence has no content')
+    try:
+        sector = offset_of(volume_id)
+    except ValueError:
+        raise HTTPException(400, 'Unknown volume')
+    if start < 0 or length < 1: raise HTTPException(400, 'start must be 0 or more and length at least 1')
+    image = Path(tsk_image(e))
+    facts = get_db()['analysis_facts'].find_one({'evidence_id': e['evidence_id']}) or {}
+    part = next((p for p in (facts.get('fs_index') or {}).get('partitions', []) if p.get('start') == sector), None)
+    size = int(part['length']) * 512 if part and part.get('length') else image.stat().st_size - sector * 512
+    with image.open('rb') as f:
+        f.seek(sector * 512 + min(start, size))
+        data = f.read(max(0, min(length, content.PAGE_MAX, size - start)))
+    log(u, 'FILE_CONTENT_VIEWED', 'volume', e['_id'], {'evidence_id': e['evidence_id'], 'volume_id': volume_id, 'start': start, 'view': 'hex'})
+    return {'path': f'Volume {volume_id}', 'start': start, 'length': len(data), 'size': size, 'eof': start + len(data) >= size,
+            'data_b64': base64.b64encode(data).decode()}
 
 
 @r.get('/usb')

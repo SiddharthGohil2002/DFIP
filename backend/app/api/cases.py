@@ -125,8 +125,10 @@ def overview(case_id: str, u=Depends(current_user)):
     counts = {
         'evidence': len(evidence),
         'evidence_analyzed': sum(1 for e in evidence if e.get('analysis_status') == 'COMPLETED'),
-        'files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'is_virtual': False}),
-        'deleted_files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'deleted': True, 'is_virtual': False}),
+        'files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'is_virtual': False, 'container': {'$exists': False}}),
+        'deleted_files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'deleted': True, 'is_virtual': False,
+                                                           'container': {'$exists': False}}),
+        'archive_members': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'container': {'$exists': True}}),
         'recovered_files': art.count_documents({'case_id': case_id, 'type': 'RECOVERED_FILE'}),
         'carved_files': art.count_documents({'case_id': case_id, 'type': 'CARVED_FILE'}),
         'timeline_events': db['timeline_events'].count_documents({'case_id': case_id}),

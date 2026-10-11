@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..found_data import KINDS, SENSITIVE, find_all, key_of
-from ..text_index import DocMap, index_path, iter_documents
+from ..text_index import DocMap, index_path, iter_documents, unallocated_index_path
 from .base import Module
 
 MAX_OCCURRENCES = 100     # stored per value (all are counted)
@@ -19,6 +19,7 @@ class FoundDataModule(Module):
     description = ('Email addresses, web and IP addresses, phone numbers, card numbers (Luhn), IBANs (mod-97), Bitcoin and '
                    'Ethereum addresses (checksums) and Aadhaar numbers (Verhoeff) in the file contents.')
     requires = ('content',)
+    follows = ('unallocated',)  # unallocated space is scanned too when it was read
     weight = 8
     collections = ('entities',)
 
@@ -29,10 +30,12 @@ class FoundDataModule(Module):
         if not Path(path).is_file():
             ctx.warn('No content index for this evidence; run File contents first')
             return
+        sources = [path] + ([unallocated_index_path(ctx.eid)] if ctx.fact('unallocated', 'index') else [])
         found: dict[tuple[str, str], dict] = {}
         per_kind = {k: 0 for k in KINDS}
         capped = set()
-        for n, (doc, text) in enumerate(iter_documents(path)):
+        documents = (d for p in sources if Path(p).is_file() for d in iter_documents(p))
+        for n, (doc, text) in enumerate(documents):
             if n % 100 == 0:
                 ctx.progress(min(0.95, n / max(1, (ctx.fact('content', 'index') or {}).get('documents') or 1)))
             where = None
@@ -48,12 +51,13 @@ class FoundDataModule(Module):
                         'display': display, 'sensitive': kind in SENSITIVE, 'details': details, 'count': 0, 'files': set(),
                         'occurrences': []}
                 item['count'] += 1
-                item['files'].add(doc['id'])
+                item['files'].add((doc['volume_id'], doc['path']))  # ids repeat across the two indexes
                 if len(item['occurrences']) < MAX_OCCURRENCES:
                     where = where or DocMap(doc)
                     item['occurrences'].append({
                         'path': doc['path'], 'inode': doc['inode'], 'volume_id': doc['volume_id'], 'deleted': bool(doc['deleted']),
-                        'method': doc['method'], 'text_offset': start, 'byte_offset': where.offset(text, start),
+                        'method': doc['method'], 'member': bool(doc['member']) if 'member' in doc.keys() else False, 'text_offset': start,
+                        'byte_offset': where.offset(text, start),
                         'byte_length': where.length(start, text[start:end]), 'as_found': text[start:end] if kind not in SENSITIVE else None})
         for kind in capped:
             ctx.warn(f'More than {MAX_VALUES_PER_KIND:,} different {kind} values: the rest were not recorded')

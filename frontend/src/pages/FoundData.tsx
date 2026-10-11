@@ -8,7 +8,7 @@ import { formatNumber } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import type { FoundKind, FoundValue } from '../lib/types';
-import { ViewButton } from '../ui/FileViewer';
+import { ViewButton, locate } from '../ui/FileViewer';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Tabs, useToast } from '../ui';
 
 const KINDS: { id: FoundKind; label: string; how: string }[] = [
@@ -153,18 +153,15 @@ function Occurrences({ id }: { id: string }) {
   const occ = v.occurrences || [];
   return (
     <div className="stack" style={{ gap: 6 }}>
-      {occ.map((o, i) => (
+      {occ.map((o, i) => { const src = locate({ ...o, evidence_id: v.evidence_id }); return (
         <div key={i} className="row" style={{ justifyContent: 'space-between' }}>
           <span className="mono small" style={{ wordBreak: 'break-all' }}>
-            {o.path} {o.deleted && <Badge tone="danger">DELETED</Badge>}
+            {o.path} {o.deleted && <Badge tone="danger">DELETED</Badge>} {o.member && <Badge tone="accent">IN ARCHIVE</Badge>}
             <span className="muted"> · {o.byte_offset !== null ? `byte ${formatNumber(o.byte_offset)}` : 'in extracted text'}{o.as_found && o.as_found !== v.display ? ` · written “${o.as_found}”` : ''}</span>
           </span>
-          {o.byte_offset !== null && o.partition_offset !== null && (
-            <ViewButton source={{ kind: 'image', evidenceId: v.evidence_id, inode: o.inode, offset: o.partition_offset, name: o.path }}
-              at={{ offset: o.byte_offset, length: o.byte_length }} />
-          )}
+          {o.byte_offset !== null && src && <ViewButton source={src} at={{ offset: o.byte_offset, length: o.byte_length }} />}
         </div>
-      ))}
+      ); })}
       {v.count > occ.length && <div className="tiny muted">Showing {occ.length} of {formatNumber(v.count)} occurrences.</div>}
     </div>
   );

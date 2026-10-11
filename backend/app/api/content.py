@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..database import get_db
 from ..forensic.found_data import KINDS, LABELS
 from ..forensic.source import offset_of
-from ..forensic.text_index import SEARCH_SECONDS, QueryError, index_path, search
+from ..forensic.text_index import SEARCH_SECONDS, QueryError, index_path, search, unallocated_index_path
 from ..repositories.cases import get_case
 from ..security import current_user
 from ..services.audit import log
@@ -54,26 +54,30 @@ def content_search(case_id: str, q: str, mode: str = 'text', evidence_id: str | 
     deadline = t0 + SEARCH_SECONDS
     hits, complete, not_indexed = [], True, []
     for e in evidence:
-        path = index_path(e['evidence_id'])
-        if ((e.get('modules') or {}).get('content') or {}).get('status') != 'COMPLETED' or not Path(path).is_file():
+        mods = e.get('modules') or {}
+        # The files' index, and the unallocated space's when it was read.
+        indexes = [p for name, p in (('content', index_path(e['evidence_id'])), ('unallocated', unallocated_index_path(e['evidence_id'])))
+                   if (mods.get(name) or {}).get('status') == 'COMPLETED' and Path(p).is_file()]
+        if not any(str(p) == str(index_path(e['evidence_id'])) for p in indexes):
             not_indexed.append({'evidence_id': e['evidence_id'], 'filename': e.get('filename')})
-            continue
-        try:
-            found, done = search(path, term, mode, deadline)
-        except QueryError as exc:
-            raise HTTPException(400, str(exc))
-        complete &= done
-        for h in found:
-            h['evidence_id'] = e['evidence_id']
-            h['partition_offset'] = _offset(h.get('volume_id'))
-            hits.append(h)
+        for path in indexes:
+            try:
+                found, done = search(path, term, mode, deadline)
+            except QueryError as exc:
+                raise HTTPException(400, str(exc))
+            complete &= done
+            for h in found:
+                h['evidence_id'] = e['evidence_id']
+                h['partition_offset'] = _offset(h.get('volume_id'))
+                h['unallocated'] = h.get('method') == 'unallocated'
+                hits.append(h)
         if time.monotonic() > deadline:
             complete = False
             break
     page = hits[max(0, skip):max(0, skip) + max(1, min(limit, 200))]
-    for h in page:  # the current file-index record, for details, tags and the viewer
-        entry = db['fs_entries'].find_one({'evidence_id': h['evidence_id'], 'volume_id': h['volume_id'], 'inode': h['inode'],
-                                           'path': h['path']}, {'_id': 1})
+    for h in page:  # the current file-index record (file or archive member), for details, tags and the viewer
+        entry = None if h['unallocated'] else db['fs_entries'].find_one(
+            {'evidence_id': h['evidence_id'], 'volume_id': h['volume_id'], 'inode': h['inode'], 'path': h['path']}, {'_id': 1})
         h['entry_id'] = str(entry['_id']) if entry else None
     result = {'query': term, 'mode': mode, 'total_files': len(hits), 'total_matches': sum(h['match_count'] for h in hits),
               'complete': complete, 'files': page, 'not_indexed': not_indexed, 'elapsed_ms': int((time.monotonic() - t0) * 1000),
@@ -92,7 +96,13 @@ def _public(doc: dict, occurrences: bool = False) -> dict:
     occ = doc.get('occurrences') or []
     out['first'] = occ[0]['path'] if occ else None
     if occurrences:
-        out['occurrences'] = [dict(o, partition_offset=_offset(o.get('volume_id'))) for o in occ]
+        out['occurrences'] = []
+        for o in occ:
+            o = dict(o, partition_offset=_offset(o.get('volume_id')))
+            if o.get('member'):  # an archive member is viewed by its file-index record
+                entry = get_db()['fs_entries'].find_one({'evidence_id': doc['evidence_id'], 'path': o['path']}, {'_id': 1})
+                o['entry_id'] = str(entry['_id']) if entry else None
+            out['occurrences'].append(o)
     return out
 
 

@@ -171,6 +171,7 @@ export interface CaseCounts {
   known_bad_files?: number;
   notable_files?: number;
   found_data?: number;
+  archive_members?: number;
   malware_indicators: number;
   patterns: number;
   anomalies_flagged: number;
@@ -215,11 +216,26 @@ export interface FsEntry {
   /** What the name suggests when the content contradicts it, e.g. "JPEG image". */
   expected_type?: string | null;
   entropy?: number;
-  encryption?: { kind: 'ZIP' | 'OFFICE' | 'PDF' | 'HIGH_ENTROPY'; detail: string } | null;
+  encryption?: { kind: 'ZIP' | 'OFFICE' | 'PDF' | 'HIGH_ENTROPY' | 'ARCHIVE'; detail: string } | null;
   hash_basis?: string;
   hash_error?: string | null;
   hash_status?: HashKind | null;
   hash_sets?: { set_id: string; name: string; kind: HashKind; algorithm: string }[];
+  /** For a file taken out of an archive or document: where it came from. */
+  container?: {
+    kind: 'zip' | 'ooxml' | 'odf' | 'ole' | 'pdf' | '7z';
+    parent: string;
+    member: string;
+    depth: number;
+    encrypted: boolean;
+    packed_size?: number | null;
+    modified?: string | null;
+    store?: string | null;
+    note?: string | null;
+  };
+  /** For an archive or document: what it holds. */
+  archive?: { kind: string; members?: number; extracted?: number; encrypted?: number; not_extracted?: number; names_encrypted?: boolean;
+    error?: string; note?: string };
 }
 
 export type HashKind = 'KNOWN_GOOD' | 'KNOWN_BAD' | 'NOTABLE';
@@ -233,6 +249,8 @@ export interface FoundOccurrence {
   partition_offset: number | null;
   deleted: boolean;
   method: string;
+  member?: boolean;
+  entry_id?: string | null;
   text_offset: number;
   byte_offset: number | null;
   byte_length: number | null;
@@ -273,7 +291,9 @@ export interface ContentHit {
   partition_offset: number | null;
   deleted: boolean;
   size: number;
-  method: 'text' | 'strings' | 'pdf' | 'ooxml' | 'odf' | 'rtf';
+  method: 'text' | 'strings' | 'pdf' | 'ooxml' | 'odf' | 'rtf' | 'sqlite' | 'unallocated';
+  member?: boolean;
+  unallocated?: boolean;
   encoding?: string | null;
   truncated: boolean;
   match_count: number;

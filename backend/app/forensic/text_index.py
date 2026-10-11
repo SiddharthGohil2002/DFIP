@@ -40,6 +40,10 @@ def index_path(evidence_id: str) -> Path:
     return index_dir() / f'{evidence_id}.sqlite'
 
 
+def unallocated_index_path(evidence_id: str) -> Path:
+    return index_dir() / f'{evidence_id}.unalloc.sqlite'
+
+
 class Writer:
     def __init__(self, path: Path):
         self.path = path
@@ -49,17 +53,17 @@ class Writer:
             PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;
             CREATE TABLE docs (id INTEGER PRIMARY KEY, path TEXT, inode TEXT, volume_id TEXT, deleted INTEGER,
                                size INTEGER, method TEXT, encoding TEXT, bom INTEGER, spans TEXT, chars INTEGER,
-                               truncated INTEGER);
+                               truncated INTEGER, member INTEGER);
             CREATE VIRTUAL TABLE body USING fts5(text, tokenize='trigram');
         """)
         self.n = 0
 
     def add(self, entry: dict, ex: Extracted) -> int:
         self.n += 1
-        self.con.execute('INSERT INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', (
+        self.con.execute('INSERT INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', (
             self.n, entry.get('path'), entry.get('inode'), entry.get('volume_id'), int(bool(entry.get('deleted'))),
             entry.get('size'), ex.method, ex.encoding, ex.bom, json.dumps(ex.spans) if ex.spans else None,
-            len(ex.text), int(ex.truncated)))
+            len(ex.text), int(ex.truncated), int(bool(entry.get('container')))))
         self.con.execute('INSERT INTO body (rowid, text) VALUES (?, ?)', (self.n, ex.text))
         if self.n % 200 == 0:
             self.con.commit()
@@ -102,7 +106,7 @@ class DocMap:
         """Where character i starts in the file, or None when the text is not stored in the file as such."""
         if self.method == 'text':
             return self.bom + len(text[:i].encode(self.encoding, errors='replace'))
-        if self.method == 'strings':
+        if self.method in ('strings', 'unallocated'):  # unallocated: offsets in the volume, not a file
             span = self._span(i)
             return span[1] + (i - span[0]) * span[2] if span else None
         return None
@@ -110,7 +114,7 @@ class DocMap:
     def length(self, i: int, matched: str) -> int | None:
         if self.method == 'text':
             return len(matched.encode(self.encoding, errors='replace'))
-        if self.method == 'strings' and '\n' not in matched:  # a match across two strings has no single length
+        if self.method in ('strings', 'unallocated') and '\n' not in matched:  # a match across two strings has no single length
             span = self._span(i)
             return len(matched) * span[2] if span else None
         return None
@@ -282,6 +286,7 @@ def search(path: Path, query: str, mode: str, deadline: float, max_files: int = 
             if count:
                 hits.append({'path': doc['path'], 'inode': doc['inode'], 'volume_id': doc['volume_id'],
                              'deleted': bool(doc['deleted']), 'size': doc['size'], 'method': doc['method'],
+                             'member': bool(doc['member']) if 'member' in doc.keys() else False,
                              'encoding': doc['encoding'], 'truncated': bool(doc['truncated']), 'match_count': count,
                              'matches': matches})
     finally:

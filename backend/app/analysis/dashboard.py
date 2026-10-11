@@ -84,7 +84,7 @@ def top_domains(db, case_id: str, evidence_id: str | None, limit: int = 10) -> d
 def file_types(db, evidence_ids: list[str], limit: int = 12) -> dict:
     """Files by extension (lower case; '' for none), with total size and how many are deleted."""
     rows = list(db['fs_entries'].aggregate([
-        {'$match': {'evidence_id': {'$in': evidence_ids}, 'is_virtual': False, 'is_dir': False}},
+        {'$match': {'evidence_id': {'$in': evidence_ids}, 'is_virtual': False, 'is_dir': False, 'container': {'$exists': False}}},
         {'$project': {'size': 1, 'deleted': 1, 'ext': {'$toLower': {'$ifNull': [
             {'$arrayElemAt': [{'$getField': {'field': 'captures', 'input': {'$regexFind': {'input': '$name', 'regex': EXTENSION}}}}, 0]}, '']}}}},
         {'$group': {'_id': '$ext', 'count': {'$sum': 1}, 'size': {'$sum': {'$ifNull': ['$size', 0]}},

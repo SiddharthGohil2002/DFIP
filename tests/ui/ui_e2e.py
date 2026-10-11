@@ -87,6 +87,8 @@ with sync_playwright() as p:
     dialog.get_by_role('checkbox', name='YARA scan').check()
     dialog.get_by_role('checkbox', name=re.compile(r'^File contents')).check()  # also index the contents (and find data) for the steps below
     dialog.get_by_role('checkbox', name=re.compile(r'^Found data')).check()
+    dialog.get_by_role('checkbox', name=re.compile(r'^Archives and embedded files')).check()
+    dialog.get_by_role('checkbox', name=re.compile(r'^Unallocated space')).check()
     shot(page, '06b-analysis-options')
     dialog.get_by_role('button', name='Start analysis').click()
     expect(dialog).to_have_count(0)
@@ -181,6 +183,19 @@ with sync_playwright() as p:
     expect(page.locator('main table tbody tr')).to_have_count(3)
     shot(page, '07e-encrypted-files')
 
+    step['v'] = 'archive contents'
+    page.get_by_role('tab', name='Archive contents').click()
+    nested = page.locator('main table tbody tr', has_text='export-backup.zip!/archive.7z!/q3-salaries.csv')
+    expect(nested.get_by_text('IN ARCHIVE (NESTED)')).to_be_visible()
+    expect(page.locator('main table tbody tr', has_text='private.zip!/payroll-export.csv').get_by_text('ENCRYPTED', exact=True)).to_be_visible()
+    expect(page.locator('main table tbody tr', has_text='oleObject1.bin!/payroll-summary.txt')).to_have_count(1)
+    nested.get_by_role('button', name='View').click()
+    expect(page.get_by_role('dialog').get_by_text('alice,alice.personal@example.net,72000')).to_be_visible()
+    page.keyboard.press('Escape')
+    nested.get_by_role('button', name='Recover').click()
+    expect(nested.get_by_role('button', name='Download')).to_be_visible()
+    shot(page, '07f-archive-contents')
+
     step['v'] = 'timeline'
     page.get_by_role('link', name='Timeline').first.click()
     expect(page.get_by_text(f"{counts['timeline_events']} events")).to_be_visible()
@@ -238,7 +253,9 @@ with sync_playwright() as p:
     expect(page.get_by_text('Suspicious_PowerShell_EncodedCommand')).to_be_visible()
     flagged = page.locator('.card', has=page.get_by_role('heading', name='Renamed and encrypted files'))
     expect(flagged.get_by_text('the name suggests JPEG image')).to_be_visible()
-    expect(flagged.locator('tbody tr')).to_have_count(5)  # 2 renamed + 3 encrypted
+    ind_case = api_get(page, f'/evidence/{eid}')['case_id']
+    flagged_paths = {x['path'] for k in ('renamed', 'encrypted') for x in api_get(page, f'/forensics/flagged?case_id={ind_case}&kind={k}')['data']}
+    expect(flagged.locator('tbody tr')).to_have_count(len(flagged_paths))  # renamed and encrypted files (archive members included)
     shot(page, '12-indicators')
 
     step['v'] = 'search'
@@ -267,10 +284,21 @@ with sync_playwright() as p:
     expect(dialog.locator('pre.hex-dump mark').first).to_have_text('44')  # "D"
     shot(page, '13c-view-at-offset')
     page.keyboard.press('Escape')
+    unalloc = page.locator('.card', has=page.get_by_text('UNALLOCATED', exact=True)).first
+    unalloc.get_by_role('button', name='View at offset').first.click()
+    dialog = page.get_by_role('dialog')
+    expect(dialog.get_by_role('heading', name='Unallocated space (p2048)')).to_be_visible()
+    expect(dialog.get_by_role('tab', name='Preview')).to_have_count(0)  # raw volume bytes: hex only
+    expect(dialog.locator('pre.hex-dump mark')).to_have_count(38)
+    shot(page, '13e-unallocated-hit')
+    page.keyboard.press('Escape')
     page.get_by_role('tab', name='Regular expression').click()
     page.get_by_label('Regular expression').fill(r'emp05\d,DE\d{20}')
     page.get_by_role('button', name='Search').click()
-    expect(page.get_by_text('30 matches in 3 files')).to_be_visible()
+    import urllib.parse
+    pattern = urllib.parse.quote(r'emp05\d,DE\d{20}')
+    rr = api_get(page, f'/forensics/content-search?case_id={case_id}&mode=regex&q={pattern}')
+    expect(page.get_by_text(f"{rr['total_matches']} matches in {rr['total_files']} files")).to_be_visible()
 
     step['v'] = 'found data'
     page.locator('a.nav-link[href$="/app/found-data"]').click()

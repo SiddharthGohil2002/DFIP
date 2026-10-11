@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..source import BlobRef, TskImageSource
+from ..source import TskImageSource, open_entry
 from .base import Module
 
 RULES_FILE = Path(__file__).resolve().parents[3] / 'rules' / 'default.yar'
@@ -24,8 +24,9 @@ class YaraModule(Module):
     name = 'yara'
     label = 'YARA scan'
     description = "Scans every executable, script, document and archive (chosen by content, deleted ones included) with DFIP's YARA rules."
-    version = '2'  # 2: in-process, chosen by content type, all users and deleted files
+    version = '3'  # 2: in-process, chosen by content type, all users and deleted files; 3: archive members
     requires = ('fileproc',)
+    follows = ('containers',)  # archive members are scanned too
     weight = 10
     collections = ('forensic_artifacts',)
 
@@ -39,7 +40,7 @@ class YaraModule(Module):
         rules = yara.compile(filepath=str(RULES_FILE))
         candidates = list(ctx.db['fs_entries'].find(
             {'evidence_id': ctx.eid, 'pipeline': True, 'file_category': {'$in': list(CATEGORIES)}, 'size': {'$gt': 0}},
-            {'path': 1, 'inode': 1, 'volume_id': 1, 'size': 1, 'deleted': 1, 'file_category': 1}).sort('path', 1))
+            {'path': 1, 'inode': 1, 'volume_id': 1, 'size': 1, 'deleted': 1, 'file_category': 1, 'container': 1}).sort('path', 1))
         skipped = [c for c in candidates if c['size'] > MAX_FILE_BYTES]
         candidates = [c for c in candidates if c['size'] <= MAX_FILE_BYTES]
         if skipped:
@@ -56,7 +57,7 @@ class YaraModule(Module):
             if n % 25 == 0:
                 ctx.progress(n / max(1, len(candidates)))
             try:
-                data = src.read_range(BlobRef(ctx.eid, c.get('volume_id') or 'p0', inode=c['inode']), 0, c['size'])
+                data = open_entry(src, ctx.eid, c).read(0, c['size'])
                 matches = rules.match(data=data, timeout=MATCH_TIMEOUT)
             except Exception as exc:
                 ctx.warn(f'{c["path"]}: not scanned with YARA: {exc}')

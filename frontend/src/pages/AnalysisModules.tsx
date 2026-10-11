@@ -113,6 +113,10 @@ const COUNT_LABELS: [string, string, string][] = [
   ['found_ip_addresses', 'IP address', 'IP addresses'], ['found_phone_numbers', 'phone number', 'phone numbers'],
   ['found_card_numbers', 'card number', 'card numbers'], ['found_ibans', 'IBAN', 'IBANs'],
   ['found_crypto_addresses', 'crypto address', 'crypto addresses'], ['found_aadhaar_numbers', 'Aadhaar number', 'Aadhaar numbers'],
+  ['containers_opened', 'archive or document opened', 'archives and documents opened'],
+  ['members_found', 'file inside', 'files inside'], ['members_extracted', 'extracted', 'extracted'],
+  ['members_encrypted', 'encrypted member', 'encrypted members'], ['members_not_extracted', 'member not extracted', 'members not extracted'],
+  ['unallocated_text_blocks', 'block of unallocated text', 'blocks of unallocated text'],
   ['timeline_events', 'timeline event', 'timeline events'],
 ];
 
