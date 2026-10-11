@@ -106,16 +106,20 @@ def test_plan_reruns_only_what_is_needed():
     # Modules that follow another (read its output when it ran) are refreshed when it re-runs.
     assert plan(['containers'], status) == ['containers', 'hash_match', 'yara', 'content', 'found_data']
     assert plan(['unallocated'], status) == ['unallocated', 'found_data']
+    # Event logs read the accounts (computer) and add to the USB devices (artifacts): both refresh them.
+    assert plan(['artifacts'], status) == ['artifacts', 'eventlogs']
+    assert plan(['computer'], status) == ['computer', 'eventlogs']
+    assert plan(['eventlogs'], status) == ['eventlogs']
     assert plan(['content'], status) == ['content', 'found_data']
     # Dependents are refreshed.
-    assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'registry', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
-                                          'unallocated', 'found_data']
-    # A new time zone re-indexes the file system (FAT times) and refreshes what was built on the index.
-    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'fileproc', 'containers', 'hash_match', 'yara',
+    assert plan(['fs_index'], status) == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'containers', 'hash_match', 'yara',
                                           'content', 'unallocated', 'found_data']
+    # A new time zone re-indexes the file system (FAT times) and refreshes what was built on the index.
+    assert plan(['tz_probe'], status) == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'containers', 'hash_match',
+                                          'yara', 'content', 'unallocated', 'found_data']
     # On evidence analysed with the standard profile, the content modules are not added by a re-run.
     standard = _done(*PROFILES['standard'])
-    assert plan(['fs_index'], standard) == ['fs_index', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara']
+    assert plan(['fs_index'], standard) == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'hash_match', 'yara']
     assert plan(['fs_index'], _done('tz_probe', 'fs_index')) == ['fs_index']  # dependents that never ran are not added
 
 

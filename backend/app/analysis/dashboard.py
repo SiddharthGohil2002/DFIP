@@ -12,13 +12,15 @@ from urllib.parse import urlsplit
 # (and on FAT carry only a date for "accessed", which would pile up at midnight).
 ACTIVITY_TYPES = ['BROWSER_VISIT', 'BROWSER_DOWNLOAD', 'USB_ACTIVITY', 'PROGRAM_RUN', 'RECENT_FILE_OPENED', 'FILE_DELETED_TO_RECYCLE_BIN',
                   'PROGRAM_RUN_USERASSIST', 'PROGRAM_RUN_BAM', 'FOLDER_BROWSED', 'EXPLORER_SEARCH', 'TYPED_PATH', 'RECENT_DOC_OPENED',
-                  'RUN_DIALOG', 'RDP_CONNECTION']
+                  'RUN_DIALOG', 'RDP_CONNECTION', 'LOGON', 'LOGOFF']
 GROUPS = {'BROWSER_VISIT': 'web', 'BROWSER_DOWNLOAD': 'web', 'USB_ACTIVITY': 'usb', 'PROGRAM_RUN': 'windows',
           'RECENT_FILE_OPENED': 'windows', 'FILE_DELETED_TO_RECYCLE_BIN': 'windows', 'FILE_MACB': 'files',
           'PROGRAM_RUN_USERASSIST': 'windows', 'PROGRAM_RUN_BAM': 'windows', 'FOLDER_BROWSED': 'windows', 'EXPLORER_SEARCH': 'windows',
-          'TYPED_PATH': 'windows', 'RECENT_DOC_OPENED': 'windows', 'RUN_DIALOG': 'windows', 'RDP_CONNECTION': 'windows'}
+          'TYPED_PATH': 'windows', 'RECENT_DOC_OPENED': 'windows', 'RUN_DIALOG': 'windows', 'RDP_CONNECTION': 'windows',
+          'LOGON': 'logon', 'LOGOFF': 'logon'}
 TZ_RE = re.compile(r'^(UTC|[+-]\d{2}:\d{2}|[A-Za-z]+(?:[/_+-][A-Za-z0-9_+-]+)*)$')
-USB_TIMES = ('setupapi_first_install', 'first_install', 'last_install', 'last_arrival', 'last_removal')
+USB_TIMES = ('setupapi_first_install', 'first_install', 'last_install', 'last_arrival', 'last_removal',
+             'eventlog_first_connected', 'eventlog_last_connected', 'eventlog_last_removed')
 EXTENSION = r'\.([A-Za-z0-9]{1,10})$'
 
 

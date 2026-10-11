@@ -1,0 +1,40 @@
+title: Service installed from a user or temporary folder, or running a script
+id: 3e5a8b17-9c2d-4a60-b4f1-5d8e2c7a9b03
+status: stable
+description: A new service was installed whose program is in a user profile, ProgramData or a temporary folder, or which starts a command shell, PowerShell or a script host. Legitimate services are installed under Program Files or Windows.
+references:
+  - https://attack.mitre.org/techniques/T1543/003/
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1543.003
+logsource:
+  product: windows
+  service: system
+detection:
+  selection:
+    EventID: 7045
+    Provider_Name: Service Control Manager
+  suspicious_path:
+    ImagePath|contains:
+      - '\Users\'
+      - '\AppData\'
+      - '\ProgramData\'
+      - '\Temp\'
+      - '\Windows\Tasks\'
+      - '\$Recycle.Bin\'
+  suspicious_program:
+    ImagePath|contains:
+      - 'cmd.exe /c'
+      - 'cmd /c'
+      - 'powershell'
+      - 'pwsh'
+      - 'mshta'
+      - 'wscript'
+      - 'cscript'
+      - 'rundll32'
+      - 'regsvr32'
+  condition: selection and 1 of suspicious_*
+falsepositives:
+  - Software that installs a service under a user profile (some updaters and remote support tools)
+level: high

@@ -448,7 +448,8 @@ def computer(case_id:str,evidence_id:str|None=None,u=Depends(current_user)):
 @r.get('/search')
 def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
     """Keyword search across a case: file paths, timeline events, browser
-    records, USB devices, Windows activity, findings and user accounts (case-insensitive substring match)."""
+    records, USB devices, Windows activity, registry records, event log records, findings, user accounts and found
+    data (case-insensitive substring match)."""
     if not get_case(case_id,u): raise HTTPException(404,'Case not found or access denied')
     term=q.strip()
     if len(term)<2: raise HTTPException(400,'Search term must be at least 2 characters')
@@ -467,13 +468,15 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
                     {'profile_path':rx}]},[('rid',1)]),
         'registry':('forensic_artifacts',{'case_id':case_id,'source':'REGISTRY','$or':[{f:rx} for f in ('program','path','value','command','name','server','remote_path','publisher')]},
                     [('type',1),('key_last_write',-1)]),
+        'eventlogs':('event_records',{'case_id':case_id,'text':rx},[('notable',-1),('time',1)]),
         # Found data by what is shown: masked card and Aadhaar numbers only by their visible digits.
         'found':('entities',{'evidence_id':{'$in':eids},'$or':[{'display':rx},{'value':rx,'sensitive':False}]},[('kind',1),('count',-1)]),
     }
     results,totals={},{}
     for key,(col,query,sort) in queries.items():
         totals[key]=db[col].count_documents(query)
-        results[key]=[serial(dict(x,_id=str(x['_id']))) for x in db[col].find(query,{'occurrences':0}).sort(sort).limit(limit)]
+        projection={'xml':0,'text':0} if key=='eventlogs' else {'occurrences':0}
+        results[key]=[serial(dict(x,_id=str(x['_id']))) for x in db[col].find(query,projection).sort(sort).limit(limit)]
     for x in results['found']:
         if x.get('sensitive'): x.pop('value',None)
     return {'query':term,'results':results,'totals':totals}

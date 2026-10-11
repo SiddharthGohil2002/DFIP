@@ -1,6 +1,6 @@
 import {
   Activity, BarChart3, Monitor, Bookmark, Clock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, NotebookPen, ScanSearch,
-  Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
+  ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
 
@@ -69,7 +69,7 @@ export const NAV: NavGroup[] = [
       },
       {
         to: '/app/usb', label: 'USB devices', icon: Usb, tone: 'amber',
-        description: 'Removable storage history from the SYSTEM hive and setupapi.dev.log.',
+        description: 'Removable storage history from the SYSTEM hive, setupapi.dev.log and the event logs.',
         count: (c) => c.usb_devices, countLabel: () => 'devices',
       },
       {
@@ -78,6 +78,13 @@ export const NAV: NavGroup[] = [
         count: (c) => c.programs_run + c.recent_files + c.recycle_bin_items + (c.programs_executed ?? 0) + (c.folders_browsed ?? 0),
         alert: (c) => (c.persistence_flagged ?? 0) > 0,
         countLabel: (c) => `${n(c.programs_run)} Prefetch · ${n(c.folders_browsed ?? 0)} folders · ${n(c.persistence_flagged ?? 0)} autostart entries flagged`,
+      },
+      {
+        to: '/app/event-logs', label: 'Event logs', icon: ScrollText, tone: 'red',
+        description: 'Windows event logs: logons, failed logons, account changes, cleared logs, services, PowerShell and USB, with Sigma detections.',
+        count: (c) => c.event_records ?? 0,
+        alert: (c) => (c.event_detections ?? 0) > 0,
+        countLabel: (c) => `${n(c.notable_events ?? 0)} notable · ${n(c.event_detections ?? 0)} detections`,
       },
       {
         to: '/app/computer', label: 'Computer and users', icon: Monitor, tone: 'teal',

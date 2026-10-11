@@ -1,0 +1,25 @@
+title: Many failed logons from one address (password guessing)
+id: 4a6c8e10-3b5d-4f27-9a1c-6e8f0b2d4a09
+status: stable
+description: More than 10 failed logons from the same network address within 10 minutes, which suggests passwords are being guessed.
+references:
+  - https://attack.mitre.org/techniques/T1110/001/
+tags:
+  - attack.credential-access
+  - attack.t1110.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4625
+  filter_local:
+    IpAddress:
+      - '-'
+      - '127.0.0.1'
+      - '::1'
+  timeframe: 10m
+  condition: selection and not filter_local | count() by IpAddress > 10
+falsepositives:
+  - A service or mapped drive still using an old password
+level: medium

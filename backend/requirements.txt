@@ -34,3 +34,8 @@ defusedxml==0.7.1
 # Shell items (ShellBags) for regipy, libyal
 libfwsi-python==20260522
 libfwps-python==20260522
+# Windows event logs (libyal), and python-evtx as the independent reader used by the tests
+libevtx-python==20260705
+python-evtx==0.8.1
+# Detection rules (Sigma YAML) for event logs
+PyYAML==6.0.3

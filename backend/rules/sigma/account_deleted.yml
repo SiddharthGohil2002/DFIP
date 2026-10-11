@@ -1,0 +1,21 @@
+title: Local user account deleted
+id: 8e1b4d76-2a9c-4f05-b3e8-5c7d9f1b4e08
+status: stable
+description: A user account was deleted. Deleting an account soon after using it can hide what was done with it; its SID still appears in older events and files it owned.
+references:
+  - https://attack.mitre.org/techniques/T1531/
+  - https://attack.mitre.org/techniques/T1070/
+tags:
+  - attack.impact
+  - attack.defense-evasion
+  - attack.t1531
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4726
+  condition: selection
+falsepositives:
+  - Removal of a leaver's account by an administrator
+level: low

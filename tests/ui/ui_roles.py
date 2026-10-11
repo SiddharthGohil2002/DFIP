@@ -2,7 +2,7 @@ import json
 from playwright.sync_api import sync_playwright, expect
 
 BASE = 'http://host.docker.internal'
-PAGES = ['', 'cases', 'evidence', 'files', 'timeline', 'browser', 'usb', 'indicators', 'carving', 'search', 'found-data', 'findings',
+PAGES = ['', 'cases', 'evidence', 'files', 'timeline', 'browser', 'usb', 'event-logs', 'indicators', 'carving', 'search', 'found-data', 'findings',
          'reports', 'custody', 'admin/users', 'admin/audit', 'admin/system', 'admin/hashsets']
 problems = []
 

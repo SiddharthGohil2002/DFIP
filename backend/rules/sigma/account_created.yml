@@ -1,0 +1,19 @@
+title: Local user account created
+id: 2d8f1a53-6e4b-4c79-8a0d-3b5c7e9f1a06
+status: stable
+description: A user account was created. An account created during an incident can be a way back in for an attacker.
+references:
+  - https://attack.mitre.org/techniques/T1136/001/
+tags:
+  - attack.persistence
+  - attack.t1136.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4720
+  condition: selection
+falsepositives:
+  - New staff accounts created by an administrator
+level: medium

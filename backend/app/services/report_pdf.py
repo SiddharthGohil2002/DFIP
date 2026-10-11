@@ -191,9 +191,11 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     _section(story, T('USB device history'), ['Device', 'Serial', 'VID:PID', 'Drive', 'First install', 'Last connected', 'Last removed', 'Source'],
              [[u.get('friendly_name') or f'{u.get("vendor")} {u.get("product")}', u.get('serial'),
                f'{u["vid"]}:{u["pid"]}' if u.get('vid') else None, u.get('drive_letters'),
-               u.get('first_install') or u.get('setupapi_first_install'), u.get('last_arrival'), u.get('last_removal'),
-               u.get('source')] for u in usb],
-             [1.5, 1.7, 0.9, 0.6, 1.3, 1.3, 1.3, 1.2], 'No USB storage devices were found in the SYSTEM hive or setupapi.dev.log.')
+               u.get('first_install') or u.get('setupapi_first_install') or u.get('eventlog_first_connected'),
+               u.get('last_arrival') or u.get('eventlog_last_connected'), u.get('last_removal') or u.get('eventlog_last_removed'),
+               (u.get('source') or '') + (' + event logs' if u.get('eventlog_events') and u.get('source') != 'EVENT_LOG' else '')] for u in usb],
+             [1.5, 1.7, 0.9, 0.6, 1.3, 1.3, 1.3, 1.2],
+             'No USB storage devices were found in the SYSTEM hive, setupapi.dev.log or the event logs.')
 
     hist = list(db['forensic_artifacts'].find({'case_id': cid, 'type': 'BROWSER_HISTORY'}).sort('last_visit_time', -1))
     _section(story, T('Browser history'), ['Browser', 'Last visit', 'Visits', 'URL', 'Title'],
@@ -277,6 +279,38 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
                x.get('key_last_write')] for x in art.find(q).sort('key_last_write', -1).limit(MAX_ROWS)],
              [0.8, 1.2, 2.6, 1.6, 1.5], 'No remote desktop connections or mapped network drives were found.', total=art.count_documents(q))
 
+    # Windows event logs (module eventlogs).
+    events_title = T('Event logs')
+    story.append(Paragraph(escape(events_title), H2))
+    story.append(Paragraph('Every record of the Windows event logs (.evtx) is stored in DFIP. Notable events are the catalogued ones an '
+                           'investigation looks for (logons, account changes, cleared logs, services, PowerShell, USB devices, '
+                           'Defender, startup and shutdown) and every record a detection rule matched. Detections are leads from '
+                           "DFIP's curated Sigma rules, not conclusions.", NOTE))
+    n = events_title.split('.')[0]
+    logs = []
+    for f in db['analysis_facts'].find({'evidence_id': {'$in': eids}}, {'evidence_id': 1, 'eventlogs.logs': 1}):
+        logs += [dict(x, evidence_id=f['evidence_id']) for x in (f.get('eventlogs') or {}).get('logs') or []]
+    logs.sort(key=lambda x: (x['evidence_id'], -(x.get('records') or 0)))
+    short = lambda c: (c or '').replace('Microsoft-Windows-', '')
+    _section(story, f'{n}.1 Logs read', ['Evidence', 'Log', 'Records', 'Recovered', 'First event', 'Last event', 'State'],
+             [[x['evidence_id'], x.get('name'), x.get('records'), x.get('recovered'), x.get('first'), x.get('last'),
+               ', '.join(w for w, on in (('not closed cleanly', x.get('dirty')), ('full', x.get('full')), ('damaged', x.get('corrupted')),
+                                          ('capped', x.get('capped'))) if on) or 'OK'] for x in logs if x.get('records') or x.get('recovered')],
+             [0.9, 2.4, 0.7, 0.95, 1.3, 1.3, 0.9], 'No event logs with records were found (or the Standard or Full profile has not been run).',
+             total=sum(1 for x in logs if x.get('records') or x.get('recovered')), heading=H3)
+    q = {'case_id': cid, 'type': 'EVENTLOG_DETECTION'}
+    level_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'informational': 4}
+    dets = sorted(art.find(q), key=lambda d: (level_order.get(d.get('level'), 9), str(d.get('first') or '')))
+    _section(story, f'{n}.2 Detections', ['Level', 'Rule', 'Events', 'First', 'Last', 'Example'],
+             [[(d.get('level') or '').capitalize(), d.get('title') + (f' ({", ".join(f"{k} {v}" for k, v in d["group"].items())})' if d.get('group') else ''),
+               d.get('count'), d.get('first'), d.get('last'), (d.get('sample') or [None])[0]] for d in dets],
+             [0.7, 2.2, 0.75, 1.3, 1.3, 2.25], 'No detection rule matched the event records.', total=len(dets), heading=H3)
+    q = {'case_id': cid, 'notable': True}
+    _section(story, f'{n}.3 Notable events', ['Time', 'Log', 'Event', 'User', 'Description'],
+             [[e.get('time'), short(e.get('channel')), e.get('event_id'), e.get('user'), e.get('description') or e.get('title')]
+              for e in db['event_records'].find(q, {'xml': 0, 'text': 0, 'data': 0}).sort('time', 1).limit(MAX_ROWS)],
+             [1.2, 1.5, 0.65, 1.15, 3.7], 'No notable events were found.', total=db['event_records'].count_documents(q), heading=H3)
+
     malware = list(db['forensic_artifacts'].find({'case_id': cid, 'type': 'MALWARE_INDICATOR'}))
     _section(story, T('Malware indicators (YARA)'), ['Evidence', 'Rule', 'File'],
              [[m.get('evidence_id'), m.get('rule'), (m.get('original_path') or m.get('path') or '') + (' (deleted)' if m.get('deleted') else '')]
@@ -325,7 +359,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     tagged = sorted(db['tags'].find({'case_id': cid}), key=lambda t: (tag_order.get(t.get('label'), 9), str((t.get('snapshot') or {}).get('timestamp') or '')))
     item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
                  'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file', 'ENTITY': 'Found data',
-                 'REGISTRY': 'Registry activity'}
+                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record'}
     _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
              [[(t.get('label') or '').replace('_', ' ').capitalize(),
                f'{(t.get("snapshot") or {}).get("title")}' + ('' if resolve(db, t) is not None else ' (not in the latest analysis)'),

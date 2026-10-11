@@ -1,0 +1,20 @@
+title: Event log cleared
+id: 0c7d9e21-3b4a-4f62-8e15-7a9c6d2b4e02
+status: stable
+description: A Windows event log (System, Application or another log) was cleared. The event names the log and the account that cleared it.
+references:
+  - https://attack.mitre.org/techniques/T1070/001/
+tags:
+  - attack.defense-evasion
+  - attack.t1070.001
+logsource:
+  product: windows
+  service: system
+detection:
+  selection:
+    EventID: 104
+    Provider_Name: Microsoft-Windows-Eventlog
+  condition: selection
+falsepositives:
+  - Routine log maintenance by an administrator
+level: high

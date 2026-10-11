@@ -1,0 +1,36 @@
+title: PowerShell downloads and runs code
+id: 5b2e9f48-7a1c-4d36-9e0b-1f4a6c8d2e05
+status: stable
+description: A PowerShell script block downloads content from the internet and runs it (a "download cradle"), a common way to run malware without writing it to disk.
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+  - https://attack.mitre.org/techniques/T1105/
+tags:
+  - attack.execution
+  - attack.command-and-control
+  - attack.t1059.001
+  - attack.t1105
+logsource:
+  product: windows
+  category: ps_script
+detection:
+  selection_download:
+    ScriptBlockText|contains:
+      - '.DownloadString('
+      - '.DownloadData('
+      - '.DownloadFile('
+      - 'Invoke-WebRequest'
+      - 'Invoke-RestMethod'
+      - 'Start-BitsTransfer'
+      - 'iwr '
+      - 'irm '
+  selection_run:
+    ScriptBlockText|contains:
+      - 'IEX'
+      - 'Invoke-Expression'
+      - '| iex'
+      - 'Start-Process'
+  condition: all of selection_*
+falsepositives:
+  - Installation scripts that download and run an installer from a trusted site
+level: high

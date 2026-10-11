@@ -12,7 +12,13 @@ const TIMES: { key: keyof UsbDevice; label: string }[] = [
   { key: 'last_install', label: 'Last installed' },
   { key: 'last_arrival', label: 'Last connected' },
   { key: 'last_removal', label: 'Last removed' },
+  { key: 'eventlog_first_connected', label: 'First connected (event log)' },
+  { key: 'eventlog_last_connected', label: 'Last connected (event log)' },
+  { key: 'eventlog_last_removed', label: 'Last removed (event log)' },
 ];
+const SOURCE: Record<string, [string, 'accent' | 'warn']> = {
+  SYSTEM_HIVE: ['Registry', 'accent'], SETUPAPI_LOG: ['setupapi.dev.log only', 'warn'], EVENT_LOG: ['Event logs only', 'warn'],
+};
 
 export function UsbPage() {
   const { caseId } = useCase();
@@ -24,7 +30,7 @@ export function UsbPage() {
     <div className="stack">
       <PageHeader
         title="USB devices"
-        subtitle="Removable storage devices recorded by Windows in the SYSTEM registry hive (USBSTOR, USB, MountedDevices and device-property timestamps) and in setupapi.dev.log."
+        subtitle="Removable storage devices recorded by Windows in the SYSTEM registry hive (USBSTOR, USB, MountedDevices and device-property timestamps), in setupapi.dev.log and in the event logs (Partition/Diagnostic, Kernel-PnP, DriverFrameworks)."
       />
       <Banner tone="info">
         An empty time means the evidence does not record it (for example, Windows 7 does not store last-connected or last-removed times). DFIP never estimates a missing value. setupapi.dev.log times are converted to UTC using the time zone stored in the SYSTEM hive.
@@ -49,7 +55,8 @@ export function UsbPage() {
                     </div>
                   </div>
                   <div className="row" style={{ gap: 4 }}>
-                    <Badge tone={d.source === 'SYSTEM_HIVE' ? 'accent' : 'warn'}>{d.source === 'SYSTEM_HIVE' ? 'Registry' : 'setupapi.dev.log only'}</Badge>
+                    <Badge tone={(SOURCE[d.source] || [d.source, 'warn'])[1]}>{(SOURCE[d.source] || [d.source])[0]}</Badge>
+                    {!!d.eventlog_events?.length && d.source !== 'EVENT_LOG' && <Badge tone="accent">Event logs</Badge>}
                     <TagButton type="USB" id={d._id} title={d.friendly_name || `${d.vendor || ''} ${d.product || ''}`.trim()} />
                   </div>
                 </div>
@@ -70,6 +77,22 @@ export function UsbPage() {
                     </div>
                   ))}
                 </div>
+                {!!d.eventlog_events?.length && (
+                  <details>
+                    <summary className="small strong">{d.eventlog_events.length} event log record{d.eventlog_events.length === 1 ? '' : 's'} for this device</summary>
+                    <table className="table">
+                      <tbody>
+                        {d.eventlog_events.map((e) => (
+                          <tr key={`${e.log}${e.record_id}`}>
+                            <td className="mono tiny nowrap">{time(e.time)}</td>
+                            <td className="small">{e.action}</td>
+                            <td className="small muted">{e.log.replace(/\.evtx$/i, '').replace('%4', '/')} event {e.event_id}, record {e.record_id}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
+                )}
                 {related.length > 0 && <div className="small muted">{related.length} timeline event{related.length === 1 ? '' : 's'} for this device.</div>}
               </section>
             );

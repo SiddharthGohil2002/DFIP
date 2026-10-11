@@ -1,0 +1,25 @@
+title: Microsoft Defender protection turned off
+id: 9d1f3b56-7a4c-4e83-a5b1-0c2e4d6f8a12
+status: stable
+description: Microsoft Defender real-time protection, or its virus or spyware scanning, was turned off, or a folder or process was excluded from scanning.
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+tags:
+  - attack.defense-evasion
+  - attack.t1562.001
+logsource:
+  product: windows
+  service: windefend
+detection:
+  disabled:
+    EventID:
+      - 5001
+      - 5010
+      - 5012
+  exclusion:
+    EventID: 5007
+    New Value|contains: '\Exclusions\'
+  condition: disabled or exclusion
+falsepositives:
+  - An administrator troubleshooting, or another antivirus product taking over
+level: high

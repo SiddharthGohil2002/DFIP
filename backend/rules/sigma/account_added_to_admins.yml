@@ -1,0 +1,28 @@
+title: Account added to the Administrators group
+id: 7c3a5e92-0f6d-4b18-9e2a-4d6f8b0c3e07
+status: stable
+description: An account was added to the local Administrators group (or a domain administrators group), giving it full control of the computer.
+references:
+  - https://attack.mitre.org/techniques/T1098/
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098
+logsource:
+  product: windows
+  service: security
+detection:
+  local_admins:
+    EventID: 4732
+    TargetSid: S-1-5-32-544
+  domain_admins:
+    EventID:
+      - 4728
+      - 4756
+    TargetSid|endswith:
+      - '-512'
+      - '-519'
+  condition: local_admins or domain_admins
+falsepositives:
+  - An administrator granting rights on purpose
+level: high

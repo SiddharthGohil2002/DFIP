@@ -23,6 +23,12 @@ const MODES: { id: Mode; label: string }[] = [
   { id: 'regex', label: 'Regular expression' },
 ];
 const MIN: Record<Mode, number> = { records: 2, text: 3, regex: 1 };
+const REGISTRY_TYPE: Record<string, string> = {
+  USERASSIST: 'Program run (UserAssist)', SHELLBAG: 'Folder browsed', TYPED_PATH: 'Typed path', TYPED_URL: 'Typed address',
+  EXPLORER_SEARCH: 'Explorer search', RECENT_DOC: 'Recent document', RUN_MRU: 'Run dialog', PERSISTENCE: 'Autostart entry',
+  INSTALLED_PROGRAM: 'Installed program', AMCACHE_FILE: 'Amcache', SHIMCACHE_ENTRY: 'ShimCache', BAM_ENTRY: 'Program run (BAM)',
+  RDP_CONNECTION: 'Remote desktop', NETWORK_DRIVE: 'Network drive',
+};
 const PLACEHOLDER: Record<Mode, string> = {
   records: 'e.g. payroll, SecureDelete, AA951D0000007252, .ps1',
   text: 'e.g. DE89370400440532013, sandisk, transfer the payroll',
@@ -155,6 +161,24 @@ export function SearchPage() {
                 <td className="small">{a.type === 'PROGRAM_RUN' ? 'Program run' : a.type === 'RECENT_FILE' ? 'File opened' : 'Recycle Bin'}</td>
                 <td className="mono small nowrap">{time(a.last_run || a.lnk_modified || a.deleted_time)}</td>
                 <td className="cell-path small mono" colSpan={2}>{a.executable_path || a.executable || a.target_path || a.original_path}</td>
+              </tr>
+            ))}
+          </Group>
+          <Group title="Registry activity" total={res.totals.registry ?? 0} shown={(res.results.registry || []).length} link={{ to: '/app/activity', label: 'Open Windows activity' }}>
+            {(res.results.registry || []).map((a) => (
+              <tr key={a._id}>
+                <td className="small">{REGISTRY_TYPE[a.type] || a.type}{a.user && <span className="muted"> · {a.user}</span>}</td>
+                <td className="mono small nowrap">{time(a.last_run || a.key_last_write)}</td>
+                <td className="cell-path small mono" colSpan={2}>{a.program || a.path || a.command || a.value || a.name || a.server || a.remote_path}</td>
+              </tr>
+            ))}
+          </Group>
+          <Group title="Event log records" total={res.totals.eventlogs ?? 0} shown={(res.results.eventlogs || []).length} link={{ to: '/app/event-logs', label: 'Open event logs' }}>
+            {(res.results.eventlogs || []).map((e) => (
+              <tr key={e._id}>
+                <td className="small nowrap">{(e.channel || '').replace(/^Microsoft-Windows-/, '')} {e.event_id}</td>
+                <td className="mono small nowrap">{time(e.time)}</td>
+                <td className="small" colSpan={2}>{e.description || `${e.provider} event ${e.event_id}`}{e.user && <span className="muted"> · {e.user}</span>}</td>
               </tr>
             ))}
           </Group>

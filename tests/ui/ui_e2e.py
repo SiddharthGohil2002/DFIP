@@ -234,6 +234,9 @@ with sync_playwright() as p:
     step['v'] = 'usb'
     page.get_by_role('link', name='USB devices').first.click()
     expect(page.get_by_text('HP v100w USB Device')).to_be_visible()
+    sandisk = page.locator('.usb-card', has_text='4C530001230518109141')
+    expect(sandisk.get_by_text('Event logs', exact=True)).to_be_visible()     # connect and remove times from Partition/Diagnostic
+    expect(sandisk.get_by_text('2 event log records for this device')).to_be_visible()
     shot(page, '11-usb')
 
     step['v'] = 'windows activity'
@@ -266,6 +269,38 @@ with sync_playwright() as p:
     page.get_by_label('Only entries that stand out').check()
     expect(page.locator('main table tbody tr', has_text='Spooler')).to_have_count(0)
     shot(page, '11e-persistence')
+
+    step['v'] = 'event logs'
+    ev_case = api_get(page, f'/evidence/{eid}')['case_id']
+    page.get_by_role('link', name='Event logs').first.click()
+    expect(page.get_by_text('Security log cleared by LAPTOP-07\\alice')).to_be_visible()
+    expect(page.get_by_text('backup_admin added to group Builtin\\Administrators by LAPTOP-07\\alice')).to_be_visible()
+    notable = api_get(page, f'/forensics/eventlogs/events?case_id={ev_case}&notable=true&limit=1')['total']
+    expect(page.get_by_role('tab', name=re.compile(r'^Notable')).locator('.count')).to_have_text(f'{notable:,}')
+    shot(page, '11f-event-logs')
+    page.get_by_label('Event IDs').fill('4625')
+    page.get_by_label('Event IDs').press('Enter')
+    expect(page.locator('main table tbody tr')).to_have_count(3)
+    page.get_by_role('button', name=re.compile(r'^Details of event 4625')).first.click()
+    dialog = page.get_by_role('dialog')
+    expect(dialog.get_by_text('0xc000006a', exact=True)).to_be_visible()      # SubStatus: wrong password
+    dialog.get_by_text('XML', exact=True).click()
+    expect(dialog.locator('pre')).to_contain_text('<EventID>4625</EventID>')  # shown as text, never as markup
+    page.keyboard.press('Escape')
+    page.get_by_label('Event IDs').fill('400')
+    page.get_by_label('Event IDs').press('Enter')
+    page.get_by_role('button', name=re.compile(r'^Details of event 400 ')).first.click()
+    expect(page.get_by_role('dialog').get_by_text('IEX (New-Object Net.WebClient).DownloadString').first).to_be_visible()  # decoded command
+    page.keyboard.press('Escape')
+    page.get_by_role('tab', name=re.compile(r'^Detections')).click()
+    dets = api_get(page, f'/forensics/eventlogs/detections?case_id={ev_case}')['data']
+    expect(page.locator('main table tbody tr')).to_have_count(len(dets))
+    page.locator('main table tbody tr', has_text='Security event log cleared').get_by_role('button', name='Show events').click()
+    expect(page.get_by_text('Events matched by')).to_be_visible()
+    expect(page.locator('main table tbody tr')).to_have_count(1)
+    shot(page, '11g-event-detections')
+    page.get_by_role('tab', name=re.compile(r'^Logs')).click()
+    expect(page.locator('main table tbody tr', has_text='Security.evtx')).to_have_count(1)
 
     step['v'] = 'indicators'
     page.get_by_role('link', name='Indicators').first.click()

@@ -1,0 +1,20 @@
+title: Security event log cleared
+id: 6f1c2a64-58e3-4c1b-9d0a-2b7e41c8a301
+status: stable
+description: The Security log was cleared. Clearing the log removes the record of earlier logons and other audited activity; the event names the account that cleared it.
+references:
+  - https://attack.mitre.org/techniques/T1070/001/
+tags:
+  - attack.defense-evasion
+  - attack.t1070.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 1102
+    Provider_Name: Microsoft-Windows-Eventlog
+  condition: selection
+falsepositives:
+  - An administrator archiving and clearing the log as routine maintenance
+level: high

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added — Windows event logs
+- **Event logs** (new `eventlogs` module, standard and full profiles, and a new page): every record of every Windows event log (.evtx), read with libevtx, including records recovered from unused space. Notable events are described in plain English with their user: logons (with logon type) and logoffs, failed logons (with the reason), account and group changes, cleared logs, services, scheduled tasks, Remote Desktop, PowerShell (encoded commands decoded), USB devices, Microsoft Defender, startup and shutdown. Every record can be searched and filtered by log, event ID, category, level, user and time, and opened with its XML.
+- **Detections**: a Sigma rule engine (subset of the specification, regular expressions in RE2) with 15 curated rules: cleared logs, suspicious services, encoded PowerShell and download cradles, accounts created, deleted and added to Administrators, password guessing and spraying, Defender alerts and protection turned off, suspicious scheduled tasks, Remote Desktop logons, audit policy changes. Detections are leads, listed with their usual false positives.
+- **USB devices** gain connect and remove times from the event logs (Partition/Diagnostic, Kernel-PnP, DriverFrameworks); a drive seen only in the event logs is added. Notable events are on the timeline and logons on the activity dashboard; event records can be tagged, are found by keyword search, are counted on the overview and have a report section.
+- The backend image gains libevtx and python-evtx (used by the tests as an independent reader). Test disk: Security, System, PowerShell and Partition/Diagnostic logs written by a new EVTX writer.
+
+### Fixed — found while testing event logs
+- Keyword search did not show its registry results (they were counted in the total but not listed).
+
 ### Added — registry evidence
 - **Registry activity** (new `registry` module, every profile) from each user's NTUSER.DAT and UsrClass.dat, Amcache.hve, SYSTEM and SOFTWARE: programs started from Explorer (UserAssist), folders browsed including on USB and network drives (ShellBags), Explorer searches, typed paths and addresses, recent documents, Run dialog commands, remote desktop connections, mapped network drives, Amcache (with SHA-1), ShimCache, BAM, autostart entries (Run/RunOnce, services, Image File Execution Options debuggers, Winlogon) and installed programs. Dirty hives have their transaction logs applied first.
 - **Windows activity** gains tabs: Execution evidence (one row per program merging Prefetch, UserAssist, BAM, Amcache and ShimCache), Folders browsed, Searches and typed paths, Persistence (entries that stand out flagged with the reason), Installed programs, Remote desktop and drives. Registry records can be tagged, are on the timeline and the activity dashboard, are searchable, and have report sections.

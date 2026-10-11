@@ -1,0 +1,20 @@
+title: Remote Desktop logon
+id: 3f5b7d10-2c6e-4a28-8d4f-2e4a6b8c0d14
+status: stable
+description: An account logged on through Remote Desktop (logon type 10). Check that the account and address are expected.
+references:
+  - https://attack.mitre.org/techniques/T1021/001/
+tags:
+  - attack.lateral-movement
+  - attack.t1021.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4624
+    LogonType: 10
+  condition: selection
+falsepositives:
+  - Administrators and users who work remotely
+level: low

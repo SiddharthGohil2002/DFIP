@@ -33,6 +33,12 @@ for hive in SYSTEM SOFTWARE SAM; do stamp '2026-09-01 18:42:10' "Windows/System3
 stamp '2026-09-01 18:42:08' 'Users/alice/NTUSER.DAT'                                   # written at logoff
 stamp '2026-09-01 18:42:08' 'Users/alice/AppData/Local/Microsoft/Windows/UsrClass.dat'
 stamp '2026-09-01 10:06:04' 'Windows/AppCompat/Programs/Amcache.hve'
+# Event logs: written when their last event was.
+stamp '2026-09-01 18:42:06' 'Windows/System32/winevt/Logs/Security.evtx'
+stamp '2026-09-01 18:42:06' 'Windows/System32/winevt/Logs/System.evtx'
+stamp '2026-09-01 14:24:32' 'Windows/System32/winevt/Logs/Microsoft-Windows-PowerShell%4Operational.evtx'
+stamp '2026-09-01 14:24:34' 'Windows/System32/winevt/Logs/Windows PowerShell.evtx'
+stamp '2026-09-01 14:41:10' 'Windows/System32/winevt/Logs/Microsoft-Windows-Partition%4Diagnostic.evtx'
 stamp '2026-09-01 14:12:46' 'Windows/INF/setupapi.dev.log'
 stamp '2026-08-28 16:04:10' 'Users/alice/Documents/project-notes.txt'
 stamp '2026-09-01 09:41:02' 'Users/alice/Documents/payroll-export.csv'

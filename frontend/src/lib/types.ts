@@ -172,6 +172,9 @@ export interface CaseCounts {
   persistence_entries?: number;
   persistence_flagged?: number;
   installed_programs?: number;
+  event_records?: number;
+  notable_events?: number;
+  event_detections?: number;
   renamed_files?: number;
   encrypted_files?: number;
   known_bad_files?: number;
@@ -372,7 +375,89 @@ export interface UsbDevice {
   last_arrival?: string | null;
   last_removal?: string | null;
   setupapi_first_install?: string | null;
+  eventlog_first_connected?: string | null;
+  eventlog_last_connected?: string | null;
+  eventlog_last_removed?: string | null;
+  eventlog_events?: { time: string | null; action: string; log: string; event_id: number; record_id: number }[];
   source: string;
+}
+
+/** One record of a Windows event log (module eventlogs). */
+export interface EventRecord {
+  _id: string;
+  evidence_id: string;
+  nk: string;
+  log: string;
+  log_path: string;
+  channel: string | null;
+  provider: string | null;
+  provider_guid?: string | null;
+  event_id: number | null;
+  qualifiers?: number | null;
+  version?: number | null;
+  level?: number | null;
+  level_name?: string;
+  task?: number | null;
+  opcode?: number | null;
+  keywords?: string | null;
+  time: string | null;
+  record_id: number | null;
+  computer?: string | null;
+  user_sid?: string | null;
+  user?: string | null;
+  process_id?: number | null;
+  thread_id?: number | null;
+  data: Record<string, string>;
+  data_values: string[];
+  user_data?: string;
+  details?: Record<string, string>;
+  category: string | null;
+  title: string | null;
+  description: string | null;
+  notable: boolean;
+  detections: string[];
+  recovered: boolean;
+  truncated?: boolean;
+  parse_error?: string;
+  xml?: string;
+  xml_truncated?: boolean;
+}
+
+export interface EventLogInfo {
+  evidence_id: string;
+  path: string;
+  name: string;
+  channel: string | null;
+  records: number;
+  recovered: number;
+  unreadable: number;
+  first: string | null;
+  last: string | null;
+  size: number;
+  sha256: string;
+  dirty?: boolean;
+  full?: boolean;
+  corrupted?: boolean;
+  capped: boolean;
+  errors: string[];
+}
+
+export interface EventDetection {
+  _id: string;
+  evidence_id: string;
+  rule_id: string;
+  title: string;
+  level: 'informational' | 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+  tags: string[];
+  references: string[];
+  falsepositives: string[];
+  count: number;
+  first: string | null;
+  last: string | null;
+  group: Record<string, string> | null;
+  sample: string[];
+  rule_file: string;
 }
 
 export interface Artifact {

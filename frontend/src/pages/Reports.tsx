@@ -26,6 +26,7 @@ const SECTIONS = [
   'Persistence (autostart entries and services)',
   'Installed programs',
   'Remote desktop and network drives',
+  'Event logs (logs read, detections, notable events)',
   'Malware indicators (YARA)',
   'Hash set matches',
   'Renamed and encrypted files',

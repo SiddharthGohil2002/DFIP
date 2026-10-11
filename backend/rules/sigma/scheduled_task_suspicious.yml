@@ -1,0 +1,34 @@
+title: Scheduled task created that runs a script or a program from a user folder
+id: 2e4a6c98-0b5d-4f17-9c3e-1d3f5a7b9c13
+status: stable
+description: A scheduled task was created whose action runs PowerShell, a command shell or a script host, or a program in a user profile, ProgramData or a temporary folder.
+references:
+  - https://attack.mitre.org/techniques/T1053/005/
+tags:
+  - attack.persistence
+  - attack.execution
+  - attack.t1053.005
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4698
+  suspicious:
+    TaskContent|contains:
+      - 'powershell'
+      - 'pwsh'
+      - 'cmd.exe'
+      - 'mshta'
+      - 'wscript'
+      - 'cscript'
+      - 'rundll32'
+      - 'regsvr32'
+      - '\AppData\'
+      - '\Users\Public\'
+      - '\ProgramData\'
+      - '\Temp\'
+  condition: selection and suspicious
+falsepositives:
+  - Software updaters that run from a user profile
+level: medium

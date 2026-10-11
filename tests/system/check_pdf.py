@@ -17,7 +17,7 @@ import re
 # does not need every later number edited here.
 titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer and users', 'Deleted files', 'Recovered files',
           'USB device history', 'Browser history', 'Browser downloads', 'Windows activity', 'Execution evidence', 'Folders browsed',
-          'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives', 'Malware indicators',
+          'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives', 'Event logs', 'Malware indicators',
           'Hash set matches', 'Renamed and encrypted files', 'Found data',
           'Investigator findings', 'Tagged evidence', 'Timeline of notable events', 'Audit trail integrity']
 found = [(int(m.group(1)), m.group(2)) for m in re.finditer(r'^\s*(\d+)\. (' + '|'.join(map(re.escape, titles)) + r')', a, re.M)]
@@ -25,6 +25,8 @@ check(f'all {len(titles)} sections present, in order and numbered 1 to {len(titl
       found == list(zip(range(1, len(titles) + 1), titles)))
 subs = [m.group(0).strip() for m in re.finditer(r'^\s*\d+\.\d+ (Programs run|Recently opened files|Recycle Bin)', a, re.M)]
 check('Windows activity has its three subsections', len(subs) == 3)
+subs = [m.group(1) for m in re.finditer(r'^\s*\d+\.\d+ (Logs read|Detections|Notable events)', a, re.M)]
+check('Event logs has its three subsections', subs == ['Logs read', 'Detections', 'Notable events'])
 check('evidence ID and full SHA-256', exp['evidence'] in a and exp['sha256'] in flat.replace(' ', '') )
 import re
 custody = ' '.join(a[a.index('2. Chain of custody'):a.index('3. Analysis summary')].split())
@@ -38,6 +40,9 @@ check('hash set matches listed: the payroll copies as notable', 'Payroll exports
 check('registry activity listed: execution evidence, folders, searches, flagged persistence, programs, remote desktop',
       all(x in flat for x in ('SecureDelete.exe', 'UserAssist', 'ShimCache', '23854be75a', 'E:\\Exports', 'usb wipe', 'sethc.exe',
                               'SecureDelete 1.4', 'fileserver.corp.example')))
+check('event logs listed: the logs read, the detections and the notable events (cleared log, admin group, SanDisk removed)',
+      all(x in flat for x in ('Security.evtx', 'Security event log cleared', 'Local user account created', 'Security log cleared by',
+                              'backup_admin added to group', 'Disk removed: SanDisk', 'decoded command: IEX')))
 check('found data listed, the card number masked and never in full',
       all(x in flat for x in ('zoe.martin@example.org', 'GB82 WEST 1234 5698 7654 32', '1111')) and '4111 1111 1111 1111' not in flat
       and '4111111111111111' not in flat.replace(' ', ''))

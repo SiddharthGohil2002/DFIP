@@ -1,0 +1,22 @@
+title: PowerShell started with an encoded command
+id: 9a4c7e30-1d5b-4e83-a2f6-8c0b3d9e5f04
+status: stable
+description: PowerShell was started with -EncodedCommand (or one of its abbreviations), which hides the script from anyone reading the command line. DFIP shows the decoded script with the event.
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+  - https://attack.mitre.org/techniques/T1027/
+tags:
+  - attack.execution
+  - attack.defense-evasion
+  - attack.t1059.001
+  - attack.t1027
+logsource:
+  product: windows
+  category: ps_classic_start
+detection:
+  selection:
+    HostApplication|re|i: '\s[-/–—](e|ec|en|enc|enco|encod|encode|encoded|encodedc|encodedco|encodedcom|encodedcomm|encodedcomma|encodedcomman|encodedcommand)\s+[''"]?[A-Za-z0-9+/]{16,}'
+  condition: selection
+falsepositives:
+  - Management tools that pass scripts encoded (some configuration management agents)
+level: high

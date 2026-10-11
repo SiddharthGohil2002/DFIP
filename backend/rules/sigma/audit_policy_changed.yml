@@ -1,0 +1,19 @@
+title: Audit policy changed
+id: 4a6c8e32-3d7f-4b39-9e5a-3f5b7c9d1e15
+status: stable
+description: The audit policy was changed. Turning auditing off stops Windows recording logons and other activity in the Security log.
+references:
+  - https://attack.mitre.org/techniques/T1562/002/
+tags:
+  - attack.defense-evasion
+  - attack.t1562.002
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4719
+  condition: selection
+falsepositives:
+  - Group Policy refreshes and administrators adjusting auditing
+level: medium

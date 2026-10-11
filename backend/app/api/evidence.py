@@ -332,7 +332,7 @@ def delete(eid, body: DeleteEvidence, u=Depends(require_write('EVIDENCE_DELETE')
     now = datetime.now(timezone.utc)
     q = {'evidence_id': eid}
     counts = {col: db[col].delete_many(q).deleted_count
-              for col in ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts', 'entities')}
+              for col in ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts', 'entities', 'event_records')}
     counts['jobs'] = db['jobs'].delete_many({'payload.evidence_id': eid}).deleted_count
     counts['tags'] = db['tags'].delete_many({'evidence_id': eid}).deleted_count
     for col in ('analysis_facts', 'pipeline_warnings'):  # module bookkeeping, not counted as results

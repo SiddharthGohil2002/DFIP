@@ -1,5 +1,5 @@
 """Tags (bookmarks) on case items: a file, a timeline event, a browser record, a USB device, a Windows activity
-record, a recovered/carved file or a found value (an email address, card number...), marked as Evidence, Notable or
+record, a registry record, an event log record, a recovered/carved file or a found value (an email address, card number...), marked as Evidence, Notable or
 Follow up with a note.
 
 Re-running an analysis replaces its records with new database IDs, so a tag also stores the item's natural key
@@ -24,7 +24,7 @@ KEY_VERSION = 2  # 2: keys use volume_id and never a time that a time-zone corre
 ITEM_COLLECTIONS = {
     'FILE': 'fs_entries', 'TIMELINE_EVENT': 'timeline_events', 'BROWSER': 'forensic_artifacts',
     'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts', 'ENTITY': 'entities',
-    'REGISTRY': 'forensic_artifacts',
+    'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records',
 }
 LABELS = ('EVIDENCE', 'NOTABLE', 'FOLLOW_UP')
 _ARTIFACT_TYPES = {
@@ -75,6 +75,8 @@ def natural_key(item_type: str, doc) -> dict:
         return {'evidence_id': e, 'kind': doc.get('kind'), 'key': doc.get('key')}
     if item_type == 'REGISTRY':
         return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
+    if item_type == 'EVENT':
+        return {'evidence_id': e, 'nk': doc.get('nk')}
     if t == 'MALWARE_INDICATOR':
         return {'evidence_id': e, 'type': t, 'rule': doc.get('rule'), 'original_path': doc.get('original_path')}
     if t == 'EXTRACTED_FILE':
@@ -123,6 +125,11 @@ def snapshot(item_type: str, doc) -> dict:
                  or doc.get('server') or doc.get('remote_path'))
         detail = f'{REGISTRY_LABELS.get(t, t)}{" · " + doc["user"] if doc.get("user") else ""} · {doc.get("hive")}'
         when = doc.get('last_run') or doc.get('key_last_write')
+    elif item_type == 'EVENT':
+        title = doc.get('description') or doc.get('title') or f'{doc.get("channel")} event {doc.get("event_id")}'
+        detail = f'{doc.get("channel")} event {doc.get("event_id")} (record {doc.get("record_id")}){" · " + doc["user"] if doc.get("user") else ""}'
+        when = doc.get('time')
+        return {'title': title, 'detail': detail, 'timestamp': _iso(when), 'source': doc.get('log_path')}
     elif item_type == 'ENTITY':
         from ..forensic.found_data import LABELS
         n = doc.get('count') or 0

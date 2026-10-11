@@ -159,7 +159,8 @@ export interface UsbSpan {
 
 const USB_KIND: Record<string, string> = {
   setupapi_first_install: 'First install (setupapi.dev.log)', first_install: 'First installed', last_install: 'Last installed',
-  last_arrival: 'Last connected', last_removal: 'Last removed',
+  last_arrival: 'Last connected', last_removal: 'Last removed', eventlog_first_connected: 'First connected (event log)',
+  eventlog_last_connected: 'Last connected (event log)', eventlog_last_removed: 'Last removed (event log)',
 };
 
 /** One lane per USB device on a shared time axis: a span from first to last record, a marker per recorded time. */

@@ -125,6 +125,9 @@ const COUNT_LABELS: [string, string, string][] = [
   ['installed_programs', 'installed program', 'installed programs'], ['amcache_entries', 'Amcache entry', 'Amcache entries'],
   ['shimcache_entries', 'ShimCache entry', 'ShimCache entries'], ['bam_entries', 'BAM entry', 'BAM entries'],
   ['rdp_connections', 'remote desktop connection', 'remote desktop connections'], ['network_drives', 'network drive', 'network drives'],
+  ['event_logs', 'event log', 'event logs'], ['event_records', 'event record', 'event records'],
+  ['recovered_event_records', 'recovered event record', 'recovered event records'], ['notable_events', 'notable event', 'notable events'],
+  ['eventlog_detections', 'detection', 'detections'], ['usb_devices_from_event_logs', 'USB device seen only in the event logs', 'USB devices seen only in the event logs'],
   ['timeline_events', 'timeline event', 'timeline events'],
 ];
 

