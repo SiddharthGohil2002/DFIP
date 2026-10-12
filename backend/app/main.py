@@ -6,12 +6,12 @@ from .repositories.users import seed_users
 from .api import auth,cases,evidence,notifications,reports,admin,forensics,findings,chain,jobs,threatintel,tags,hashsets,content,registry,eventlogs,useractivity,ntfs,chatcloud,desktop as desktop_module
 from .api import email as email_api
 from .api import media as media_api
-from .api import executables as executables_api, malware as malware_api
+from .api import executables as executables_api, malware as malware_api, shadow as shadow_api, volumes as volumes_api
 from .ws import r as ws_router
 from datetime import datetime,timezone
 app=FastAPI(title='DFIP API',version='2.1.0',description='Digital Forensics Investigation Platform')
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in settings.cors_origins.split(',') if x.strip()],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
-for router in [auth.r,cases.r,evidence.r,notifications.r,reports.r,admin.r,forensics.r,content.r,registry.r,eventlogs.r,useractivity.r,ntfs.r,email_api.r,chatcloud.r,media_api.r,executables_api.r,malware_api.r,findings.r,chain.r,jobs.r,threatintel.r,tags.r,hashsets.r,desktop_module.r]:app.include_router(router,prefix='/api')
+for router in [auth.r,cases.r,evidence.r,notifications.r,reports.r,admin.r,forensics.r,content.r,registry.r,eventlogs.r,useractivity.r,ntfs.r,email_api.r,chatcloud.r,media_api.r,executables_api.r,malware_api.r,shadow_api.r,volumes_api.r,findings.r,chain.r,jobs.r,threatintel.r,tags.r,hashsets.r,desktop_module.r]:app.include_router(router,prefix='/api')
 app.include_router(ws_router)
 @app.on_event('startup')
 async def startup():
@@ -50,7 +50,7 @@ async def startup():
         except Exception:pass
         # Analysis modules replace only their own output: every pipeline collection is cleared per module.
         for collection in ('fs_entries','timeline_events','forensic_artifacts','usb_artifacts','pipeline_warnings','entities','event_records','usn_records',
-                           'email_messages'):
+                           'email_messages','shadow_files'):
             try:db[collection].create_index([('evidence_id',1),('pipeline_module',1)])
             except Exception:pass
         for collection,keys,unique in [('hash_sets',[('set_id',1)],True),('fs_entries',[('evidence_id',1),('sha256',1)],False),
@@ -68,7 +68,11 @@ async def startup():
                                        ('fs_entries',[('evidence_id',1),('sha1',1)],False),
                                        ('fs_entries',[('evidence_id',1),('media.kind',1),('media.taken',-1)],False),
                                        ('forensic_artifacts',[('case_id',1),('type',1),('score',-1)],False),
-                                       ('yara_rulesets',[('set_id',1)],True)]:
+                                       ('yara_rulesets',[('set_id',1)],True),
+                                       ('shadow_files',[('evidence_id',1),('volume_id',1),('change',1),('path',1)],False),
+                                       ('shadow_files',[('evidence_id',1),('nk',1)],False),('shadow_files',[('case_id',1),('change',1)],False),
+                                       ('volume_keys',[('key_id',1)],True),('volume_keys',[('evidence_id',1),('volume_id',1)],False),
+                                       ('evidence',[('derived_from.evidence_id',1)],False)]:
             try:db[collection].create_index(keys,unique=unique)
             except Exception:pass
         # Tags made with older natural keys move to the current ones (idempotent).

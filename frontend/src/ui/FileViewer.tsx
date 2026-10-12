@@ -10,7 +10,8 @@ export type ViewSource =
   | { kind: 'image'; evidenceId: string; inode: string; offset: number; name: string }
   | { kind: 'artifact'; artifactId: string; name: string }
   | { kind: 'member'; entryId: string; name: string }
-  | { kind: 'volume'; evidenceId: string; volumeId: string; name: string };
+  | { kind: 'volume'; evidenceId: string; volumeId: string; name: string }
+  | { kind: 'shadow'; evidenceId: string; volumeId: string; inode: string; name: string };
 
 interface Preview {
   path?: string;
@@ -52,6 +53,7 @@ export interface ViewAt {
 function endpoint(src: ViewSource, what: 'content' | 'preview' | 'raw', extra = '') {
   if (src.kind === 'artifact') return `/forensics/artifacts/${encodeURIComponent(src.artifactId)}/${what}${extra ? `?${extra}` : ''}`;
   if (src.kind === 'member') return `/forensics/members/${encodeURIComponent(src.entryId)}/${what}${extra ? `?${extra}` : ''}`;
+  if (src.kind === 'shadow') return `/forensics/shadow-copies/${what}?evidence_id=${encodeURIComponent(src.evidenceId)}&volume_id=${encodeURIComponent(src.volumeId)}&inode=${encodeURIComponent(src.inode)}${extra ? `&${extra}` : ''}`;
   if (src.kind === 'volume') return `/forensics/evidence/${encodeURIComponent(src.evidenceId)}/volume?volume_id=${encodeURIComponent(src.volumeId)}${extra ? `&${extra}` : ''}`;
   return `/forensics/evidence/${encodeURIComponent(src.evidenceId)}/${what}?inode=${encodeURIComponent(src.inode)}&offset=${src.offset}${extra ? `&${extra}` : ''}`;
 }

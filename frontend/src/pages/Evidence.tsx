@@ -9,8 +9,12 @@ import type { Evidence } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, Hash, PageHeader, ProgressBar, StatusBadge, useToast } from '../ui';
 import { DeleteEvidenceModal } from './DeleteEvidence';
 
-const ACCEPT = '.e01,.ex01,.raw,.dd,.aff,.aff4';
-const SUPPORTED = ['E01', 'EX01', 'RAW', 'DD', 'AFF', 'AFF4'];
+const SUPPORTED = ['E01', 'EX01', 'RAW', 'DD', 'IMG', 'AFF', 'AFF4', 'VHD', 'VHDX', 'VMDK', 'QCOW2', 'QCOW'];
+/** A disk image file name: a known extension, an EnCase segment (.E02, .EAA, .Ex02) or a numbered part (.001). */
+const supportedName = (name: string) => {
+  const ext = name.split('.').pop()?.toUpperCase() || '';
+  return SUPPORTED.includes(ext) || /^\d{3,4}$/.test(ext) || /^E(X?\d\d|[A-Z]{2})$/.test(ext);
+};
 
 export function EvidencePage() {
   const { can } = useAuth();
@@ -102,20 +106,23 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
   const { caseId } = useCase();
   const toast = useToast();
   const input = useRef<HTMLInputElement>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [over, setOver] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [result, setResult] = useState<Evidence | null>(null);
   const [error, setError] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
 
+  const file = files.length === 1 ? files[0] : null;
   const ext = file?.name.split('.').pop()?.toUpperCase() || '';
-  const supported = !file || SUPPORTED.includes(ext);
+  const unsupported = files.filter((f) => !supportedName(f.name));
+  const supported = !unsupported.length;
+  const total = files.reduce((n, f) => n + f.size, 0);
   // Early hint only: the server compares SHA-256 and refuses an image already registered in the case.
   const lookalike = file && evidence.find((e) => e.filename === file.name && e.size === file.size);
 
-  function choose(f: File | null) {
-    setFile(f);
+  function choose(list: FileList | null) {
+    setFiles(list ? Array.from(list).sort((a, b) => a.name.localeCompare(b.name)) : []);
     setResult(null);
     setError('');
   }
@@ -123,17 +130,17 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
   function onDrop(e: DragEvent) {
     e.preventDefault();
     setOver(false);
-    choose(e.dataTransfer.files?.[0] || null);
+    choose(e.dataTransfer.files);
   }
 
   async function upload() {
-    if (!file) return;
+    if (!files.length) return;
     setError('');
     setProgress(0);
     try {
-      const ev = await uploadEvidence(caseId, file, setProgress);
+      const ev = await uploadEvidence(caseId, files, setProgress);
       setResult(ev);
-      setFile(null);
+      setFiles([]);
       toast(`${ev.evidence_id} registered and sealed read-only`, 'ok');
       onUploaded();
     } catch (e: any) {
@@ -159,7 +166,7 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
   }
 
   return (
-    <Card title="Add a disk image" subtitle={`Supported: ${SUPPORTED.join(', ')}. Large images upload directly to the server's evidence store.`}>
+    <Card title="Add a disk image" subtitle="E01 (with all its segments), raw/dd (also split into numbered parts .001, .002 ...), VHD, VHDX, VMDK, QCOW2 (with their parent disks) and AFF. Choose every file of one image together; large images upload directly to the server's evidence store.">
       <div className="stack" style={{ gap: 12 }}>
         <div
           className={`dropzone ${over ? 'over' : ''}`}
@@ -172,11 +179,12 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
           onKeyDown={(e) => e.key === 'Enter' && input.current?.click()}
         >
           <UploadCloud size={28} color="var(--accent)" />
-          <div className="strong" style={{ marginTop: 8 }}>{file ? file.name : 'Drop a disk image here or click to choose'}</div>
-          <div className="small muted">{file ? `${formatBytes(file.size)} · ${ext}` : 'The original file on your computer is never modified.'}</div>
-          <input ref={input} type="file" accept={ACCEPT} hidden onChange={(e) => choose(e.target.files?.[0] || null)} />
+          <div className="strong" style={{ marginTop: 8 }}>{file ? file.name : files.length ? `${files.length} files of one image` : 'Drop a disk image here or click to choose'}</div>
+          <div className="small muted">{file ? `${formatBytes(file.size)} · ${ext}` : files.length ? `${formatBytes(total)} · ${files.map((f) => f.name).slice(0, 6).join(', ')}${files.length > 6 ? ' …' : ''}`
+            : 'The original files on your computer are never modified.'}</div>
+          <input ref={input} type="file" multiple hidden aria-label="Disk image files" onChange={(e) => choose(e.target.files)} />
         </div>
-        {!supported && <Banner tone="warn">.{ext.toLowerCase()} is not a supported forensic image format.</Banner>}
+        {!supported && <Banner tone="warn">{unsupported.map((f) => f.name).join(', ')}: not a supported forensic image format.</Banner>}
         {lookalike && (
           <Banner tone="warn">
             <Copy size={16} style={{ flex: 'none' }} />
@@ -202,10 +210,10 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
           </Banner>
         )}
         <div className="row">
-          <Button variant="primary" icon={<UploadCloud size={15} />} disabled={!file || !supported || progress !== null} busy={progress !== null} onClick={upload}>
+          <Button variant="primary" icon={<UploadCloud size={15} />} disabled={!files.length || !supported || progress !== null} busy={progress !== null} onClick={upload}>
             Upload and seal
           </Button>
-          {file && progress === null && <Button variant="ghost" onClick={() => choose(null)}>Clear</Button>}
+          {files.length > 0 && progress === null && <Button variant="ghost" onClick={() => choose(null)}>Clear</Button>}
         </div>
       </div>
     </Card>

@@ -65,7 +65,7 @@ class FsIndexModule(Module):
             readable = stats.get('status') == 'COMPLETED'
             ctx.warn(f'{encrypted}-encrypted volume at sector offset {offset}: '
                      + ('only its unencrypted part (for example a BitLocker To Go discovery volume) could be read; ' if readable else '')
-                     + 'its contents need the recovery key or password to be analysed.')
+                     + 'its contents need the recovery key or password to be analysed (Unlock, under Volumes on the evidence page).')
         fs_type = filesystem_type(stats.get('stdout', ''))
         vid = volume_id(offset)
         local_time = any((fs_type or '').upper().startswith(t) for t in LOCAL_TIME_FS)

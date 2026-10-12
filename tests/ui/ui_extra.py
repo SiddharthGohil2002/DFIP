@@ -46,6 +46,30 @@ def analysed_case(image='/img/dfip-test-disk.dd', name=CASE_NAME):
 
 SHOWCASE = analysed_case()
 NTFS_CASE = analysed_case('/img/dfip-ntfs-disk.dd', f'UI extra — office desktop (NTFS) {uuid.uuid4().hex[:4]}')
+SAMPLES = '/img/samples/dfvfs'
+
+
+def volumes_case():
+    """A case with a BitLocker To Go stick (quick analysis) and an NTFS volume with two shadow copies (dfVFS samples)."""
+    token = api('POST', '/auth/login', body={'email': 'investigator@dfip.local', 'password': PW})['access_token']
+    case_id = api('POST', '/cases', token, {'name': f'UI extra — volumes {uuid.uuid4().hex[:4]}', 'priority': 'LOW'})['case_id']
+    ids = []
+    for name, body in (('bdetogo.raw', {'profile': 'quick'}), ('vss.raw', {'modules': ['shadow_copies']})):
+        b = uuid.uuid4().hex
+        data = (f'--{b}\r\nContent-Disposition: form-data; name="case_id"\r\n\r\n{case_id}\r\n'
+                f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() \
+            + open(f'{SAMPLES}/{name}', 'rb').read() + f'\r\n--{b}--\r\n'.encode()
+        eid = api('POST', '/evidence/upload', token, raw=data, ctype=f'multipart/form-data; boundary={b}')['evidence_id']
+        job = api('POST', f'/jobs/analysis/{eid}', token, body)['job_id']
+        for _ in range(300):
+            if api('GET', f'/jobs/{job}', token)['status'] in ('COMPLETED', 'FAILED'):
+                break
+            time.sleep(1)
+        ids.append(eid)
+    return case_id, ids
+
+
+VOL_CASE, (BDE_EV, VSS_EV) = volumes_case()
 
 
 def check(name, cond, detail=''):
@@ -252,6 +276,48 @@ with sync_playwright() as p:
     page.screenshot(path=f'{OUT}/x12-program-detail.png')
     page.keyboard.press('Escape')
 
+    print('== disk images, encrypted volumes and shadow copies')
+    page.get_by_label('Active case').select_option(VOL_CASE)
+    page.get_by_role('link', name=re.compile(r'^Evidence')).first.click()
+    page.get_by_label('Disk image files').set_input_files([f'{SAMPLES}/ext2.splitraw.001', f'{SAMPLES}/ext2.splitraw.000'])
+    expect(page.get_by_text('2 files of one image')).to_be_visible()
+    page.get_by_role('button', name='Upload and seal').click()
+    expect(page.get_by_text(re.compile(r'EVID-\d+ registered · ext2\.splitraw\.000'))).to_be_visible(timeout=60000)
+    check('the two parts of a split image upload together as one evidence item', True)
+    page.goto(f'{BASE}/app/evidence/{BDE_EV}')
+    vols = page.locator('.card', has=page.get_by_role('heading', name='Volumes'))
+    expect(vols.get_by_text('BitLocker, LOCKED')).to_be_visible()
+    vols.get_by_role('button', name='Unlock').click()
+    d = page.get_by_role('dialog')
+    d.get_by_label('Password', exact=True).fill('not-the-password')
+    d.get_by_role('button', name='Unlock and decrypt').click()
+    expect(d.get_by_text('does not unlock')).to_be_visible()
+    d.get_by_label('Password', exact=True).fill('bde-TEST')
+    d.get_by_role('button', name='Unlock and decrypt').click()
+    expect(vols.get_by_text('BitLocker, UNLOCKED')).to_be_visible(timeout=90000)
+    derived = vols.get_by_role('link', name=re.compile(r'^EVID-'))
+    check('a wrong password is refused in the dialog; the right one decrypts the volume into new evidence, linked from the volume',
+          derived.count() == 1, derived.count())
+    page.screenshot(path=f'{OUT}/x14-volumes.png', full_page=True)
+    derived.click()
+    expect(page.get_by_text(re.compile(r'Decrypted BitLocker volume p0 of'))).to_be_visible()
+    check('the decrypted evidence says where it came from', True)
+    page.get_by_role('link', name='Shadow copies').first.click()
+    snaps = page.locator('.card', has=page.get_by_role('heading', name='Snapshots'))
+    expect(snaps.locator('tbody tr')).to_have_count(2)
+    page.get_by_role('tab', name=re.compile(r'^Added since')).click()
+    expect(page.locator('td', has_text='/vss1').first).to_be_visible()
+    check('shadow copies: both snapshots, and the folders added since each', True)
+    page.screenshot(path=f'{OUT}/x15-shadow-copies.png', full_page=True)
+    snaps.locator('tbody tr').first.get_by_role('button', name='Browse').click()
+    d = page.get_by_role('dialog')
+    row = d.locator('tr', has_text='passwords.txt')
+    row.get_by_role('button', name='View').click()
+    expect(page.get_by_role('dialog').filter(has_text='(shadow copy 1)')).to_be_visible()
+    check('a snapshot can be browsed and its files opened in the viewer', True)
+    page.keyboard.press('Escape')
+    page.keyboard.press('Escape')
+
     print('== bad session')
     page.evaluate("() => { sessionStorage.setItem('dfip_token', 'garbage'); sessionStorage.setItem('dfip_refresh', 'garbage'); }")
     page.goto(BASE + '/app/timeline')
@@ -377,7 +443,7 @@ with sync_playwright() as p:
         sign_in(page, 'investigator@dfip.local')
         expect(page.get_by_text('Investigation functions')).to_be_visible()
         bad = []
-        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/usb', '/app/reports', '/app/custody'):
+        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/shadow-copies', '/app/usb', '/app/reports', '/app/custody'):
             page.goto(BASE + path)
             page.wait_for_load_state('networkidle')
             sw = page.evaluate('document.documentElement.scrollWidth')

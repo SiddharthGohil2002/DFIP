@@ -69,6 +69,13 @@ export interface Evidence {
   created_by?: string;
   storage_path?: string;
   demo?: boolean;
+  /** The files of an image that came in several (segments, split parts, a virtual disk and its parents). */
+  image_set?: { kind: 'segments' | 'split' | 'chain'; count: number; label: string };
+  image_files?: { name: string; size: number; sha256: string; sha512?: string; role: string }[];
+  /** The raw copy every tool reads, for images that are not a single raw file. */
+  working_copy?: { format: string; size: number; sha256: string; md5?: string; method?: string; created_at?: string; stored_md5_match?: boolean };
+  /** A decrypted volume: the evidence and volume it was decrypted from. */
+  derived_from?: { evidence_id: string; volume_id: string; kind: string; method: string; key_id: string; source_sha256?: string };
   /** Each analysis module's latest run on this evidence. */
   modules?: Record<string, ModuleStatus>;
   /** The time zone the last analysis read local times in (FAT file times, setupapi.dev.log). */
@@ -184,6 +191,10 @@ export interface CaseCounts {
   timestomp_suspects?: number;
   alternate_streams?: number;
   usn_records?: number;
+  shadow_copies?: number;
+  shadow_files?: number;
+  shadow_deleted?: number;
+  decrypted_volumes?: number;
   browser_searches?: number;
   browser_cookies?: number;
   browser_bookmarks?: number;

@@ -5,7 +5,8 @@ directly, so the same code works on a disk image (TskImageSource, in-process thr
 loose files such as an unpacked triage package (DirectorySource).
 
 A volume is named by a `volume_id`: `p<start sector>` for a partition of a disk image (`p0` when the image is a
-bare file system), and later `p<start>/vss<n>` for a shadow copy or `pkg` for a logical package. A `BlobRef`
+bare file system), `p<start>/vss<n>` for its n-th Volume Shadow Copy (read through libvshadow), and later `pkg`
+for a logical package. A `BlobRef`
 names one piece of content: a file by inode (images) or path (folders), optionally one of its data streams, and,
 for content found inside other content (an archive member, an e-mail attachment), the chain of containers.
 """
@@ -18,6 +19,7 @@ from typing import Iterator
 
 SECTOR = 512
 _VOLUME_RE = re.compile(r'^p(\d+)$')
+_ANY_VOLUME_RE = re.compile(r'^p(\d+)(?:/vss(\d+))?$')
 _INODE_RE = re.compile(r'^(\d+)(?:-(\d+)(?:-(\d+))?)?$')
 
 
@@ -31,6 +33,53 @@ def offset_of(vid: str) -> int:
     if not m:
         raise ValueError(f'Not a partition volume id: {vid!r}')
     return int(m.group(1))
+
+
+def parse_volume(vid: str) -> tuple[int, int | None]:
+    """(start sector, shadow copy number or None): 'p2048' -> (2048, None), 'p2048/vss2' -> (2048, 2)."""
+    m = _ANY_VOLUME_RE.match(vid or '')
+    if not m or (m.group(2) is not None and int(m.group(2)) < 1):
+        raise ValueError(f'Not a volume id: {vid!r}')
+    return int(m.group(1)), (int(m.group(2)) if m.group(2) else None)
+
+
+def shadow_volume_id(start_sector: int, store: int) -> str:
+    return f'p{int(start_sector)}/vss{int(store)}'
+
+
+class OffsetFile:
+    """A window of a file (a partition of a disk image) as a file object for libyal's readers."""
+
+    def __init__(self, path: Path, start: int, size: int | None = None):
+        self._f = open(path, 'rb')
+        total = os.path.getsize(path)
+        self._start = start
+        self._size = max(0, total - start) if size is None else min(size, max(0, total - start))
+        self._pos = 0
+
+    def read(self, n: int = -1) -> bytes:
+        if n is None or n < 0 or self._pos + n > self._size:
+            n = self._size - self._pos
+        if n <= 0:
+            return b''
+        self._f.seek(self._start + self._pos)
+        data = self._f.read(n)
+        self._pos += len(data)
+        return data
+
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        base = {os.SEEK_SET: 0, os.SEEK_CUR: self._pos, os.SEEK_END: self._size}[whence]
+        self._pos = max(0, base + offset)
+        return self._pos
+
+    def tell(self) -> int:
+        return self._pos
+
+    def get_size(self) -> int:
+        return self._size
+
+    def close(self):
+        self._f.close()
 
 
 @dataclass(frozen=True)
@@ -116,7 +165,8 @@ class TskImageSource(EvidenceSource):
         self.image = Path(image)
         self._img = pytsk3.Img_Info(str(self.image))
         self._offsets = offsets
-        self._fs: dict[int, object] = {}
+        self._fs: dict = {}
+        self._keep: list = []  # libvshadow objects a shadow copy's file system reads through
 
     def volumes(self) -> list[str]:
         if self._offsets is not None:
@@ -133,10 +183,40 @@ class TskImageSource(EvidenceSource):
         return [volume_id(o) for o in (found or [0])]
 
     def _filesystem(self, vid: str):
-        off = offset_of(vid)
-        if off not in self._fs:
-            self._fs[off] = self._tsk.FS_Info(self._img, offset=off * SECTOR)
-        return self._fs[off]
+        off, store = parse_volume(vid)
+        if (off, store) not in self._fs:
+            if store is None:
+                self._fs[(off, store)] = self._tsk.FS_Info(self._img, offset=off * SECTOR)
+            else:
+                self._fs[(off, store)] = self._tsk.FS_Info(self._shadow_image(off, store))
+        return self._fs[(off, store)]
+
+    def _shadow_image(self, off: int, store: int):
+        """A shadow copy of the volume at `off`, as a pytsk3 image (libvshadow reads it in-process)."""
+        import pyvshadow
+        window = OffsetFile(self.image, off * SECTOR)
+        vss = pyvshadow.volume()
+        vss.open_file_object(window)
+        if not 1 <= store <= vss.number_of_stores:
+            raise ValueError(f'The volume has no shadow copy {store}')
+        snap = vss.get_store(store - 1)
+        tsk = self._tsk
+
+        class StoreImage(tsk.Img_Info):
+            def __init__(self):
+                super().__init__(url='', type=tsk.TSK_IMG_TYPE_EXTERNAL)
+
+            def read(self, offset, size):
+                snap.seek(offset)
+                return snap.read(size)
+
+            def get_size(self):
+                return snap.volume_size
+
+        self._keep += [window, vss, snap]
+        img = StoreImage()
+        self._keep.append(img)
+        return img
 
     def find(self, vid: str, path: str) -> str | None:
         """Sleuth Kit's path lookup (case-insensitive on FAT and NTFS); allocated files only."""
@@ -155,8 +235,9 @@ class TskImageSource(EvidenceSource):
         attr_id = int(m.group(3)) if m.group(3) else (0 if attr_type is not None else None)
         return _TskBlob(f, attr_type, attr_id)
 
-    def walk(self, vid: str) -> Iterator[dict]:
-        """Every named entry of a volume (allocated and deleted), depth first: {path, inode, size, is_dir, deleted}."""
+    def walk(self, vid: str, times: bool = False) -> Iterator[dict]:
+        """Every named entry of a volume (allocated and deleted), depth first: {path, inode, size, is_dir, deleted}, and
+        with times=True the entry's modified, accessed, changed and created times (seconds since 1970, or None)."""
         fs = self._filesystem(vid)
         seen = set()
 
@@ -172,8 +253,11 @@ class TskImageSource(EvidenceSource):
                 is_dir = meta.type in (self._tsk.TSK_FS_META_TYPE_DIR, self._tsk.TSK_FS_META_TYPE_VIRT_DIR)
                 deleted = bool(int(entry.info.name.flags) & int(self._tsk.TSK_FS_NAME_FLAG_UNALLOC))
                 # Sleuth Kit's own entries ($MBR, $FAT1, $OrphanFiles, ...) are flagged as in the file index.
-                yield {'path': path, 'inode': str(meta.addr), 'size': int(meta.size or 0), 'is_dir': is_dir,
-                       'deleted': deleted, 'is_virtual': virtual}
+                item = {'path': path, 'inode': str(meta.addr), 'size': int(meta.size or 0), 'is_dir': is_dir,
+                        'deleted': deleted, 'is_virtual': virtual}
+                if times:
+                    item.update({k: (int(getattr(meta, k)) or None) for k in ('mtime', 'atime', 'ctime', 'crtime')})
+                yield item
                 if is_dir and not deleted and meta.addr not in seen:
                     seen.add(meta.addr)
                     try:

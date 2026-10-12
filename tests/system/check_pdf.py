@@ -20,7 +20,7 @@ titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer
           'Pictures and videos', 'Email',
           'Chat and cloud storage', 'Windows activity', 'Execution evidence', 'Folders browsed',
           'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives',
-          'Jump lists, Timeline, thumbnails, SRUM and search index', 'NTFS: timestomping, alternate data streams and USN journal',
+          'Jump lists, Timeline, thumbnails, SRUM and search index', 'NTFS: timestomping, alternate data streams and USN journal', 'Volume Shadow Copies',
           'Event logs', 'Malware indicators',
           'Hash set matches', 'Renamed and encrypted files', 'Found data',
           'Investigator findings', 'Tagged evidence', 'Timeline of notable events', 'Audit trail integrity']

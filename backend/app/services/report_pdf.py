@@ -131,6 +131,14 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
         story.append(_table(['Evidence', 'SHA-256 (acquisition)'],
                             [[e['evidence_id'], e.get('sha256')] for e in evidence], [1, 5], mono_cols=(1,)))
         story.append(Spacer(1, 10))
+    read_as = [[e['evidence_id'], _how_read(e), (e.get('working_copy') or {}).get('sha256')] for e in evidence
+               if e.get('image_files') or e.get('working_copy') or e.get('derived_from')]
+    if read_as:
+        story.append(Paragraph('Images in several files are hashed file by file and as a whole (above). Images that are not raw are '
+                               'read through a raw working copy, made once and hashed; decrypted volumes are evidence of their own, '
+                               'derived from the encrypted original with the investigator\'s key.', NOTE))
+        story.append(_table(['Evidence', 'How it was read', 'SHA-256 of the working copy'], read_as, [1, 3.2, 2.8], mono_cols=(2,)))
+        story.append(Spacer(1, 10))
 
     custody = list(db['chain_of_custody'].find({'case_id': cid}).sort('timestamp', 1))
     # Readable action labels wrap at spaces; older records may only carry a user ID.
@@ -477,6 +485,30 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
              f'No deletions, renames, overwrites or time changes in the USN journal ({db["usn_records"].count_documents({"case_id": cid}):,} records read).',
              total=db['usn_records'].count_documents(q), heading=H3)
 
+    # Volume Shadow Copies (module shadow_copies).
+    vss_title = T('Volume Shadow Copies')
+    story.append(Paragraph(escape(vss_title), H2))
+    story.append(Paragraph('Windows keeps snapshots of NTFS volumes (restore points, backups). Each snapshot was read as it was when it '
+                           'was made and compared with the volume now: files deleted or changed since a snapshot can still be read '
+                           'and recovered from it.', NOTE))
+    n = vss_title.split('.')[0]
+    eids = [e['evidence_id'] for e in evidence]
+    stores = [dict(s, evidence_id=f['evidence_id']) for f in db['analysis_facts'].find({'evidence_id': {'$in': eids}}, {'evidence_id': 1, 'shadow_copies': 1})
+              for s in (f.get('shadow_copies') or {}).get('stores') or []]
+    _section(story, f'{n}.1 Shadow copies', ['Evidence', 'Volume', 'Copy', 'Made', 'Identifier', 'Deleted since', 'Changed since', 'Added since'],
+             [[s['evidence_id'], s.get('parent_volume_id'), s.get('store'), s.get('created'), s.get('identifier'),
+               (s.get('counts') or {}).get('deleted_since'), (s.get('counts') or {}).get('changed_since'), (s.get('counts') or {}).get('added_since')]
+              for s in sorted(stores, key=lambda x: (x['evidence_id'], x.get('parent_volume_id') or '', x.get('store') or 0))],
+             [0.9, 0.7, 0.5, 1.3, 2.2, 0.7, 0.7, 0.7], 'No shadow copies were found (or no NTFS volume was analysed).', heading=H3)
+    q = {'case_id': cid, 'change': {'$in': ['DELETED_SINCE', 'CHANGED_SINCE']}, 'is_dir': False}
+    _section(story, f'{n}.2 Files deleted or changed since a shadow copy', ['Evidence', 'Copy', 'Change', 'File', 'Size then', 'Modified then'],
+             [[x.get('evidence_id'), x.get('store'), 'deleted since' if x.get('change') == 'DELETED_SINCE' else 'changed since', x.get('path'),
+               x.get('size'), x.get('mtime')]
+              for x in db['shadow_files'].find(q).sort([('evidence_id', 1), ('volume_id', 1), ('change', 1), ('path', 1)]).limit(MAX_ROWS)],
+             [0.9, 0.5, 1.0, 2.8, 0.8, 1.3],
+             f'No file was deleted or changed since a shadow copy ({db["shadow_files"].count_documents({"case_id": cid, "change": "ADDED_SINCE"}):,} '
+             'added since).', total=db['shadow_files'].count_documents(q), heading=H3)
+
     # Windows event logs (module eventlogs).
     events_title = T('Event logs')
     story.append(Paragraph(escape(events_title), H2))
@@ -578,7 +610,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     tagged = sorted(db['tags'].find({'case_id': cid}), key=lambda t: (tag_order.get(t.get('label'), 9), str((t.get('snapshot') or {}).get('timestamp') or '')))
     item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
                  'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file', 'ENTITY': 'Found data',
-                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity', 'USN': 'USN journal record',
+                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity', 'USN': 'USN journal record', 'SHADOW_FILE': 'Shadow copy file',
                  'EMAIL': 'Email', 'CHAT_CLOUD': 'Chat or cloud storage record', 'PROGRAM': 'Program'}
     _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
              [[(t.get('label') or '').replace('_', ' ').capitalize(),
@@ -609,3 +641,19 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
 
     SimpleDocTemplate(str(path), pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm, topMargin=15 * mm, bottomMargin=15 * mm,
                       title=f'{report_id} {cid}', author='DFIP').build(story)
+
+def _how_read(e: dict) -> str:
+    """How an evidence item was read: its files, its working copy, or the volume it was decrypted from."""
+    parts = []
+    d = e.get('derived_from')
+    if d:
+        how = {'password': 'password', 'recovery_password': 'recovery password'}.get(d.get('method'), d.get('method'))
+        parts.append(f'Decrypted {d.get("kind")} volume {d.get("volume_id")} of {d.get("evidence_id")}, unlocked with a {how}')
+    files = e.get('image_files') or []
+    if files:
+        parts.append(f'{(e.get("image_set") or {}).get("label") or e.get("format")} in {len(files)} files: '
+                     + ', '.join(f'{f["name"]} ({f.get("role")})' for f in files[:12]) + (' ...' if len(files) > 12 else ''))
+    wc = e.get('working_copy')
+    if wc:
+        parts.append(f'raw working copy ({wc.get("method") or "ewfexport"}, {wc.get("size") or 0:,} bytes)')
+    return '; '.join(parts)

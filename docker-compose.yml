@@ -48,6 +48,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1,http://tauri.localhost,tauri://localhost,http://localhost:1420,http://127.0.0.1:1420,http://localhost:5173,http://127.0.0.1:5173}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-53687091200}
       REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-now}@redis:6379/0
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-}
       VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
       VIRUSTOTAL_BASE_URL: ${VIRUSTOTAL_BASE_URL:-https://www.virustotal.com/api/v3}
       VIRUSTOTAL_RATE_PER_MINUTE: ${VIRUSTOTAL_RATE_PER_MINUTE:-4}

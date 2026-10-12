@@ -4,7 +4,7 @@ Profiles:
   quick     the file system index and the well-known artifacts, for a fast first look
   standard  everything that is cheap enough to run on every disk (the default): also event logs, Jump Lists, the
             Windows Timeline, thumbnails, SRUM and the search index, NTFS timestomping, alternate data streams and the USN
-            journal, browser searches, cookies, bookmarks, logins and deleted history, email, chat and cloud storage, file
+            journal, Volume Shadow Copies (what changed since each), browser searches, cookies, bookmarks, logins and deleted history, email, chat and cloud storage, file
             hashes and types, picture thumbnails, camera and GPS metadata and video keyframes, programs (PE analysis,
             signatures, capa), ClamAV, VirusTotal lookups when a case turns them on, hash sets and YARA
   full      everything: also archive members and embedded files, text in pictures and scans (OCR), the text of every file
@@ -37,13 +37,14 @@ from .ntfs import NtfsModule
 from .ocr import OcrModule
 from .registry import RegistryModule
 from .reputation import ReputationModule
+from .shadow_copies import ShadowCopiesModule
 from .tz_probe import TzProbeModule
 from .unallocated import UnallocatedModule
 from .user_activity import UserActivityModule
 from .yara_scan import YaraModule
 
 MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), RegistryModule(), EventLogsModule(),
-                         UserActivityModule(), NtfsModule(), BrowserDepthModule(), FileProcModule(), MembersModule(), EmailModule(),
+                         UserActivityModule(), NtfsModule(), ShadowCopiesModule(), BrowserDepthModule(), FileProcModule(), MembersModule(), EmailModule(),
                          ChatCloudModule(), MediaModule(), OcrModule(), ExecutablesModule(), ReputationModule(), ClamavModule(),
                          HashMatchModule(), YaraModule(), ContentModule(), UnallocatedModule(), FoundDataModule()]
 REGISTRY: dict[str, Module] = {m.name: m for m in MODULES}
@@ -51,10 +52,10 @@ ORDER = [m.name for m in MODULES]
 
 PROFILES = {
     'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry'],
-    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth',
-                 'fileproc', 'email', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara'],
-    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc',
-             'containers', 'email', 'chat_cloud', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content',
+    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies',
+                 'browser_depth', 'fileproc', 'email', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara'],
+    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth',
+             'fileproc', 'containers', 'email', 'chat_cloud', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content',
              'unallocated', 'found_data'],
 }
 DEFAULT_PROFILE = 'standard'

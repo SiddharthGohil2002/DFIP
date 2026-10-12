@@ -140,12 +140,14 @@ export const patch = <T = any>(path: string, json?: unknown) => api<T>(path, { m
 export const del = <T = any>(path: string, json?: unknown) => api<T>(path, { method: 'DELETE', json });
 
 /** Uploads an evidence image with progress (XHR: fetch has no upload progress). */
-export function uploadEvidence(caseId: string, file: File, onProgress: (fraction: number) => void): Promise<any> {
+/** Uploads one disk image: a file, or the files that together are one image (segments, split parts, a virtual disk
+ * with its parents). */
+export function uploadEvidence(caseId: string, files: File | File[], onProgress: (fraction: number) => void): Promise<any> {
   const send = (): Promise<{ status: number; body: any }> =>
     new Promise((resolve, reject) => {
       const form = new FormData();
       form.append('case_id', caseId);
-      form.append('file', file);
+      for (const f of Array.isArray(files) ? files : [files]) form.append('file', f);
       const xhr = new XMLHttpRequest();
       xhr.open('POST', apiBase() + '/evidence/upload');
       Object.entries(authHeaders()).forEach(([k, v]) => xhr.setRequestHeader(k, v));

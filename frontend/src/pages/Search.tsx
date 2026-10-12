@@ -155,6 +155,15 @@ export function SearchPage() {
               </tr>
             ))}
           </Group>
+          <Group title="Shadow copies" total={res.totals.shadow ?? 0} shown={(res.results.shadow || []).length} link={{ to: '/app/shadow-copies', label: 'Open shadow copies' }}>
+            {(res.results.shadow || []).map((x) => (
+              <tr key={x._id}>
+                <td className="cell-path small mono">{x.path}</td>
+                <td className="small">{x.change === 'DELETED_SINCE' ? 'deleted since' : 'changed since'} copy {x.store}</td>
+                <td className="small mono" colSpan={2}>{x.evidence_id} {x.parent_volume_id}</td>
+              </tr>
+            ))}
+          </Group>
           <Group title="Programs" total={res.totals.programs ?? 0} shown={(res.results.programs || []).length} link={{ to: '/app/indicators', label: 'Open indicators' }}>
             {(res.results.programs || []).map((p) => (
               <tr key={p._id}>

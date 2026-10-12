@@ -472,6 +472,8 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
         'programs':('forensic_artifacts',{'case_id':case_id,'type':'EXECUTABLE','$or':[{f:rx} for f in ('path','pe.version_info.CompanyName',
                     'pe.version_info.FileDescription','pe.version_info.OriginalFilename','signature.signers.signer','pe.pdb_path')]},
                     [('score',-1),('path',1)]),
+        'shadow':('shadow_files',{'case_id':case_id,'change':{'$in':['DELETED_SINCE','CHANGED_SINCE']},'path':rx},
+                  [('evidence_id',1),('volume_id',1),('path',1)]),
         'cloud':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['CLOUD_FILE','CLOUD_ACCOUNT']},
                  '$or':[{f:rx} for f in ('path','name','hash','account','sync_folder','web_url')]},[('type',1),('path',1)]),
         'usb':('usb_artifacts',{'case_id':case_id,'$or':[{'friendly_name':rx},{'vendor':rx},{'product':rx},{'serial':rx}]},[('serial',1)]),

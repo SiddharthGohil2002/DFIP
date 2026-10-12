@@ -1,6 +1,6 @@
 import {
   Activity, BarChart3, Monitor, Bookmark, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, Mail,
-  MessagesSquare, NotebookPen, Images, Bug, ScanSearch, ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
+  MessagesSquare, NotebookPen, Images, Bug, History, ScanSearch, ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
 
@@ -111,6 +111,13 @@ export const NAV: NavGroup[] = [
         count: (c) => c.usn_records ?? 0,
         alert: (c) => (c.timestomp_suspects ?? 0) > 0,
         countLabel: (c) => `${n(c.timestomp_suspects ?? 0)} timestomped · ${n(c.alternate_streams ?? 0)} streams · ${n(c.usn_records ?? 0)} journal records`,
+      },
+      {
+        to: '/app/shadow-copies', label: 'Shadow copies', icon: History, tone: 'amber',
+        description: 'Volume Shadow Copies: the snapshots Windows keeps of NTFS volumes, and the files deleted, changed or added since each, readable and recoverable.',
+        count: (c) => c.shadow_copies ?? 0,
+        alert: (c) => (c.shadow_deleted ?? 0) > 0,
+        countLabel: (c) => `${n(c.shadow_copies ?? 0)} snapshots · ${n(c.shadow_deleted ?? 0)} files deleted since`,
       },
       {
         to: '/app/computer', label: 'Computer and users', icon: Monitor, tone: 'teal',

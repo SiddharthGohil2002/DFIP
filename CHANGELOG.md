@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added — Disk images, encrypted volumes and shadow copies
+- **More image formats**: VHD, VHDX, VMDK and QCOW2 virtual disks, read through a raw working copy made with libyal and hashed. Differencing disks and snapshots are uploaded with their parents; on their own they are refused, naming the parent.
+- **Images in several files**: EnCase segments (`.E01`, `.E02` ...) and raw images split into numbered parts upload together as one evidence item. Each file and the whole are hashed; a missing segment or part is refused before anything is registered, and an integrity check names the file that changed.
+- **Encrypted volumes**: BitLocker (password or recovery password, BitLocker To Go included) and LUKS volumes are unlocked from the evidence page. The key is checked at once, stored encrypted and audited; the decrypted volume becomes evidence of its own, hashed, in the chain of custody and analysed. Deleting the original deletes it too.
+- **Volume Shadow Copies** (new `shadow_copies` module and page): every snapshot of every NTFS volume, when it was made, and the files deleted, changed or added since; snapshots can be browsed, their files viewed and recovered as they were. A report section, timeline events, tags and search.
+- Every upload is now stored in a folder of its own under its own name. `DATA_ENCRYPTION_KEY` sets the key stored secrets are encrypted with. The backend image gains qemu-utils, libvshadow-utils, libbde-utils and libluksde-utils (the tests' independent readers).
+
 ### Added — Malware checks
 - **Programs** (new `executables` module, standard and full profiles): every Windows program and DLL on the evidence (renamed, deleted, in archives or attached to email) parsed without running it: compile time, sections and their entropy, imports, version information and its Authenticode signature checked against Microsoft's trusted roots. Programs that stand out come first, with the reasons: packed, built under another name, a system program's name in the wrong folder, a bad or untrusted signature, imports that wipe files, inject into processes or log keys. Indicators gains a Programs card with each program's details.
 - **capa** (pinned release) lists what a program's code does, with ATT&CK techniques: automatically for the programs that stand out most, and on request.

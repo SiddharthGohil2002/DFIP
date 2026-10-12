@@ -1,11 +1,15 @@
-"""Raw working copy for EnCase (E01/EX01) evidence.
+"""Raw working copies: one raw file per evidence item that is not a single raw image.
 
-The Sleuth Kit build in the backend image (4.12 with libewf 20140816) crashes on
-EWF images, while libewf's own tools read them correctly. EWF evidence is
-therefore checked with `ewfverify` (the image's internal checksums and stored
-media hash) and exported once with `ewfexport` to a raw working copy in the
-analysis area. Every analysis tool reads that copy; the uploaded original is
-never modified and is still what integrity checks hash.
+Every analysis tool reads a raw disk, so evidence in another form gets a raw working copy in the analysis area,
+made once and kept read-only; the uploaded original is never modified and is still what integrity checks hash.
+- EnCase (E01/EX01, one file or segments): the Sleuth Kit build in the backend image (4.12 with libewf 20140816)
+  crashes on EWF images, while libewf's own tools read them correctly, so the image is checked with `ewfverify`
+  (internal checksums and the stored media hash) and exported with `ewfexport`.
+- Virtual disks (VHD, VHDX, VMDK, QCOW2, with their parents): the media is read with libyal (libvhdi, libvmdk,
+  libqcow) and written out.
+- A raw image split into parts: the parts are written out one after the other.
+The copy is hashed as it is written (all-zero stretches are left sparse), and the copy, its hashes and how it was
+made go into the chain of custody. Free space is checked first.
 """
 from __future__ import annotations
 
@@ -17,16 +21,53 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..core.config import settings
+from .disk_formats import EWF, LABELS, VIRTUAL, ConcatenatedParts, ensure_space, open_media, write_raw
 
-EWF_FORMATS = {'E01', 'EX01'}
+EWF_FORMATS = set(EWF)
+_METHOD = {'VHD': 'libvhdi', 'VHDX': 'libvhdi', 'VMDK': 'libvmdk', 'QCOW2': 'libqcow'}
 
 
 class WorkingCopyUnavailable(Exception):
-    """The E01 has not been prepared yet (run the analysis first)."""
+    """The working copy has not been made yet (run the analysis first)."""
+
+
+def image_files(evidence: dict) -> list[Path]:
+    """The evidence's stored files in set order (segments in order; a virtual disk before its parents)."""
+    if evidence.get('image_files'):
+        return [Path(f['path']) for f in evidence['image_files']]
+    return [Path(evidence['storage_path'])]
+
+
+def files_sha256(paths: list[Path]) -> str:
+    """SHA-256 over the files one after the other: the evidence's hash (for one file, that file's hash)."""
+    h = hashlib.sha256()
+    for p in paths:
+        with p.open('rb') as f:
+            while chunk := f.read(1 << 20):
+                h.update(chunk)
+    return h.hexdigest()
+
+
+def evidence_sha256(evidence: dict) -> str:
+    missing = [p.name for p in image_files(evidence) if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f'Original evidence object is unavailable ({", ".join(missing)})')
+    return files_sha256(image_files(evidence))
+
+
+def changed_files(evidence: dict) -> list[str]:
+    """For an image set whose hash no longer matches: which of its files changed."""
+    out = []
+    for f in evidence.get('image_files') or []:
+        p = Path(f['path'])
+        if not p.exists() or files_sha256([p]) != f.get('sha256'):
+            out.append(f['name'])
+    return out
 
 
 def needs_working_copy(evidence: dict) -> bool:
-    return str(evidence.get('format', '')).upper() in EWF_FORMATS
+    fmt = str(evidence.get('format', '')).upper()
+    return fmt in EWF_FORMATS or fmt in VIRTUAL or (evidence.get('image_set') or {}).get('kind') == 'split'
 
 
 def working_copy_path(evidence: dict) -> Path:
@@ -34,21 +75,62 @@ def working_copy_path(evidence: dict) -> Path:
 
 
 def analysis_image(evidence: dict, create: bool = False, db=None, actor: str = 'system') -> Path:
-    """The file the Sleuth Kit should read: the original for raw images, the working copy for E01.
+    """The file the Sleuth Kit should read: the original for a raw image, else the working copy.
 
-    With create=False a missing working copy raises WorkingCopyUnavailable instead of
-    starting a long export inside a web request."""
+    With create=False a missing working copy raises WorkingCopyUnavailable instead of starting a long export
+    inside a web request."""
     if not needs_working_copy(evidence):
         return Path(evidence['storage_path'])
     target = working_copy_path(evidence)
     if target.exists():
         return target
     if not create:
-        raise WorkingCopyUnavailable('This E01 image has not been prepared for examination yet. Run the analysis first.')
+        what = LABELS.get(str(evidence.get('format', '')).upper(), evidence.get('format'))
+        raise WorkingCopyUnavailable(f'This {what} image has not been prepared for examination yet. Run the analysis first.')
     return prepare_working_copy(evidence, db, actor)
 
 
 def prepare_working_copy(evidence: dict, db=None, actor: str = 'system', timeout: int = 6 * 3600) -> Path:
+    target = working_copy_path(evidence)
+    partial = target.with_suffix('.partial')
+    fmt = str(evidence.get('format', '')).upper()
+    if fmt in EWF_FORMATS:
+        info = _export_ewf(evidence, partial, timeout)
+    elif fmt in VIRTUAL:
+        media = open_media(evidence)
+        try:
+            ensure_space(target.parent, media.size, 'the raw working copy')
+            info = write_raw(media.read, media.size, partial)
+        finally:
+            media.close()
+        names = [f['name'] for f in evidence.get('image_files') or []] or [evidence.get('filename')]
+        info.update(method=_METHOD[fmt], detail=f'{LABELS[fmt]} read with {_METHOD[fmt]}'
+                    + (f' (with its parent {", ".join(names[1:])})' if len(names) > 1 else '') + ' and written to a raw working copy')
+    else:
+        parts = ConcatenatedParts(image_files(evidence))
+        ensure_space(target.parent, parts.size, 'the raw working copy')
+        info = write_raw(parts.read, parts.size, partial)
+        info.update(method='concatenated', detail=f'{len(parts._parts)} parts of a split raw image written one after the other '
+                                                  'to a raw working copy')
+    partial.chmod(0o444)
+    partial.replace(target)
+
+    if db is not None:
+        now = datetime.now(timezone.utc)
+        record = {'path': str(target), 'format': 'RAW', 'size': info['size'], 'sha256': info['sha256'], 'md5': info['md5'],
+                  'method': info['method'], 'created_at': now}
+        for k in ('ewfverify', 'stored_md5_match'):
+            if k in info:
+                record[k] = info[k]
+        db['evidence'].update_one({'evidence_id': evidence['evidence_id']}, {'$set': {'working_copy': record}})
+        db['chain_of_custody'].insert_one({
+            'evidence_id': evidence['evidence_id'], 'case_id': evidence['case_id'], 'timestamp': now,
+            'user_id': 'system', 'user_name': actor, 'action': 'WORKING_COPY_CREATED', 'sha256': info['sha256'], 'status': 'VERIFIED',
+            'detail': info['detail'] + '; the original is unchanged'})
+    return target
+
+
+def _export_ewf(evidence: dict, partial: Path, timeout: int) -> dict:
     original = Path(evidence['storage_path'])
     for tool in ('ewfverify', 'ewfexport'):
         if not shutil.which(tool):
@@ -64,10 +146,7 @@ def prepare_working_copy(evidence: dict, db=None, actor: str = 'system', timeout
         raise ValueError('ewfinfo did not report the media size of the E01 image')
     media_size = int(size_match.group(1))
     stored_md5 = re.search(r'^\s*MD5:\s+([0-9a-f]{32})\s*$', info, re.M)
-
-    target = working_copy_path(evidence)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_suffix('.partial')
+    ensure_space(partial.parent, media_size, 'the raw working copy')
     with partial.open('wb') as out:
         export = subprocess.run(['ewfexport', '-q', '-u', '-f', 'raw', '-t', '-', str(original)],
                                 stdout=out, stderr=subprocess.PIPE, timeout=timeout)
@@ -85,18 +164,8 @@ def prepare_working_copy(evidence: dict, db=None, actor: str = 'system', timeout
     if stored_md5 and md5.hexdigest() != stored_md5.group(1):
         partial.unlink(missing_ok=True)
         raise ValueError('The exported media does not match the MD5 stored in the E01 image; analysis refused')
-    digest = sha256.hexdigest()
-    partial.chmod(0o444)
-    partial.replace(target)
-
-    if db is not None:
-        now = datetime.now(timezone.utc)
-        md5_note = 'matches the MD5 stored in the E01' if stored_md5 else 'the E01 stores no MD5 to compare'
-        db['evidence'].update_one({'evidence_id': evidence['evidence_id']}, {'$set': {'working_copy': {
-            'path': str(target), 'format': 'RAW', 'size': media_size, 'sha256': digest, 'md5': md5.hexdigest(),
-            'ewfverify': 'SUCCESS', 'stored_md5_match': bool(stored_md5), 'created_at': now}}})
-        db['chain_of_custody'].insert_one({
-            'evidence_id': evidence['evidence_id'], 'case_id': evidence['case_id'], 'timestamp': now,
-            'user_id': 'system', 'user_name': actor, 'action': 'WORKING_COPY_CREATED', 'sha256': digest, 'status': 'VERIFIED',
-            'detail': f'E01 checked with ewfverify and exported to a raw working copy ({md5_note}); the original is unchanged'})
-    return target
+    md5_note = 'matches the MD5 stored in the E01' if stored_md5 else 'the E01 stores no MD5 to compare'
+    segments = len(evidence.get('image_files') or []) or 1
+    return {'size': media_size, 'md5': md5.hexdigest(), 'sha256': sha256.hexdigest(), 'method': 'ewfexport', 'ewfverify': 'SUCCESS',
+            'stored_md5_match': bool(stored_md5),
+            'detail': f'E01 ({segments} segment{"s" if segments > 1 else ""}) checked with ewfverify and exported to a raw working copy ({md5_note})'}

@@ -505,14 +505,14 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
-STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc',
+STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc',
                     'email', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
-ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc', 'containers',
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc', 'containers',
                'email', 'chat_cloud', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content', 'unallocated',
                'found_data']
 # What re-reading the file system index refreshes on evidence analysed with the standard profile.
-AFTER_FS_INDEX = ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc', 'email', 'chat_cloud',
+AFTER_FS_INDEX = ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc', 'email', 'chat_cloud',
                   'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
 
 
@@ -3261,6 +3261,393 @@ def t_malware():
     req('DELETE', f"/api/tags/{t.get('tag_id')}", inv)
 
 
+# Phase 12: disk image formats, image sets, encrypted volumes and shadow copies.
+def upload_set(token, case_id, files: list[tuple[str, bytes]]):
+    """One upload of several files (a segmented or split image, or a virtual disk with its parents)."""
+    b = uuid.uuid4().hex
+    parts = [f'--{b}\r\nContent-Disposition: form-data; name="case_id"\r\n\r\n{case_id}\r\n'.encode()]
+    for name, data in files:
+        parts += [f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\n'
+                  f'Content-Type: application/octet-stream\r\n\r\n'.encode(), data, b'\r\n']
+    parts.append(f'--{b}--\r\n'.encode())
+    return req('POST', '/api/evidence/upload', token, raw=b''.join(parts), ctype=f'multipart/form-data; boundary={b}')
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _working_copy(db, eid):
+    return (db.evidence.find_one({'evidence_id': eid}) or {}).get('working_copy') or {}
+
+
+def _indexed(db, eid):
+    return sorted((x['path'], x['inode'], x['deleted']) for x in db.fs_entries.find({'evidence_id': eid, 'pipeline_module': 'fs_index'},
+                                                                                     {'path': 1, 'inode': 1, 'deleted': 1}))
+
+
+def _vhd_merge(child: bytes, parent_media: bytes) -> bytes:
+    """A dynamic or differencing VHD read independently of libvhdi (Microsoft's VHD specification): the footer's
+    current size and dynamic-header offset, the block allocation table, and each block's sector bitmap (a set bit:
+    the sector is in this file; clear: it comes from the parent)."""
+    footer = child[-512:]
+    assert footer[:8] == b'conectix'
+    size = int.from_bytes(footer[48:56], 'big')
+    dyn = int.from_bytes(footer[16:24], 'big')
+    assert child[dyn:dyn + 8] == b'cxsparse'
+    table, entries, block = (int.from_bytes(child[dyn + a:dyn + b], 'big') for a, b in ((16, 24), (28, 32), (32, 36)))
+    bitmap = ((block // 512 // 8) + 511) // 512 * 512
+    out = bytearray(parent_media[:size].ljust(size, b'\0'))
+    for i in range(entries):
+        sec = int.from_bytes(child[table + 4 * i:table + 4 * i + 4], 'big')
+        if sec == 0xFFFFFFFF:
+            continue
+        base = sec * 512
+        for s in range(block // 512):
+            if child[base + s // 8] & (0x80 >> (s % 8)) and i * block + s * 512 < size:
+                at = base + bitmap + s * 512
+                out[i * block + s * 512:i * block + s * 512 + 512] = child[at:at + 512]
+    return bytes(out)
+
+
+def _luks1_decrypt(data: bytes, password: bytes) -> bytes:
+    """LUKS1 opened independently of libluksde (the LUKS1 on-disk format specification): PBKDF2 on each active key
+    slot, its key material decrypted and merged (anti-forensic split), the master key checked against the header's
+    digest, then the payload decrypted sector by sector."""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    assert data[:6] == b'LUKS\xba\xbe'
+    cipher, mode, hspec = (data[o:o + 32].rstrip(b'\0').decode() for o in (8, 40, 72))
+    payload, key_bytes = struct.unpack('>II', data[104:112])
+    mk_digest, mk_salt, mk_iter = data[112:132], data[132:164], struct.unpack('>I', data[164:168])[0]
+    assert (cipher, mode) == ('aes', 'cbc-plain'), (cipher, mode)
+
+    def decrypt(key, blob):
+        out = bytearray()
+        for i in range(0, len(blob), 512):
+            iv = ((i // 512) & 0xFFFFFFFF).to_bytes(4, 'little') + bytes(12)
+            d = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+            out += d.update(blob[i:i + 512]) + d.finalize()
+        return bytes(out)
+
+    def diffuse(buf):
+        n = hashlib.new(hspec).digest_size
+        return b''.join(hashlib.new(hspec, (j // n).to_bytes(4, 'big') + buf[j:j + n]).digest()[:len(buf[j:j + n])]
+                        for j in range(0, len(buf), n))
+
+    xor = lambda a, b: bytes(x ^ y for x, y in zip(a, b))
+    for k in range(8):
+        o = 208 + 48 * k
+        active, iters = struct.unpack('>II', data[o:o + 8])
+        salt, (km_off, stripes) = data[o + 8:o + 40], struct.unpack('>II', data[o + 40:o + 48])
+        if active != 0x00AC71F3:
+            continue
+        n = key_bytes * stripes
+        km = decrypt(hashlib.pbkdf2_hmac(hspec, password, salt, iters, key_bytes),
+                     data[km_off * 512:km_off * 512 + (n + 511) // 512 * 512])[:n]
+        d = bytes(key_bytes)
+        for s in range(stripes - 1):
+            d = diffuse(xor(d, km[s * key_bytes:(s + 1) * key_bytes]))
+        mk = xor(d, km[(stripes - 1) * key_bytes:])
+        if hashlib.pbkdf2_hmac(hspec, mk, mk_salt, mk_iter, 20) == mk_digest:
+            return decrypt(mk, data[payload * 512:])
+    raise ValueError('no key slot opens with this password')
+
+
+@section('12s Disk images: virtual disks, split and segmented images (vs qemu-img, the parts themselves and an independent VHD reader)')
+def t_disk_formats():
+    inv = C['INVESTIGATOR']
+    db = mongo()
+    case = C['FORMATS_CASE'] = post('/api/cases', inv, {'name': 'Disk image formats', 'priority': 'LOW'}).json['case_id']
+    raw = IMG.read_bytes()
+    raw_files = _indexed(db, C['E'])
+    work = Path(tempfile.mkdtemp())
+
+    # The scenario disk converted with qemu-img to each virtual disk format: each must read back as the same disk.
+    for fmt, qemu, opts in (('VHDX', 'vhdx', []), ('VHD', 'vpc', ['-o', 'subformat=dynamic,force_size=on']), ('VMDK', 'vmdk', []),
+                            ('QCOW2', 'qcow2', [])):
+        out = work / f'laptop.{fmt.lower()}'
+        sh('qemu-img', 'convert', '-f', 'raw', '-O', qemu, *opts, str(IMG), str(out))
+        back = work / f'{fmt}.raw'
+        sh('qemu-img', 'convert', '-f', qemu, '-O', 'raw', str(out), str(back))
+        data = out.read_bytes()
+        r = upload(inv, case, data, out.name)
+        ok = r.status == 200 and r.json['format'] == fmt and r.json['sha256'] == _sha(data)
+        j = _analyse(inv, r.json['evidence_id'], {'profile': 'quick'}) if ok else {}
+        wc = _working_copy(db, r.json['evidence_id']) if ok else {}
+        check(f'{fmt} of the scenario disk (qemu-img): read back as the same disk (qemu-img agrees), working copy recorded, '
+              'the same files indexed', ok and j.get('status') == 'COMPLETED' and wc.get('sha256') == C['IMG_SHA256'] == _sha(back.read_bytes())
+              and wc.get('method', '').startswith('lib') and _indexed(db, r.json['evidence_id']) == raw_files,
+              (r, j.get('status'), j.get('error'), wc))
+        back.unlink()
+
+    # Real virtual disks (dfVFS samples, made by Hyper-V, VMware, VirtualBox and qemu): the media matches qemu-img's.
+    for name, qemu in (('ntfs-fixed.vhd', 'vpc'), ('ntfs-dynamic.vhdx', 'vhdx'), ('ext2.vhd', 'vpc'), ('ext2.vhdx', 'vhdx'),
+                       ('ext2.vmdk', 'vmdk'), ('ext2.qcow2', 'qcow2')):
+        p = sample('dfvfs', name)
+        if not p:
+            note(name, 'dfVFS sample not downloaded; skipped')
+            continue
+        back = work / f'{name}.raw'
+        sh('qemu-img', 'convert', '-f', qemu, '-O', 'raw', str(p), str(back))
+        r = upload(inv, case, p.read_bytes(), name)
+        j = _analyse(inv, r.json['evidence_id'], {'profile': 'quick'}) if r.status == 200 else {}
+        files = [x for x in _indexed(db, r.json['evidence_id'])] if r.status == 200 else []
+        check(f'{name}: the disk read with libyal is byte for byte what qemu-img reads, and its files are indexed',
+              j.get('status') == 'COMPLETED' and _working_copy(db, r.json['evidence_id']).get('sha256') == _sha(back.read_bytes())
+              and len(files) > 5, (r, j.get('status'), j.get('error'), len(files)))
+
+    # A differencing VHD: refused without its parent; with it, read like the independent reader merges them.
+    child, parent = sample('dfvfs', 'ntfs-differential.vhd'), sample('dfvfs', 'ntfs-parent.vhd')
+    if child and parent:
+        before = db.evidence.count_documents({'case_id': case})
+        alone = upload(inv, case, child.read_bytes(), child.name)
+        check('a differencing VHD alone is refused (400), naming its parent, and nothing is registered',
+              alone.status == 400 and 'ntfs-parent.vhd' in alone.detail and db.evidence.count_documents({'case_id': case}) == before, alone)
+        r = upload_set(inv, case, [(child.name, child.read_bytes()), (parent.name, parent.read_bytes())])
+        ok = r.status == 200 and r.json['image_set']['kind'] == 'chain' and [(f['name'], f['role']) for f in r.json['image_files']] == [
+            ('ntfs-differential.vhd', 'disk'), ('ntfs-parent.vhd', 'parent')]
+        j = _analyse(inv, r.json['evidence_id'], {'profile': 'quick'}) if ok else {}
+        merged = _vhd_merge(child.read_bytes(), parent.read_bytes()[:-512])
+        paths = {x[0] for x in _indexed(db, r.json['evidence_id'])} if ok else set()
+        parent_only = upload(inv, case, parent.read_bytes(), parent.name)
+        jp = _analyse(inv, parent_only.json['evidence_id'], {'profile': 'quick'})
+        check('with its parent: one evidence item of two files, read exactly as an independent VHD reader merges them, '
+              'showing the folder and files the child added to its parent',
+              j.get('status') == 'COMPLETED' and _working_copy(db, r.json['evidence_id']).get('sha256') == _sha(merged)
+              and r.json['sha256'] == _sha(child.read_bytes() + parent.read_bytes())
+              and {'/a_directory/a_file', '/passwords.txt'} <= paths and not {'/a_directory/a_file'} & {x[0] for x in _indexed(db, parent_only.json['evidence_id'])},
+              (r, j.get('status'), j.get('error'), sorted(paths)[:10]))
+
+    # A raw image split into parts.
+    size = 24 << 20
+    parts = [(f'laptop.dd.{i + 1:03d}', raw[o:o + size]) for i, o in enumerate(range(0, len(raw), size))]
+    before = db.evidence.count_documents({'case_id': case})
+    gap = upload_set(inv, case, [parts[0], parts[2]])
+    check('a split image with a part missing is refused (400), naming the part, and nothing is registered',
+          gap.status == 400 and '.002' in gap.detail and db.evidence.count_documents({'case_id': case}) == before, gap)
+    r = upload_set(inv, case, list(reversed(parts)))
+    ok = r.status == 200 and r.json['image_set'] == {'kind': 'split', 'count': 3, 'label': 'Raw (dd)'}
+    j = _analyse(inv, r.json['evidence_id'], {'profile': 'quick'}) if ok else {}
+    check('a split raw image: its parts in order, each hashed, the whole hashed as the disk, read as the disk',
+          ok and [(f['name'], f['sha256']) for f in r.json['image_files']] == [(n, _sha(d)) for n, d in parts]
+          and r.json['sha256'] == C['IMG_SHA256'] and j.get('status') == 'COMPLETED'
+          and _working_copy(db, r.json['evidence_id']).get('sha256') == C['IMG_SHA256'] and _indexed(db, r.json['evidence_id']) == raw_files,
+          (r, j.get('status'), j.get('error')))
+    C['SPLIT_E'] = r.json.get('evidence_id')
+    v = post(f"/api/evidence/{C['SPLIT_E']}/verify", inv)
+    check('verifying an image set re-hashes every part', v.status == 200 and v.json['verification_status'] == 'VERIFIED', v)
+    stored = Path(r.json['image_files'][1]['path'])
+    stored.chmod(0o644)
+    keep = stored.read_bytes()
+    stored.write_bytes(keep[:-1] + bytes([keep[-1] ^ 1]))
+    v = post(f"/api/evidence/{C['SPLIT_E']}/verify", inv)
+    check('a changed part fails verification, and the part is named', v.json['verification_status'] == 'INTEGRITY_FAILED'
+          and v.json.get('changed_files') == ['laptop.dd.002'], v)
+    stored.write_bytes(keep)
+    stored.chmod(0o444)
+    post(f"/api/evidence/{C['SPLIT_E']}/verify", inv)
+
+    # EnCase segments, made with ewfacquirestream: all, a missing middle one, a missing last one.
+    with IMG.open('rb') as src:
+        sh_proc = subprocess.run(['ewfacquirestream', '-t', str(work / 'seg'), '-C', 'TEST', '-D', 'segments', '-E', 'EV2', '-e', 'tester',
+                                  '-N', 'none', '-f', 'encase6', '-c', 'none', '-S', str(20 << 20), '-q'], stdin=src, capture_output=True, timeout=600)
+    segs = sorted(work.glob('seg.E*'))
+    check('ewfacquirestream made four segments', [p.name for p in segs] == ['seg.E01', 'seg.E02', 'seg.E03', 'seg.E04'], (segs, sh_proc.stderr[-200:]))
+    if len(segs) == 4:
+        files = [(p.name, p.read_bytes()) for p in segs]
+        mid = upload_set(inv, case, [files[0], files[1], files[3]])
+        last = upload_set(inv, case, files[:3])
+        check('missing segments are refused: a gap names the segment, a missing last one is noticed from the segments themselves',
+              mid.status == 400 and '.E03' in mid.detail and last.status == 400 and 'not the last segment' in last.detail, (mid, last))
+        r = upload_set(inv, case, files)
+        j = _analyse(inv, r.json['evidence_id'], {'profile': 'quick'}) if r.status == 200 else {}
+        check('four EnCase segments: one evidence item, checked with ewfverify, read as the disk',
+              r.status == 200 and r.json['format'] == 'E01' and r.json['image_set']['count'] == 4 and j.get('status') == 'COMPLETED'
+              and _working_copy(db, r.json['evidence_id']).get('sha256') == C['IMG_SHA256']
+              and _working_copy(db, r.json['evidence_id']).get('stored_md5_match') is True, (r, j.get('status'), j.get('error')))
+
+    # The dfVFS split samples are ext2.raw in pieces.
+    ext2 = sample('dfvfs', 'ext2.raw')
+    for names in (('ext2.split.E01', 'ext2.split.E02'), ('ext2.splitraw.000', 'ext2.splitraw.001')):
+        ps = [sample('dfvfs', n) for n in names]
+        if not ext2 or not all(ps):
+            note(names[0], 'dfVFS sample not downloaded; skipped')
+            continue
+        r = upload_set(inv, case, [(p.name, p.read_bytes()) for p in ps])
+        j = _analyse(inv, r.json['evidence_id'], {'profile': 'quick'}) if r.status == 200 else {}
+        check(f'{names[0]} and its next part read as ext2.raw', j.get('status') == 'COMPLETED'
+              and _working_copy(db, r.json['evidence_id']).get('sha256') == _sha(ext2.read_bytes()), (r, j.get('status'), j.get('error')))
+    check('another investigator cannot see the image sets (404)', get(f"/api/evidence/{C['SPLIT_E']}", C['INV2']).status in (403, 404))
+
+
+BDE_FILES = {'/a_directory', '/a_directory/a_file', '/a_directory/another_file', '/passwords.txt'}  # dfVFS's BitLocker To Go test volume
+
+
+@section('12t Encrypted volumes: BitLocker To Go and LUKS unlocked with their keys (vs an independent LUKS decryption and the dfVFS contents)')
+def t_encrypted_volumes():
+    inv = C['INVESTIGATOR']
+    db = mongo()
+    bde, luks = sample('dfvfs', 'bdetogo.raw'), sample('dfvfs', 'luks1.raw')
+    if not bde or not luks:
+        note('encrypted volumes', 'dfVFS samples not downloaded; skipped')
+        return
+    case = C['CRYPT_CASE'] = post('/api/cases', inv, {'name': 'Encrypted volumes', 'priority': 'LOW'}).json['case_id']
+    ev = upload(inv, case, bde.read_bytes(), 'usb-stick.dd').json['evidence_id']
+    _analyse(inv, ev, {'profile': 'quick'})
+    vols = get(f'/api/evidence/{ev}/volumes', inv).json['data']
+    check('the volume list shows the BitLocker volume, locked', [(v['volume_id'], v['encryption'], v['decrypted']) for v in vols] == [('p0', 'BitLocker', None)], vols)
+    path = f'/api/evidence/{ev}/volumes/p0/unlock'
+    check('a viewer cannot unlock (403); another investigator sees no evidence (404)',
+          post(path, C['VIEWER'], {'method': 'password', 'secret': 'bde-TEST'}).status == 403
+          and post(path, C['INV2'], {'method': 'password', 'secret': 'bde-TEST'}).status == 404)
+    wrong = post(path, inv, {'method': 'password', 'secret': 'not-the-password'})
+    badrec = post(path, inv, {'method': 'recovery_password', 'secret': '123456-123456-123456-123456-123456-123456-123456-123456'})
+    check('a wrong password is refused (400) and audited; a malformed recovery password is refused before trying it',
+          wrong.status == 400 and 'does not unlock' in wrong.detail and badrec.status == 400 and 'divisible by 11' in badrec.detail
+          and db.audit_logs.find_one({'action': 'VOLUME_UNLOCK_FAILED', 'metadata.evidence_id': ev}), (wrong, badrec))
+    r = post(path, inv, {'method': 'password', 'secret': 'bde-TEST'})
+    j = wait_job(inv, r.json['job_id']) if r.status == 200 else {}
+    new = (j.get('result') or {}).get('derived_evidence_id')
+    d = db.evidence.find_one({'evidence_id': new}) or {}
+    a = wait_job(inv, j['result']['analysis_job_id']) if new else {}
+    files = {x['path'] for x in db.fs_entries.find({'evidence_id': new, 'is_virtual': False})}
+    fsstat = sh('fsstat', d.get('storage_path', '/nonexistent')).stdout.decode()
+    check('the right password decrypts the volume into new evidence (its own hash), analysed: the files dfVFS put on it, '
+          'a file system the Sleuth Kit reads', r.status == 200 and j.get('status') == 'COMPLETED' and d.get('derived_from', {}).get('volume_id') == 'p0'
+          and d['sha256'] == _sha(Path(d['storage_path']).read_bytes()) and a.get('status') == 'COMPLETED' and BDE_FILES <= files
+          and 'File System Type' in fsstat, (r, j.get('status'), j.get('error'), a.get('status'), sorted(files)[:12], fsstat[:200]))
+    job = db.jobs.find_one({'job_id': r.json.get('job_id')}) or {}
+    leaks = [c for c in ('volume_keys', 'jobs', 'audit_logs', 'chain_of_custody', 'evidence', 'notifications')
+             if 'bde-TEST' in json.dumps(list(db[c].find({}, {'_id': 0})), default=str)]
+    check('the password is stored only encrypted: in no collection, job or log in clear; the job received only the key\'s reference',
+          not leaks and set(job.get('payload', {})) == {'evidence_id', 'volume_id', 'key_id'}
+          and db.volume_keys.find_one({'evidence_id': ev}, {'secret': 1})['secret'].startswith('gAAAAA'), (leaks, job.get('payload')))
+    cust = {c['action']: c for c in db.chain_of_custody.find({'evidence_id': {'$in': [ev, new]}})}
+    check('custody: the decryption on the original, the derivation on the new evidence (with its hash); the key\'s use is audited',
+          cust.get('VOLUME_DECRYPTED', {}).get('derived_evidence_id') == new and cust.get('EVIDENCE_DERIVED', {}).get('sha256') == d.get('sha256')
+          and db.audit_logs.find_one({'action': 'VOLUME_UNLOCKED', 'metadata.evidence_id': ev})
+          and db.audit_logs.find_one({'action': 'VOLUME_KEY_USED', 'metadata.derived_evidence_id': new}), list(cust))
+    vols = get(f'/api/evidence/{ev}/volumes', inv).json['data']
+    again = post(path, inv, {'method': 'password', 'secret': 'bde-TEST'})
+    check('the volume now points at its decrypted copy; unlocking it again is refused (409)',
+          vols[0]['decrypted']['evidence_id'] == new and vols[0]['key']['method'] == 'password' and again.status == 409, (vols, again))
+    C['BDE_E'], C['BDE_DERIVED'] = ev, new
+
+    # LUKS: the decrypted volume equals what an independent LUKS1 implementation decrypts.
+    ev2 = upload(inv, case, luks.read_bytes(), 'linux-disk.dd').json['evidence_id']
+    _analyse(inv, ev2, {'profile': 'quick'})
+    rec = post(f'/api/evidence/{ev2}/volumes/p0/unlock', inv, {'method': 'recovery_password', 'secret': '000000-' * 7 + '000000'})
+    check('a LUKS volume takes a password only (400 for a recovery password)', rec.status == 400, rec)
+    r = post(f'/api/evidence/{ev2}/volumes/p0/unlock', inv, {'method': 'password', 'secret': 'luksde-TEST'})
+    j = wait_job(inv, r.json['job_id']) if r.status == 200 else {}
+    new2 = (j.get('result') or {}).get('derived_evidence_id')
+    a = wait_job(inv, j['result']['analysis_job_id']) if new2 else {}
+    truth = _luks1_decrypt(luks.read_bytes(), b'luksde-TEST')
+    files = {x['path'] for x in db.fs_entries.find({'evidence_id': new2, 'is_virtual': False})}
+    check('LUKS: the volume decrypted by DFIP is byte for byte what an independent LUKS1 decryption gives; its ext file system is indexed',
+          j.get('status') == 'COMPLETED' and (db.evidence.find_one({'evidence_id': new2}) or {}).get('sha256') == _sha(truth)
+          and a.get('status') == 'COMPLETED' and {'/a_directory/a_file', '/passwords.txt'} <= files, (r, j.get('status'), j.get('error'), sorted(files)[:10]))
+    fk =req('DELETE', f'/api/evidence/{ev2}/volumes/p0/key', inv)
+    check('a stored key can be deleted (the decrypted copy stays); audited', fk.status == 200 and not db.volume_keys.find_one({'evidence_id': ev2})
+          and db.evidence.find_one({'evidence_id': new2}) and db.audit_logs.find_one({'action': 'VOLUME_KEY_DELETED', 'metadata.evidence_id': ev2}), fk)
+    C['LUKS_E'] = ev2
+
+
+def _vss_listing(path: Path) -> dict:
+    """Allocated files and folders of an NTFS image as fls -r -m lists them: {lower path: (path, is_dir, size, mtime)}."""
+    out = {}
+    for line in sh('fls', '-r', '-m', '/', str(path)).stdout.decode(errors='replace').splitlines():
+        f = line.split('|')
+        if len(f) < 11:
+            continue
+        name = '|'.join(f[1:-9])
+        mode, size, mtime = f[-8], int(f[-6] or 0), int(f[-4] or 0)
+        if name.endswith('($FILE_NAME)') or '(deleted' in name or mode[:1] in ('v', 'V'):
+            continue
+        parts = name.strip('/').split('/')
+        if parts[0].lower() in ('$mft', '$mftmirr', '$logfile', '$volume', '$attrdef', '$bitmap', '$boot', '$badclus', '$secure',
+                                '$upcase', '$extend', '$orphanfiles', 'system volume information') or ':' in parts[-1]:
+            continue
+        out[name.lower()] = (name, mode.startswith('d'), size, mtime)
+    return out
+
+
+@section('12u Volume Shadow Copies (vs vshadowinfo, and fls on each snapshot written out)')
+def t_shadow_copies():
+    inv = C['INVESTIGATOR']
+    db = mongo()
+    p = sample('dfvfs', 'vss.raw')
+    if not p:
+        note('shadow copies', 'dfVFS sample not downloaded; skipped')
+        return
+    import pyvshadow
+    case = post('/api/cases', inv, {'name': 'Shadow copies', 'priority': 'LOW'}).json['case_id']
+    ev = upload(inv, case, p.read_bytes(), 'server-volume.dd').json['evidence_id']
+    j = _analyse(inv, ev, {'modules': ['shadow_copies']})
+    stores = get(f'/api/forensics/shadow-copies/stores?case_id={case}', inv).json['data']
+    info = sh('vshadowinfo', str(p)).stdout.decode()
+    # Times are kept to the millisecond (MongoDB's precision); vshadowinfo prints them to the 100 ns.
+    truth = [(int(n), ident, datetime.strptime(when[:-14], '%b %d, %Y %H:%M:%S').replace(tzinfo=timezone.utc) + timedelta(milliseconds=int(when[-13:-10])))
+             for n, ident, when in re.findall(r'Store: (\d+)\s+Identifier\s+: (\S+).*?Creation time\s+: (.+? UTC)', info, re.S)]
+    check('the two shadow copies, their identifiers and creation times, as vshadowinfo reads them',
+          j['status'] == 'COMPLETED' and [(s['store'], s['identifier'], iso(s['created'])) for s in stores] == truth and len(truth) == 2,
+          (j.get('error'), stores, truth))
+
+    # Each snapshot written out with libvshadow and listed with fls, compared with fls on the volume now.
+    vol = pyvshadow.volume()
+    vol.open(str(p))
+    now = _vss_listing(p)
+    for s in stores:
+        snap_file = Path(tempfile.mkdtemp()) / f"store{s['store']}.raw"
+        st = vol.get_store(s['store'] - 1)
+        with snap_file.open('wb') as out:
+            for pos in range(0, st.volume_size, 1 << 22):
+                out.write(st.read_buffer_at_offset(min(1 << 22, st.volume_size - pos), pos))
+        then = _vss_listing(snap_file)
+        want = {('DELETED_SINCE', v[0]) for k, v in then.items() if k not in now} | {('ADDED_SINCE', v[0]) for k, v in now.items() if k not in then} \
+            | {('CHANGED_SINCE', v[0]) for k, v in then.items() if k in now and not v[1] and (v[2], v[3]) != now[k][2:]}
+        got = {(x['change'], x['path']) for x in get(f"/api/forensics/shadow-copies?case_id={case}&volume_id={s['volume_id']}&limit=500", inv).json['data']}
+        counts = s.get('counts') or {}
+        check(f"shadow copy {s['store']}: files added, changed and deleted since are what fls finds comparing the snapshot with the volume now",
+              got == want and want and counts.get('added_since') == sum(1 for c, _ in want if c == 'ADDED_SINCE'), (sorted(got), sorted(want)))
+        if s['store'] == 1:
+            root = get(f"/api/forensics/shadow-copies/browse?evidence_id={ev}&volume_id={s['volume_id']}&path=/", inv).json['data']
+            # fls lists named streams as name:stream ($Secure only so) and Sleuth Kit's virtual $OrphanFiles (V/V).
+            fls_root = {re.split(r':\t', x, 1)[1].split(':')[0] for x in sh('fls', str(snap_file)).stdout.decode().splitlines()
+                        if ':\t' in x and '*' not in x.split(':')[0] and not x.lower().startswith('v/v')}
+            check('browsing a snapshot lists its root folder as fls does', {x['name'] for x in root} == fls_root,
+                  (sorted(x['name'] for x in root), sorted(fls_root)))
+            pw = next(x for x in root if x['name'] == 'passwords.txt')
+            r = post('/api/forensics/shadow-copies/recover', inv, {'evidence_id': ev, 'volume_id': s['volume_id'], 'inode': pw['inode'], 'path': '/passwords.txt'})
+            icat = sh('icat', str(snap_file), pw['inode']).stdout
+            art = db.forensic_artifacts.find_one({'artifact_id': r.json.get('artifact_id')}) or {}
+            check('a file recovered from a snapshot is what icat reads from the snapshot written out; custody records which copy',
+                  r.status == 200 and r.json['sha256'] == _sha(icat) and art.get('source') == 'VSS' and art.get('volume_id') == s['volume_id']
+                  and db.chain_of_custody.find_one({'artifact_id': r.json.get('artifact_id'), 'volume_id': s['volume_id']}), r)
+            import base64
+            pg = get(f"/api/forensics/shadow-copies/content?evidence_id={ev}&volume_id={s['volume_id']}&inode={pw['inode']}", inv).json
+            check('the file viewer reads the snapshot\'s version', base64.b64decode(pg.get('data_b64') or '') == icat[:4096], pg.get('size'))
+            check('a viewer may browse but not recover (403); another investigator sees nothing (404)',
+                  get(f"/api/forensics/shadow-copies/browse?evidence_id={ev}&volume_id={s['volume_id']}", C['VIEWER']).status in (200, 404)
+                  and post('/api/forensics/shadow-copies/recover', C['VIEWER'], {'evidence_id': ev, 'volume_id': s['volume_id'], 'inode': pw['inode']}).status == 403
+                  and get(f'/api/forensics/shadow-copies/stores?case_id={case}', C['INV2']).status == 404
+                  and get(f"/api/forensics/shadow-copies/browse?evidence_id={ev}&volume_id={s['volume_id']}", C['INV2']).status == 404)
+        snap_file.unlink()
+    events = list(db.timeline_events.find({'evidence_id': ev, 'type': 'SHADOW_COPY_CREATED'}).sort('timestamp', 1))
+    check('each shadow copy\'s creation is on the timeline', [e['timestamp'].replace(tzinfo=timezone.utc) for e in events] == [t for _, _, t in truth], events)
+    bad = get(f'/api/forensics/shadow-copies/browse?evidence_id={ev}&volume_id=p0/vss9', inv)
+    check('an unknown shadow copy is 404, a volume id that is not a shadow copy 400', bad.status == 404
+          and get(f'/api/forensics/shadow-copies/browse?evidence_id={ev}&volume_id=p0', inv).status == 400, bad)
+    rec = next(iter(get(f'/api/forensics/shadow-copies?case_id={case}&limit=1', inv).json['data']), {})
+    t = post('/api/tags', inv, {'case_id': case, 'item_type': 'SHADOW_FILE', 'item_id': rec.get('_id'), 'label': 'NOTABLE'})
+    j2 = _analyse(inv, ev, {'modules': ['shadow_copies']})
+    tag = next((x for x in get(f'/api/tags?case_id={case}', inv).json['data'] if x['tag_id'] == (t.json or {}).get('tag_id')), {})
+    check('a shadow copy record can be tagged, and the tag follows it when the module runs again',
+          t.status == 200 and j2['result']['summary'].get('tags', {}).get('unresolved') == 0 and tag.get('item_id') != rec.get('_id')
+          and 'shadow copy' in ((tag.get('snapshot') or {}).get('detail') or ''), (t, tag))
+    C['VSS_CASE'], C['VSS_E'] = case, ev
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -3770,6 +4157,7 @@ def t_overview():
         'ocr_files': q(f'/api/forensics/media?case_id={A}&text=true&limit=1')['total'],
         'programs': q(f'/api/forensics/executables?case_id={A}&limit=1')['total'],
         'programs_flagged': q(f'/api/forensics/executables?case_id={A}&flagged=true&limit=1')['total'],
+        'shadow_files': q(f'/api/forensics/shadow-copies?case_id={A}&limit=1')['total'],
     }
     check('email attachments are counted', c.get('email_attachments') == 1, c.get('email_attachments'))
     diff = {k: (c.get(k), v) for k, v in exp.items() if c.get(k) != v}
@@ -3947,6 +4335,29 @@ def t_delete():
         existed = wc.exists()
         r2 = req('DELETE', f"/api/evidence/{C['E01_E']}", inv, {'reason': 'E01 test finished'})
         check('deleting an E01 also removes its raw working copy', existed and r2.status == 200 and not wc.exists(), (existed, r2))
+    if C.get('BDE_E') and C.get('BDE_DERIVED'):
+        dv = db.evidence.find_one({'evidence_id': C['BDE_DERIVED']}) or {}
+        dfile = Path(dv.get('storage_path') or '/nonexistent')
+        had = dfile.exists() and db.fs_entries.find_one({'evidence_id': C['BDE_DERIVED']}) and db.volume_keys.find_one({'evidence_id': C['BDE_E']})
+        r3 = req('DELETE', f"/api/evidence/{C['BDE_E']}", inv, {'reason': 'Encrypted volume test finished'})
+        check('deleting evidence deletes the evidence decrypted from it too: its file and folder, its results, the stored key; '
+              'custody records both deletions', had and r3.status == 200 and r3.json.get('derived_deleted') == [C['BDE_DERIVED']]
+              and not dfile.exists() and not dfile.parent.exists() and not db.evidence.find_one({'evidence_id': C['BDE_DERIVED']})
+              and not db.fs_entries.find_one({'evidence_id': C['BDE_DERIVED']}) and not db.volume_keys.find_one({'evidence_id': C['BDE_E']})
+              and db.chain_of_custody.find_one({'evidence_id': C['BDE_DERIVED'], 'action': 'EVIDENCE_DELETED', 'reason': {'$regex': 'derived from'}}), r3)
+    if C.get('SPLIT_E'):
+        sv = db.evidence.find_one({'evidence_id': C['SPLIT_E']}) or {}
+        parts = [Path(f['path']) for f in sv.get('image_files') or []]
+        wc = Path(f"/app/storage/analysis/working/{C['SPLIT_E']}.raw")
+        had = parts and all(p.exists() for p in parts) and wc.exists()
+        r4 = req('DELETE', f"/api/evidence/{C['SPLIT_E']}", inv, {'reason': 'Split image test finished'})
+        check('deleting an image set removes every part, its folder and its working copy', had and r4.status == 200
+              and not any(p.exists() for p in parts) and not parts[0].parent.exists() and not wc.exists(), r4)
+    if C.get('VSS_E'):
+        had = db.shadow_files.count_documents({'evidence_id': C['VSS_E']})
+        r5 = req('DELETE', f"/api/evidence/{C['VSS_E']}", inv, {'reason': 'Shadow copy test finished'})
+        check('deleting evidence removes its shadow copy records', had and r5.status == 200 and r5.json['removed'].get('shadow_files') == had
+              and not db.shadow_files.count_documents({'evidence_id': C['VSS_E']}), r5)
     if again.status == 200:
         ad = req('DELETE', f"/api/evidence/{again.json['evidence_id']}", C['ADMIN'], {'reason': 'Administrator clean-up'})
         check('an administrator can delete evidence in any case', ad.status == 200, ad)
@@ -4051,7 +4462,7 @@ PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
              t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_email, t_chat_cloud, t_browser_depth,
-             t_comms_samples, t_media, t_malware, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_comms_samples, t_media, t_malware, t_disk_formats, t_encrypted_volumes, t_shadow_copies, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

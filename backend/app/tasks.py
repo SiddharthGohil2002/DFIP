@@ -91,7 +91,7 @@ def _is_cancelled(job_id: str) -> bool:
 
 @celery_app.task(bind=True, name='dfip.hash_verify', max_retries=2, default_retry_delay=10)
 def hash_verify_task(self, job_id: str, evidence_id: str, created_by: str):
-    from .forensic.hashing import sha256_file
+    from .forensic.working_image import evidence_sha256
     from .repositories.evidence import get_evidence
 
     if _is_cancelled(job_id):
@@ -109,10 +109,7 @@ def hash_verify_task(self, job_id: str, evidence_id: str, created_by: str):
             status = 'VERIFIED'
             digest = e['sha256']
         else:
-            p = Path(e['storage_path'])
-            if not p.exists():
-                raise FileNotFoundError('Original evidence object is unavailable')
-            digest = sha256_file(p)
+            digest = evidence_sha256(e)  # every file of an image set, in order
             status = 'VERIFIED' if digest == e['sha256'] else 'INTEGRITY_FAILED'
 
         db['evidence'].update_one(
@@ -287,9 +284,104 @@ def clamav_update_task(self, job_id: str, _subject, created_by: str):
         raise
 
 
+@celery_app.task(bind=True, name='dfip.volume_decrypt', max_retries=0,
+                 soft_time_limit=settings.analysis_time_limit, time_limit=settings.analysis_time_limit + 600)
+def volume_decrypt_task(self, job_id: str, evidence_id: str, created_by: str):
+    """Decrypts an encrypted volume with its stored key and registers the plaintext as evidence derived from the
+    original (own SHA-256 and SHA-512, read-only, custody records on both), then analyses it."""
+    from bson import ObjectId
+    from .api.volumes import derived_dir, volumes_of
+    from .forensic.disk_formats import ensure_space, write_raw
+    from .forensic.volume_crypto import METHOD_LABELS, open_volume
+    from .forensic.working_image import analysis_image
+    from .repositories.evidence import get_evidence
+    from .services.audit import log
+    from .services.jobs import queue
+    from .services.secrets import decrypt
+    from .services.sequences import next_sequence
+    from .websocket.manager import manager
+
+    job, _ = _claim(job_id)
+    if not job:
+        return {'job_id': job_id, 'status': 'DUPLICATE_IGNORED'}
+    db = get_db()
+    partial = None
+    try:
+        vid, key_id = job['payload']['volume_id'], job['payload']['key_id']
+        e = get_evidence(evidence_id)
+        key = db['volume_keys'].find_one({'key_id': key_id, 'evidence_id': evidence_id})
+        if not e or not key:
+            raise ValueError('The evidence or the stored key no longer exists')
+        vol = next((v for v in volumes_of(e) if v['volume_id'] == vid), None)
+        if not vol:
+            raise ValueError(f'{evidence_id} has no volume {vid}')
+        user = db['users'].find_one({'_id': ObjectId(created_by)}) if ObjectId.is_valid(created_by) else None
+        user = user or {'_id': created_by, 'name': 'DFIP', 'role': 'SYSTEM'}
+        image = analysis_image(e, create=True, db=db, actor=f'DFIP job {job_id}')
+        _set_job(job_id, progress=5, stage='unlocking')
+        opened = open_volume(image, vol['partition_offset'], vol['length'], key['kind'], key['method'], decrypt(key['secret']))
+        beat = _heartbeat(job_id)
+        try:
+            folder = derived_dir(evidence_id)
+            ensure_space(folder, opened.size, 'the decrypted volume')
+            partial = folder / f'{vid}.partial'
+            _set_job(job_id, progress=10, stage='decrypting')
+
+            def progress(fraction):
+                beat()
+                _set_job(job_id, progress=10 + int(80 * fraction), stage='decrypting')
+            info = write_raw(opened.read, opened.size, partial, progress=progress, cancelled=lambda: _is_cancelled(job_id))
+        finally:
+            opened.close()
+
+        now = datetime.now(timezone.utc)
+        new_id = f'EVID-{next_sequence("evidence", floor=db["evidence"].count_documents({})):03d}'
+        target = folder / f'{new_id}.raw'
+        partial.chmod(0o444)
+        partial.replace(target)
+        partial = None
+        how = METHOD_LABELS[key['method']]
+        doc = {'evidence_id': new_id, 'case_id': e['case_id'], 'filename': f'{e.get("filename")} {vid} (decrypted {key["kind"]})',
+               'format': 'RAW', 'size': info['size'], 'sha256': info['sha256'], 'sha512': info['sha512'], 'storage_path': str(target),
+               'verification_status': 'VERIFIED', 'verified_at': now, 'created_at': now, 'updated_at': now, 'created_by': created_by,
+               'read_only': True, 'immutable': True, 'demo': False, 'acquisition_status': 'DERIVED', 'integrity_algorithm': 'SHA-256 + SHA-512',
+               'derived_from': {'evidence_id': evidence_id, 'volume_id': vid, 'kind': key['kind'], 'method': key['method'], 'key_id': key_id,
+                                'source_sha256': e.get('sha256'), 'job_id': job_id}}
+        db['evidence'].insert_one(doc)
+        db['volume_keys'].update_one({'key_id': key_id}, {'$set': {'last_used_at': now, 'derived_evidence_id': new_id}, '$inc': {'use_count': 1}})
+        detail = f'{key["kind"]} volume {vid} of {evidence_id} unlocked with a {how} (stored as {key_id}) and decrypted'
+        db['chain_of_custody'].insert_many([
+            {'evidence_id': evidence_id, 'case_id': e['case_id'], 'timestamp': now, 'user_id': created_by, 'user_name': user.get('name'),
+             'action': 'VOLUME_DECRYPTED', 'derived_evidence_id': new_id, 'sha256': info['sha256'], 'status': 'VERIFIED',
+             'detail': f'{detail} to {new_id}; the original is unchanged'},
+            {'evidence_id': new_id, 'case_id': e['case_id'], 'timestamp': now, 'user_id': created_by, 'user_name': user.get('name'),
+             'action': 'EVIDENCE_DERIVED', 'source_evidence_id': evidence_id, 'sha256': info['sha256'], 'sha512': info['sha512'],
+             'result': 'PRESERVED_READONLY', 'detail': detail}])
+        log(user, 'VOLUME_KEY_USED', 'evidence', str(e['_id']), {'evidence_id': evidence_id, 'volume_id': vid, 'key_id': key_id,
+                                                                  'derived_evidence_id': new_id, 'sha256': info['sha256'], 'job_id': job_id})
+        manager.emit_sync('EVIDENCE_REGISTERED', {'evidence_id': new_id, 'case_id': e['case_id'], 'filename': doc['filename'], 'size': info['size'],
+                                                  'sha256': info['sha256'], 'format': 'RAW', 'verification_status': 'VERIFIED'})
+        analysis = queue.enqueue('FORENSIC_ANALYSIS', {'evidence_id': new_id, 'profile': 'standard', 'modules': None}, created_by)
+        result = {'evidence_id': evidence_id, 'volume_id': vid, 'derived_evidence_id': new_id, 'size': info['size'],
+                  'sha256': info['sha256'], 'analysis_job_id': analysis}
+        _set_job(job_id, status='COMPLETED', progress=100, stage='complete', result=result, finished_at=datetime.now(timezone.utc))
+        _notify(created_by, 'Volume decrypted', f'{vid} of {evidence_id} is now {new_id}; its analysis ({analysis}) has started.')
+        return result
+    except Exception as exc:
+        if partial is not None:
+            partial.unlink(missing_ok=True)
+        cancelled = isinstance(exc, InterruptedError)
+        _set_job(job_id, status='CANCELLED' if cancelled else 'FAILED', stage='cancelled' if cancelled else 'failed', error=str(exc)[:2000],
+                 finished_at=datetime.now(timezone.utc))
+        if not cancelled:
+            _notify(created_by, 'Volume decryption failed', str(exc)[:300], 'ERROR')
+            raise
+
+
 TASKS_BY_TYPE = {
     'HASH_VERIFY': hash_verify_task,
     'FORENSIC_ANALYSIS': forensic_analysis_task,
     'HASHSET_IMPORT': hashset_import_task,
     'CLAMAV_UPDATE': clamav_update_task,
+    'VOLUME_DECRYPT': volume_decrypt_task,
 }

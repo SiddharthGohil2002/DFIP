@@ -119,7 +119,7 @@ def overview(case_id: str, u=Depends(current_user)):
     evidence = list(db['evidence'].find({'case_id': case_id}, {
         'evidence_id': 1, 'filename': 1, 'format': 1, 'size': 1, 'sha256': 1, 'verification_status': 1,
         'analysis_status': 1, 'analysis_summary': 1, 'last_analysis_job': 1, 'analyzed_at': 1,
-        'created_at': 1, 'demo': 1}).sort('created_at', 1))
+        'created_at': 1, 'demo': 1, 'derived_from': 1, 'image_set': 1}).sort('created_at', 1))
     eids = [e['evidence_id'] for e in evidence]
     art = db['forensic_artifacts']
     counts = {
@@ -181,6 +181,11 @@ def overview(case_id: str, u=Depends(current_user)):
         'timestomp_suspects': art.count_documents({'case_id': case_id, 'type': 'TIMESTOMP_SUSPECT', 'level': 'strong'}),
         'alternate_streams': art.count_documents({'case_id': case_id, 'type': 'ALTERNATE_STREAM'}),
         'usn_records': db['usn_records'].count_documents({'case_id': case_id}),
+        'shadow_copies': sum(len((f.get('shadow_copies') or {}).get('stores') or [])
+                             for f in db['analysis_facts'].find({'evidence_id': {'$in': eids}}, {'shadow_copies.stores.store': 1})),
+        'shadow_files': db['shadow_files'].count_documents({'case_id': case_id}),
+        'shadow_deleted': db['shadow_files'].count_documents({'case_id': case_id, 'change': 'DELETED_SINCE'}),
+        'decrypted_volumes': sum(1 for e in evidence if e.get('derived_from')),
         'search_entries_not_on_disk': art.count_documents({'case_id': case_id, 'type': 'SEARCH_INDEX_ENTRY',
                                                            'file_state': {'$in': ['deleted', 'not on the disk']}}),
         'renamed_files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'ext_mismatch': True}),

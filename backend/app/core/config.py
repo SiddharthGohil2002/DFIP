@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     mongodb_uri:str='mongodb://localhost:27017'
     database_name:str='dfip'
     jwt_secret:str='change-me-in-production-use-32-plus-random-bytes'
+    # Encrypts stored secrets such as volume passwords and recovery keys (app/services/secrets.py); JWT_SECRET when empty.
+    data_encryption_key:str=''
     access_token_expire_minutes:int=30
     refresh_token_expire_days:int=7
     password_pbkdf2_rounds:int=310000

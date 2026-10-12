@@ -12,6 +12,7 @@ import { Banner, Button, Card, Empty, ErrorBanner, Field, Hash, Loading, PageHea
 import { DeleteEvidenceModal } from './DeleteEvidence';
 import { AnalysisModulesCard, AnalysisOptionsModal } from './AnalysisModules';
 import { TimeZoneBanner } from './TimeZone';
+import { ImageFilesCard, VolumesCard } from './Volumes';
 
 const RUNNING = new Set(['QUEUED', 'RUNNING']);
 
@@ -174,6 +175,8 @@ export function EvidenceDetailPage() {
         </Card>
       </div>
 
+      <ImageFilesCard evidence={e} />
+      {!e.demo && e.analysis_status && <VolumesCard evidence={e} onChanged={reloadOverview} />}
       {IS_DESKTOP && <LocalVerifyCard expected={e.sha256} />}
 
       <Card title="Disk image analysis" subtitle="Sleuth Kit partition and filesystem examination, MACB timeline, browser and USB artifact extraction, YARA scan.">

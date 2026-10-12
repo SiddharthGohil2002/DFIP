@@ -16,10 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..core.config import settings
-from .hashing import sha256_file
 from .modules import ORDER, PROFILES, REGISTRY, Cancelled, ModuleContext, plan, resolve_request
 from .modules.base import MAX_SUMMARY_WARNINGS
-from .working_image import analysis_image, needs_working_copy
+from .working_image import analysis_image, changed_files, evidence_sha256, needs_working_copy
 
 PIPELINE_COLLECTIONS = ('fs_entries', 'timeline_events', 'forensic_artifacts', 'usb_artifacts')
 MODULE_WARNINGS_KEPT = 50
@@ -79,7 +78,7 @@ class AnalysisPipeline:
         self._verify_integrity()
         self.work.mkdir(parents=True, exist_ok=True)
         if needs_working_copy(self.e):
-            self._checkpoint(5, 'preparing-e01-working-copy')
+            self._checkpoint(5, 'preparing-working-copy')
         self.image = analysis_image(self.e, create=True, db=self.db, actor=f'DFIP analysis job {self.job_id}')
 
         status = self._module_status()
@@ -147,9 +146,7 @@ class AnalysisPipeline:
 
     # -- results -------------------------------------------------------------------
     def _verify_integrity(self):
-        if not self.original.exists():
-            raise FileNotFoundError('Original evidence object is unavailable')
-        digest = sha256_file(self.original)
+        digest = evidence_sha256(self.e)  # every file of an image set, in order
         ok = digest == self.e['sha256']
         now = datetime.now(timezone.utc)
         self.db['chain_of_custody'].insert_one({
@@ -158,7 +155,9 @@ class AnalysisPipeline:
             'sha256': digest, 'status': 'VERIFIED' if ok else 'INTEGRITY_FAILED'})
         self.summary['integrity'] = {'expected_sha256': self.e['sha256'], 'computed_sha256': digest, 'verified': ok}
         if not ok:
-            raise ValueError('Evidence SHA-256 no longer matches the acquisition hash; analysis refused')
+            changed = changed_files(self.e)
+            raise ValueError('Evidence SHA-256 no longer matches the acquisition hash; analysis refused'
+                             + (f' ({", ".join(changed)} changed)' if changed else ''))
 
     def _finish_summary(self, analytics: dict):
         """Counts and warnings of every module's latest completed run, so a partial re-run reports the whole picture."""

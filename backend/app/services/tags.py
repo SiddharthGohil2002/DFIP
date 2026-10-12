@@ -34,7 +34,7 @@ ITEM_COLLECTIONS = {
     'FILE': 'fs_entries', 'TIMELINE_EVENT': 'timeline_events', 'BROWSER': 'forensic_artifacts',
     'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts', 'ENTITY': 'entities',
     'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records', 'WINDOWS': 'forensic_artifacts', 'USN': 'usn_records',
-    'EMAIL': 'email_messages', 'CHAT_CLOUD': 'forensic_artifacts', 'PROGRAM': 'forensic_artifacts',
+    'EMAIL': 'email_messages', 'CHAT_CLOUD': 'forensic_artifacts', 'PROGRAM': 'forensic_artifacts', 'SHADOW_FILE': 'shadow_files',
 }
 LABELS = ('EVIDENCE', 'NOTABLE', 'FOLLOW_UP')
 _ARTIFACT_TYPES = {
@@ -100,7 +100,7 @@ def natural_key(item_type: str, doc) -> dict:
         return {'evidence_id': e, 'nk': doc.get('nk')}
     if item_type == 'WINDOWS':
         return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
-    if item_type == 'USN':
+    if item_type in ('USN', 'SHADOW_FILE'):
         return {'evidence_id': e, 'nk': doc.get('nk')}
     if t == 'MALWARE_INDICATOR':
         return {'evidence_id': e, 'type': t, 'rule': doc.get('rule'), 'original_path': doc.get('original_path')}
@@ -198,6 +198,12 @@ def snapshot(item_type: str, doc) -> dict:
             title, when = doc.get('app'), doc.get('time')
         detail = f'{label}{" · " + doc["user"] if doc.get("user") else ""} · {doc.get("source_path")}'
         return {'title': title, 'detail': detail, 'timestamp': _iso(when), 'source': doc.get('source_path')}
+    elif item_type == 'SHADOW_FILE':
+        change = {'DELETED_SINCE': 'deleted since', 'CHANGED_SINCE': 'changed since', 'ADDED_SINCE': 'added since'}.get(doc.get('change'), '')
+        created = doc.get('store_created')
+        detail = (f'{"Folder" if doc.get("is_dir") else "File"} {change} shadow copy {doc.get("store")} of {doc.get("parent_volume_id")}'
+                  + (f' (made {created:%Y-%m-%d %H:%M} UTC)' if hasattr(created, 'strftime') else ''))
+        return {'title': doc.get('path'), 'detail': detail, 'timestamp': _iso(doc.get('mtime')), 'source': 'Volume Shadow Copy'}
     elif item_type == 'USN':
         title = doc.get('path') or doc.get('name')
         detail = f'USN journal: {" ".join(doc.get("reasons") or [])} (record {doc.get("usn")})'
