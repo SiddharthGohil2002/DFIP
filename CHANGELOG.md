@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added — Malware checks
+- **Programs** (new `executables` module, standard and full profiles): every Windows program and DLL on the evidence (renamed, deleted, in archives or attached to email) parsed without running it: compile time, sections and their entropy, imports, version information and its Authenticode signature checked against Microsoft's trusted roots. Programs that stand out come first, with the reasons: packed, built under another name, a system program's name in the wrong folder, a bad or untrusted signature, imports that wipe files, inject into processes or log keys. Indicators gains a Programs card with each program's details.
+- **capa** (pinned release) lists what a program's code does, with ATT&CK techniques: automatically for the programs that stand out most, and on request.
+- **ClamAV** (new `clamav` module): files scanned with the official databases (downloaded with freshclam or copied in) and with signature files of your own; detections appear with the YARA matches.
+- **YARA rule sets**: administrators add their own rules (compiled before they are accepted, `include` refused), turn them off and on, and every analysed evidence item is rescanned. A new **Malware rules** administration page manages rule sets and ClamAV databases.
+- **Automatic VirusTotal lookups** (new `reputation` module): off until turned on per case; then only the hashes of programs are sent, at the configured rate, and each answer is kept with the program. The VirusTotal address can be changed (`VIRUSTOTAL_BASE_URL`) for a proxy or mirror.
+- The report's malware section lists signature matches and the programs that stand out; programs can be tagged and found by search.
+- The backend image gains ClamAV, capa, osslsigncode and UPX. The test disk gains a signed file wiper built from C and a UPX-packed copy named svchost.exe.
+
 ### Added — Pictures and videos
 - **Pictures and videos** (new `media` module, standard and full profiles, and a new page): every picture and video found by its content (renamed and deleted files, archive members and email attachments included) with a thumbnail, its camera, when it was taken (made UTC from the picture's own offset or GPS time, else the computer's time zone, with the basis shown), its GPS position on an offline world map, and for videos their length, format, creation time, location and a keyframe per scene.
 - **Text in pictures and scans** (new `ocr` module, full profile): tesseract reads pictures and scanned PDFs; the text is searchable and found data (account numbers, addresses) covers it.

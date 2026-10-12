@@ -37,6 +37,7 @@ import { UsersPage } from '../pages/admin/Users';
 import { AuditPage } from '../pages/admin/Audit';
 import { SystemPage } from '../pages/admin/System';
 import { HashSetsPage } from '../pages/admin/HashSets';
+import { MalwareRulesPage } from '../pages/admin/MalwareRules';
 
 // The desktop shell loads files from its own protocol, so it uses hash routing.
 const Router = IS_DESKTOP ? HashRouter : BrowserRouter;
@@ -153,6 +154,7 @@ function Workspace() {
         <Route path="admin/audit" element={<AuditPage />} />
         <Route path="admin/system" element={<SystemPage />} />
         <Route path="admin/hashsets" element={<HashSetsPage />} />
+        <Route path="admin/malware-rules" element={<MalwareRulesPage />} />
         <Route path="*" element={<Navigate to="/app" replace />} />
       </Routes>
     </Shell>

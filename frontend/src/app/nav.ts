@@ -1,6 +1,6 @@
 import {
   Activity, BarChart3, Monitor, Bookmark, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, Mail,
-  MessagesSquare, NotebookPen, Images, ScanSearch, ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
+  MessagesSquare, NotebookPen, Images, Bug, ScanSearch, ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
 
@@ -120,9 +120,9 @@ export const NAV: NavGroup[] = [
       {
         to: '/app/indicators', label: 'Indicators', icon: ShieldAlert, tone: 'red',
         description: 'YARA matches, hash-set matches, renamed and encrypted files, activity patterns and statistical anomalies.',
-        count: (c) => c.malware_indicators + (c.known_bad_files ?? 0) + (c.notable_files ?? 0) + c.patterns,
-        alert: (c) => c.malware_indicators > 0 || (c.known_bad_files ?? 0) > 0,
-        countLabel: (c) => `${n(c.malware_indicators)} YARA · ${n(c.known_bad_files ?? 0)} known bad · ${n(c.notable_files ?? 0)} notable · ${n(c.patterns)} patterns`,
+        count: (c) => c.malware_indicators + (c.programs_flagged ?? 0) + (c.known_bad_files ?? 0) + (c.notable_files ?? 0) + c.patterns,
+        alert: (c) => c.malware_indicators > 0 || (c.known_bad_files ?? 0) > 0 || (c.reputation_malicious ?? 0) > 0,
+        countLabel: (c) => `${n(c.malware_indicators)} signature matches · ${n(c.programs_flagged ?? 0)} programs stand out · ${n(c.known_bad_files ?? 0)} known bad`,
       },
       {
         to: '/app/carving', label: 'File carving', icon: Layers,
@@ -171,6 +171,7 @@ export const NAV: NavGroup[] = [
       { to: '/app/admin/users', label: 'Users', icon: Users, permission: 'USER_MANAGE', noTile: true },
       { to: '/app/admin/audit', label: 'Audit log', icon: ListChecks, permission: 'AUDIT_READ', noTile: true },
       { to: '/app/admin/hashsets', label: 'Hash sets', icon: Fingerprint, permission: 'HASHSET_MANAGE', noTile: true },
+      { to: '/app/admin/malware-rules', label: 'Malware rules', icon: Bug, permission: 'RULES_MANAGE', noTile: true },
       { to: '/app/admin/system', label: 'System & tools', icon: Wrench, noTile: true },
     ],
   },

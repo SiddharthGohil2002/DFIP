@@ -12,7 +12,8 @@
 #   docker run --rm -v "$PWD:/repo" -w /repo python:3.11-slim sh scripts/test-image/make-test-image.sh
 set -eu
 
-apt-get update -qq >/dev/null && apt-get install -y -qq mtools dosfstools fdisk tzdata python3-hivex 7zip ffmpeg fonts-dejavu-core >/dev/null
+apt-get update -qq >/dev/null && apt-get install -y -qq mtools dosfstools fdisk tzdata python3-hivex 7zip ffmpeg fonts-dejavu-core \
+  gcc-mingw-w64-i686 binutils-mingw-w64-i686 upx-ucl osslsigncode openssl >/dev/null
 # Encrypted ZIP and Office test files, and a PDF with an attachment.
 pip install -q --root-user-action=ignore pyzipper==0.4.0 msoffcrypto-tool==6.0.0 pypdf==6.19.0 pillow==11.3.0 piexif==1.1.3
 
@@ -24,6 +25,12 @@ mkdir -p "$OUT_DIR"
 rm -f "$IMG"
 
 python3 scripts/test-image/make_artifacts.py "$TREE"
+# The scenario's programs (securedelete/build.sh): SecureDelete.exe as downloaded (signed by a self-signed certificate), and
+# a UPX-packed copy named svchost.exe in alice's Temp folder.
+sh scripts/test-image/securedelete/build.sh "$WORK/bin"
+cp "$WORK/bin/SecureDelete.exe" "$TREE/Users/alice/Downloads/SecureDelete.exe"
+mkdir -p "$TREE/Users/alice/AppData/Local/Temp"
+cp "$WORK/bin/svchost.exe" "$TREE/Users/alice/AppData/Local/Temp/svchost.exe"
 # Registry hives, written with hivex (Debian's python3 with python3-hivex).
 (cd scripts/test-image && /usr/bin/python3 make_hives.py "$TREE" ../../backend/tests/fixtures/SYSTEM.xz)
 
@@ -83,6 +90,8 @@ stamp '2026-09-01 14:10:33' 'Users/alice/Pictures/IMG_20260901_101032.jpg'
 stamp '2026-08-30 22:15:01' 'Users/alice/Pictures/IMG_20260830_181500.jpg'
 stamp '2026-09-01 14:18:04' 'Users/alice/Videos/VID_20260901_101800.mp4'
 stamp '2026-09-01 12:02:00' 'Users/alice/Documents/scan-payment-instruction.pdf'
+stamp '2026-09-01 10:05:09' 'Users/alice/Downloads/SecureDelete.exe'
+stamp '2026-09-01 14:17:58' 'Users/alice/AppData/Local/Temp/svchost.exe'
 stamp '2026-08-30 11:00:00' 'Users/alice/Documents/offer-letter.pdf'
 # Hidden and encrypted files: the renamed copy keeps the export's own time, as a copy does.
 stamp '2026-09-01 09:41:02' 'Users/alice/Pictures/holiday.jpg'

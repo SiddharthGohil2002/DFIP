@@ -18,6 +18,10 @@ x-env: &env
   MAX_UPLOAD_BYTES: "53687091200"
   CORS_ORIGINS: http://localhost
   REDIS_URL: redis://:test-redis-pw@redis:6379/0
+  # VirusTotal lookups go to a stand-in the test script runs in the backend container (dfip_full_test.py, _start_vt_mock)
+  VIRUSTOTAL_API_KEY: test-vt-key
+  VIRUSTOTAL_BASE_URL: http://backend:18080/api/v3
+  VIRUSTOTAL_RATE_PER_MINUTE: "600"
 services:
   mongodb:
     image: mongo:8

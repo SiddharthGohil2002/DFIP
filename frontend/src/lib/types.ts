@@ -204,6 +204,10 @@ export interface CaseCounts {
   videos?: number;
   media_with_gps?: number;
   ocr_files?: number;
+  programs?: number;
+  programs_flagged?: number;
+  clamav_detections?: number;
+  reputation_malicious?: number;
   renamed_files?: number;
   encrypted_files?: number;
   known_bad_files?: number;

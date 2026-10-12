@@ -232,6 +232,26 @@ with sync_playwright() as p:
     expect(page.locator('.media-card')).to_have_count(2)
     check('the map and gallery load nothing from map servers', not requests_out, requests_out)
 
+    print('== programs')
+    page.get_by_role('link', name=re.compile(r'^Indicators')).first.click()
+    card = page.locator('.card', has=page.get_by_role('heading', name='Programs that stand out'))
+    row = card.locator('tr', has_text='Temp/svchost.exe')
+    expect(row.get_by_text('Packed (UPX)')).to_be_visible()
+    expect(row.get_by_text('Built as SecureDelete.exe, named svchost.exe')).to_be_visible()
+    expect(card.locator('tr', has_text='Downloads/SecureDelete.exe').get_by_text('SIGNED, UNTRUSTED')).to_be_visible()
+    check('programs: the packed svchost.exe and SecureDelete.exe listed with why they stand out and their signatures', True)
+    page.screenshot(path=f'{OUT}/x11-programs.png', full_page=True)
+    card.get_by_role('button', name='/Users/alice/Downloads/SecureDelete.exe').click()
+    d = page.get_by_role('dialog')
+    expect(d).to_contain_text('SecureDelete Project')
+    expect(d.locator('tr', has_text='delete file')).to_be_visible()
+    d.get_by_text(re.compile(r'^Imports \(')).click()
+    flagged = d.locator('.import-flag').all_inner_texts()
+    check('details: version information, the signer, capa capabilities, the wiping imports highlighted',
+          {'DeleteFileW', 'WriteFile', 'MoveFileExW'} <= {x.strip(', ') for x in flagged}, flagged)
+    page.screenshot(path=f'{OUT}/x12-program-detail.png')
+    page.keyboard.press('Escape')
+
     print('== bad session')
     page.evaluate("() => { sessionStorage.setItem('dfip_token', 'garbage'); sessionStorage.setItem('dfip_refresh', 'garbage'); }")
     page.goto(BASE + '/app/timeline')
@@ -323,6 +343,29 @@ with sync_playwright() as p:
     page.get_by_role('dialog').get_by_role('button', name='Delete set').click()
     expect(page.locator('tbody tr', has_text=set_name)).to_have_count(0)
     check('...and deletes it', True)
+
+    print('== malware rules (administrator)')
+    page.locator('a.nav-link[href$="/admin/malware-rules"]').click()
+    expect(page.get_by_role('heading', name='Malware rules', exact=True)).to_be_visible()
+    rs_name = f'UI test rules {uuid.uuid4().hex[:4]}'
+    page.get_by_role('button', name='Add a rule set').click()
+    d = page.get_by_role('dialog')
+    d.get_by_label('Name').fill(rs_name)
+    d.get_by_label('Rules file').set_input_files({'name': 'broken.yar', 'mimeType': 'text/plain', 'buffer': b'rule broken { condition: }'})
+    d.get_by_role('button', name='Add').click()
+    expect(d.get_by_text(re.compile('do not compile|syntax error', re.I))).to_be_visible()
+    check('a rule set that does not compile is refused with the reason', True)
+    d.get_by_label('Rules file').set_input_files({'name': 'wiper.yar', 'mimeType': 'text/plain',
+                                                   'buffer': b'rule UI_Wiper { strings: $a = "SDWIPE/3-PASS" condition: $a }\n'})
+    d.get_by_role('button', name='Add').click()
+    row = page.locator('tbody tr', has_text=rs_name)
+    expect(row).to_be_visible()
+    check('an administrator adds a YARA rule set (1 rule, in use)', row.locator('td').nth(1).inner_text().strip() == '1'
+          and row.get_by_role('checkbox').is_checked())
+    page.screenshot(path=f'{OUT}/x13-malware-rules.png', full_page=True)
+    row.get_by_role('button', name=f'Delete {rs_name}').click()
+    expect(page.locator('tbody tr', has_text=rs_name)).to_have_count(0)
+    check('...and deletes it', True)
     ctx.close()
 
     print('== narrower windows')
@@ -334,7 +377,7 @@ with sync_playwright() as p:
         sign_in(page, 'investigator@dfip.local')
         expect(page.get_by_text('Investigation functions')).to_be_visible()
         bad = []
-        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/usb', '/app/reports', '/app/custody'):
+        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/usb', '/app/reports', '/app/custody'):
             page.goto(BASE + path)
             page.wait_for_load_state('networkidle')
             sw = page.evaluate('document.documentElement.scrollWidth')

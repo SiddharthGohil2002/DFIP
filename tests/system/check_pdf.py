@@ -64,6 +64,10 @@ check('deleted payroll export listed', 'payroll-export.csv' in flat)
 check('USB serials listed', 'AA951D0000007252' in flat and '4C530001230518109141' in flat)
 check('browser visits and downloads listed', all(x in flat for x in ('filetransfer.example.net', 'pastebin.example.com', 'SecureDelete.exe', 'archiver.zip')))
 check('YARA hit on cleanup.ps1 listed', 'cleanup.ps1' in flat)
+subs = [m.group(1) for m in re.finditer(r'^\s*\d+\.\d+ (Signature matches|Programs that stand out)', a, re.M)]
+check('Malware indicators has its two subsections', subs == ['Signature matches', 'Programs that stand out'])
+check('programs listed: the packed svchost.exe built as SecureDelete.exe, the ClamAV signature, capa capabilities',
+      all(x in flat for x in ('Packed (UPX)', 'Temp/svchost.exe', 'DFIP.Test.SecureDelete', 'ClamAV', 'delete file', 'untrusted')))
 check('hash set matches listed: the payroll copies as notable', 'Payroll exports' in flat and 'holiday.jpg' in flat)
 check('registry activity listed: execution evidence, folders, searches, flagged persistence, programs, remote desktop',
       all(x in flat for x in ('SecureDelete.exe', 'UserAssist', 'ShimCache', '23854be75a', 'E:\\Exports', 'usb wipe', 'sethc.exe',

@@ -34,13 +34,14 @@ ITEM_COLLECTIONS = {
     'FILE': 'fs_entries', 'TIMELINE_EVENT': 'timeline_events', 'BROWSER': 'forensic_artifacts',
     'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts', 'ENTITY': 'entities',
     'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records', 'WINDOWS': 'forensic_artifacts', 'USN': 'usn_records',
-    'EMAIL': 'email_messages', 'CHAT_CLOUD': 'forensic_artifacts',
+    'EMAIL': 'email_messages', 'CHAT_CLOUD': 'forensic_artifacts', 'PROGRAM': 'forensic_artifacts',
 }
 LABELS = ('EVIDENCE', 'NOTABLE', 'FOLLOW_UP')
 _ARTIFACT_TYPES = {
     'BROWSER': {'BROWSER_HISTORY', 'BROWSER_DOWNLOAD', 'BROWSER_COOKIE', 'BROWSER_SEARCH', 'BROWSER_BOOKMARK', 'BROWSER_AUTOFILL',
                 'BROWSER_LOGIN', 'BROWSER_RECOVERED'},
     'CHAT_CLOUD': set(CHAT_CLOUD_LABELS),
+    'PROGRAM': {'EXECUTABLE'},
     'ACTIVITY': {'PROGRAM_RUN', 'RECENT_FILE', 'RECYCLE_BIN_ITEM'},
     'ARTIFACT': {'RECOVERED_FILE', 'CARVED_FILE', 'EXTRACTED_FILE', 'MALWARE_INDICATOR'},
     'REGISTRY': {'USERASSIST', 'SHELLBAG', 'TYPED_PATH', 'TYPED_URL', 'EXPLORER_SEARCH', 'RECENT_DOC', 'RUN_MRU', 'PERSISTENCE',
@@ -85,7 +86,7 @@ def natural_key(item_type: str, doc) -> dict:
         return {'evidence_id': e, 'type': t, 'source_path': doc.get('source_path'), 'row_id': doc.get('row_id')}
     if item_type == 'EMAIL':
         return {'evidence_id': e, 'nk': doc.get('nk')}
-    if item_type == 'CHAT_CLOUD':
+    if item_type in ('CHAT_CLOUD', 'PROGRAM'):
         return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
     if item_type == 'USB':
         return {'evidence_id': e, 'instance_id': doc.get('instance_id')}
@@ -153,6 +154,10 @@ def snapshot(item_type: str, doc) -> dict:
         }.get(t, (doc.get('path'), None))
         app = doc.get('app') or doc.get('provider')
         detail = f'{label}{" (" + app + ")" if app else ""}{" · " + doc["user"] if doc.get("user") else ""}'
+    elif item_type == 'PROGRAM':
+        reasons = '; '.join(f['label'] for f in (doc.get('flags') or [])[:3])
+        title, when = doc.get('path'), (doc.get('pe') or {}).get('compiled')
+        detail = f'Program · signature {(doc.get("signature") or {}).get("status")}{" · " + reasons if reasons else ""}'
     elif item_type == 'BROWSER':
         if t == 'BROWSER_DOWNLOAD':
             title, detail, when = doc.get('target_path'), f'{doc.get("browser") or "Browser"} download from {doc.get("tab_url")}', doc.get('start_time')

@@ -6,7 +6,7 @@ import { useCase } from './caseContext';
 import { Banner, Button, Field, Modal, useToast } from '../ui';
 
 export type TagItemType = 'FILE' | 'TIMELINE_EVENT' | 'BROWSER' | 'USB' | 'ACTIVITY' | 'ARTIFACT' | 'ENTITY' | 'REGISTRY' | 'EVENT' | 'WINDOWS' | 'USN'
-  | 'EMAIL' | 'CHAT_CLOUD';
+  | 'EMAIL' | 'CHAT_CLOUD' | 'PROGRAM';
 export type TagLabel = 'EVIDENCE' | 'NOTABLE' | 'FOLLOW_UP';
 
 export interface Tag {

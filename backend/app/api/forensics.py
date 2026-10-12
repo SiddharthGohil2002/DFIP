@@ -469,6 +469,9 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
         'chat':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['CHAT_MESSAGE','CHAT_CALL','CHAT_FILE_TRANSFER','CHAT_CONTACT','CHAT_ACCOUNT','CHAT_APP']},
                 '$or':[{f:rx} for f in ('text','author','author_name','conversation','file_name','partner','handle','name','display_name','app','members')]},
                 [('type',1),('time',-1)]),
+        'programs':('forensic_artifacts',{'case_id':case_id,'type':'EXECUTABLE','$or':[{f:rx} for f in ('path','pe.version_info.CompanyName',
+                    'pe.version_info.FileDescription','pe.version_info.OriginalFilename','signature.signers.signer','pe.pdb_path')]},
+                    [('score',-1),('path',1)]),
         'cloud':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['CLOUD_FILE','CLOUD_ACCOUNT']},
                  '$or':[{f:rx} for f in ('path','name','hash','account','sync_folder','web_url')]},[('type',1),('path',1)]),
         'usb':('usb_artifacts',{'case_id':case_id,'$or':[{'friendly_name':rx},{'vendor':rx},{'product':rx},{'serial':rx}]},[('serial',1)]),
@@ -491,7 +494,8 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
     results,totals={},{}
     for key,(col,query,sort) in queries.items():
         totals[key]=db[col].count_documents(query)
-        projection={'xml':0,'text':0} if key=='eventlogs' else {'body_text':0,'body_html':0,'headers':0} if key=='email' else {'occurrences':0}
+        projection={'xml':0,'text':0} if key=='eventlogs' else {'body_text':0,'body_html':0,'headers':0} if key=='email' \
+            else {'pe.imports':0,'pe.sections':0} if key=='programs' else {'occurrences':0}
         results[key]=[serial(dict(x,_id=str(x['_id']))) for x in db[col].find(query,projection).sort(sort).limit(limit)]
     for x in results['found']:
         if x.get('sensitive'): x.pop('value',None)

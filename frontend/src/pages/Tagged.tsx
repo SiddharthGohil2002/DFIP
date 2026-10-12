@@ -8,11 +8,11 @@ import { Badge, Card, Empty, PageHeader, Tabs } from '../ui';
 const TYPE_NAMES: Record<TagItemType, string> = {
   FILE: 'File', TIMELINE_EVENT: 'Timeline event', BROWSER: 'Browser record', USB: 'USB device',
   ACTIVITY: 'Windows activity', ARTIFACT: 'Recovered / carved file', ENTITY: 'Found data', REGISTRY: 'Registry activity', EVENT: 'Event log record', WINDOWS: 'Windows activity', USN: 'USN journal record',
-  EMAIL: 'Email', CHAT_CLOUD: 'Chat or cloud record',
+  EMAIL: 'Email', CHAT_CLOUD: 'Chat or cloud record', PROGRAM: 'Program',
 };
 const SOURCE_PAGE: Record<TagItemType, string> = {
   FILE: '/app/files', TIMELINE_EVENT: '/app/timeline', BROWSER: '/app/browser', USB: '/app/usb', ACTIVITY: '/app/activity', ARTIFACT: '/app/files', ENTITY: '/app/found-data', REGISTRY: '/app/activity', EVENT: '/app/event-logs', WINDOWS: '/app/activity', USN: '/app/ntfs',
-  EMAIL: '/app/email', CHAT_CLOUD: '/app/chat-cloud',
+  EMAIL: '/app/email', CHAT_CLOUD: '/app/chat-cloud', PROGRAM: '/app/indicators',
 };
 
 type Filter = 'ALL' | TagLabel;

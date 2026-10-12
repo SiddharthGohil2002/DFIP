@@ -442,3 +442,7 @@ button { font: inherit; }
 .world-point { fill: var(--accent); stroke: #ffffff; cursor: pointer; }
 .world-point:hover { fill: var(--danger); }
 @media (max-width: 900px) { .media-detail { grid-template-columns: 1fr; } }
+
+/* Programs */
+.imports { display: grid; gap: 6px; margin-top: 8px; max-height: 260px; overflow: auto; }
+.import-flag { color: var(--danger); font-weight: 600; }

@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     analysis_time_limit:int=6*3600
     desktop_job_timeout_minutes:int=60
     virustotal_api_key:str=''
+    # VirusTotal API v3 base (a private mirror or a test server can stand in) and how many lookups a minute (public API: 4)
+    virustotal_base_url:str='https://www.virustotal.com/api/v3'
+    virustotal_rate_per_minute:float=4.0
     abuseipdb_api_key:str=''
     otx_api_key:str=''
     urlhaus_api_key:str=''

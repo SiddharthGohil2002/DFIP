@@ -245,19 +245,51 @@ def hashset_import_task(self, job_id: str, set_id: str, created_by: str):
         raise
 
 
-def _rematch_all(user_id: str) -> list[str]:
-    """Queues the hash-set module for every evidence item whose files were hashed (and that is not being analysed)."""
+def _rematch_all(user_id: str, module: str = 'hash_match', case_id: str | None = None) -> list[str]:
+    """Queues one module (the hash-set match by default; YARA or ClamAV after their rules change, the reputation lookups when
+    a case turns them on) for every evidence item whose files were hashed and that is not being analysed."""
     from .services.jobs import active_analysis, queue
     jobs = []
-    for e in get_db()['evidence'].find({'modules.fileproc.status': 'COMPLETED'}, {'evidence_id': 1}):
+    q = {'modules.fileproc.status': 'COMPLETED', **({'case_id': case_id} if case_id else {})}
+    for e in get_db()['evidence'].find(q, {'evidence_id': 1}):
         if not active_analysis(e['evidence_id']):
             jobs.append(queue.enqueue('FORENSIC_ANALYSIS', {'evidence_id': e['evidence_id'], 'profile': None,
-                                                             'modules': ['hash_match'], 'rematch': True}, user_id))
+                                                             'modules': [module], 'rematch': True}, user_id))
     return jobs
+
+
+@celery_app.task(bind=True, name='dfip.clamav_update', max_retries=0)
+def clamav_update_task(self, job_id: str, _subject, created_by: str):
+    """Downloads or updates ClamAV's official databases with freshclam into storage/clamav, then rescans."""
+    from .forensic.modules.base import run_tool
+    from .forensic.rulesets import clamav_databases, clamav_dir
+    job, _ = _claim(job_id)
+    if not job:
+        return {'job_id': job_id, 'status': 'DUPLICATE_IGNORED'}
+    try:
+        folder = clamav_dir()
+        conf = folder / 'freshclam.conf'
+        conf.write_text(f'DatabaseDirectory {folder}\nDatabaseMirror database.clamav.net\nDNSDatabaseInfo current.cvd.clamav.net\n'
+                        f'ScriptedUpdates yes\nConnectTimeout 30\nReceiveTimeout 600\n', encoding='utf-8')
+        _set_job(job_id, progress=10, stage='downloading')
+        r = run_tool(['freshclam', f'--config-file={conf}', '--stdout', '--foreground'], timeout=3600, memory_bytes=8 << 30)
+        conf.unlink(missing_ok=True)
+        if r.get('returncode') != 0:
+            raise ValueError(f'freshclam failed: {(r.get("stdout") or r.get("stderr") or r.get("status") or "")[-500:]}')
+        dbs = [{k: v for k, v in d.items() if k != 'modified'} for d in clamav_databases()]
+        summary = {'databases': dbs, 'rescan_jobs': _rematch_all(created_by, 'clamav')}
+        _set_job(job_id, status='COMPLETED', progress=100, stage='complete', result=summary, finished_at=datetime.now(timezone.utc))
+        _notify(created_by, 'ClamAV databases updated', ', '.join(f'{d["name"]} {d.get("version") or ""}'.strip() for d in dbs))
+        return summary
+    except Exception as exc:
+        _set_job(job_id, status='FAILED', stage='failed', error=str(exc)[:2000], finished_at=datetime.now(timezone.utc))
+        _notify(created_by, 'ClamAV update failed', str(exc)[:300], 'ERROR')
+        raise
 
 
 TASKS_BY_TYPE = {
     'HASH_VERIFY': hash_verify_task,
     'FORENSIC_ANALYSIS': forensic_analysis_task,
     'HASHSET_IMPORT': hashset_import_task,
+    'CLAMAV_UPDATE': clamav_update_task,
 }

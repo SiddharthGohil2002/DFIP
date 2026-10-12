@@ -47,16 +47,19 @@ def _not_configured(provider: str, indicator: str) -> dict:
             'detail': f'No API key configured for {provider}. Set the relevant environment variable to enable real lookups.'}
 
 
-def lookup_virustotal_hash(file_hash: str, max_age_seconds: int = 3600) -> dict:
+def lookup_virustotal_hash(file_hash: str, max_age_seconds: int = 3600, peek: bool = False) -> dict | None:
+    """A file hash on VirusTotal (only the hash is sent). peek=True returns a cached answer or None, without a request."""
     provider = 'VIRUSTOTAL'
     if not settings.virustotal_api_key:
         return _not_configured(provider, file_hash)
     cached = _get_cached(provider, file_hash, max_age_seconds)
     if cached:
         return cached
+    if peek:
+        return None
     try:
         resp = httpx.get(
-            f'https://www.virustotal.com/api/v3/files/{file_hash}',
+            f'{settings.virustotal_base_url.rstrip("/")}/files/{file_hash}',
             headers={'x-apikey': settings.virustotal_api_key}, timeout=20,
         )
         if resp.status_code == 404:

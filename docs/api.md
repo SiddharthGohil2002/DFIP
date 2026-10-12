@@ -44,6 +44,15 @@ Recent additions:
 | `GET /api/forensics/media/locations?case_id&evidence_id` | Every picture and video with a GPS location |
 | `GET /api/forensics/media/{entry_id}` | One item with all its metadata and the full OCR text |
 | `GET /api/forensics/media/{entry_id}/thumb?frame` | The thumbnail (or keyframe `frame`) DFIP made, as a JPEG with `nosniff`, `attachment` and a sandbox CSP; audited (`FILE_CONTENT_VIEWED`, view `thumbnail` or `keyframe n`) |
+| `GET /api/forensics/executables?case_id&evidence_id&flagged&signature&search&skip&limit` | Programs, those that stand out most first (without sections and imports): `flagged=true` score 3 or more, `signature` valid, untrusted, expired, invalid, unsigned or error, `search` path, version information, signer or SHA-256 |
+| `GET /api/forensics/executables/{artifact_id}` | One program: `pe` (sections, imports, version information, compile time, imphash), `signature` (status, signers and their chains), `api_groups`, `flags`, `score`, `capa`, `vt` |
+| `POST /api/forensics/executables/{artifact_id}/capa` | Runs capa on the program now (`ANALYSIS_RUN`) and keeps the result with who asked; audited (`CAPA_RUN`) |
+| `PUT /api/cases/{case_id}/threat-intel` (body `{auto_lookup}`) | Turns automatic VirusTotal lookups of program hashes on or off for the case (`CASE_UPDATE`; audited `THREAT_INTEL_AUTO_LOOKUP_SET`); turning them on starts a `reputation` run per analysed evidence item (`jobs`), `key_configured` says whether a key is set |
+| `GET /api/malware/status` | What the scanners use: DFIP's YARA rules and the rule sets, ClamAV databases, whether capa is installed, whether a VirusTotal key is set and its rate |
+| `GET /api/malware/yara`, `POST /api/malware/yara` (multipart `file`, `name`, `description`) | YARA rule sets (every signed-in user may list them); adding one (`RULES_MANAGE`) compiles it first (400 with the reason if it doesn't compile or uses `include`) and rescans analysed evidence (`rescan_jobs`) |
+| `PATCH /api/malware/yara/{set_id}` (body `{enabled}`), `DELETE /api/malware/yara/{set_id}` | Turn a set off or on, or delete it (`RULES_MANAGE`); both rescan |
+| `GET /api/malware/clamav`, `POST /api/malware/clamav` (multipart `file`), `DELETE /api/malware/clamav/{name}` | ClamAV database files with their version and signature count; an added file must load in clamscan (400 otherwise) and replaces one of the same name; both rescan (`RULES_MANAGE`) |
+| `POST /api/malware/clamav/update` | Downloads the official ClamAV databases with freshclam as a `CLAMAV_UPDATE` job (`RULES_MANAGE`; needs internet access), then rescans |
 | `GET /api/forensics/user-activity/files?case_id` | The Jump List, Timeline, thumbnail cache, SRUM and search index files read, with their SHA-256 |
 | `GET /api/forensics/eventlogs/facets?case_id&evidence_id` | Channels, categories, event IDs and users with their record counts (for the filters) |
 | `GET /api/forensics/hash?case_id&digest` | Every file in the case with this MD5, SHA-1 or SHA-256, and recovered, carved and extracted copies with this SHA-256; 400 if the value is not a hash |

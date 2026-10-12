@@ -509,11 +509,32 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
               for e in db['event_records'].find(q, {'xml': 0, 'text': 0, 'data': 0}).sort('time', 1).limit(MAX_ROWS)],
              [1.2, 1.5, 0.65, 1.15, 3.7], 'No notable events were found.', total=db['event_records'].count_documents(q), heading=H3)
 
-    malware = list(db['forensic_artifacts'].find({'case_id': cid, 'type': 'MALWARE_INDICATOR'}))
-    _section(story, T('Malware indicators (YARA)'), ['Evidence', 'Rule', 'File'],
-             [[m.get('evidence_id'), m.get('rule'), (m.get('original_path') or m.get('path') or '') + (' (deleted)' if m.get('deleted') else '')]
-              for m in malware],
-             [1, 2.5, 4], 'No YARA rule matches in the executables, scripts, documents and archives scanned.')
+    # Malware indicators (modules yara, clamav, executables, reputation).
+    mw_title = T('Malware indicators')
+    story.append(Paragraph(escape(mw_title), H2))
+    story.append(Paragraph('Signature matches are leads: YARA rules (DFIP\'s and those an administrator added) and ClamAV databases. '
+                           'Programs stand out for being packed, renamed or masquerading as Windows programs, for their signature, or for '
+                           'imports that wipers, injectors and keyloggers use; capa lists what their code can do. VirusTotal results '
+                           'appear only when the case turned automatic hash lookups on.', NOTE))
+    n = mw_title.split('.')[0]
+    malware = list(db['forensic_artifacts'].find({'case_id': cid, 'type': 'MALWARE_INDICATOR'}).sort([('original_path', 1), ('rule', 1)]))
+    _section(story, f'{n}.1 Signature matches', ['Evidence', 'Engine', 'Rule or signature', 'File'],
+             [[m.get('evidence_id'), m.get('engine') or ('ClamAV' if m.get('source') == 'CLAMAV' else 'YARA'),
+               m.get('rule') + (f' ({m["ruleset"]})' if m.get('ruleset') and m.get('ruleset') != 'DFIP' else ''),
+               (m.get('original_path') or m.get('path') or '') + (' (deleted)' if m.get('deleted') else '')] for m in malware],
+             [0.9, 0.7, 2.2, 3.6], 'No YARA rule or ClamAV signature matched the files scanned.', heading=H3)
+    q = {'case_id': cid, 'type': 'EXECUTABLE', 'score': {'$gte': 3}}
+    rows_ = []
+    for x in art.find(q, {'pe.imports': 0, 'pe.sections': 0}).sort([('score', -1), ('path', 1)]).limit(MAX_ROWS):
+        vt = x.get('vt') or {}
+        caps = [c['name'] for c in (x.get('capa') or {}).get('capabilities') or []][:6]
+        rows_.append([x['path'] + (' (deleted)' if x.get('deleted') else ''), '; '.join(f['label'] for f in x.get('flags') or []),
+                      ((x.get('signature') or {}).get('status') or '') + (f": {x['signature']['signers'][0]['signer']}" if (x.get('signature') or {}).get('signers') else ''),
+                      f"{vt.get('malicious', 0)}/{sum(vt.get(k) or 0 for k in ('malicious', 'suspicious', 'harmless', 'undetected'))}" if vt.get('status') == 'COMPLETED'
+                      else (vt.get('status') or '').replace('_', ' ').lower() or None,
+                      ', '.join(caps) or None, x.get('sha256')])
+    _section(story, f'{n}.2 Programs that stand out', ['Program', 'Why', 'Signature', 'VirusTotal', 'Capabilities (capa)', 'SHA-256'], rows_,
+             [1.7, 2.0, 1.2, 0.6, 1.5, 1.2], 'No program stands out.', mono_cols=(5,), total=art.count_documents(q), heading=H3)
 
     sets_q = {'evidence_id': {'$in': eids}, 'hash_status': {'$in': ['KNOWN_BAD', 'NOTABLE']}}
     in_sets = list(db['fs_entries'].find(sets_q).sort([('hash_status', 1), ('path', 1)]).limit(MAX_ROWS))
@@ -558,7 +579,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
                  'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file', 'ENTITY': 'Found data',
                  'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity', 'USN': 'USN journal record',
-                 'EMAIL': 'Email', 'CHAT_CLOUD': 'Chat or cloud storage record'}
+                 'EMAIL': 'Email', 'CHAT_CLOUD': 'Chat or cloud storage record', 'PROGRAM': 'Program'}
     _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
              [[(t.get('label') or '').replace('_', ' ').capitalize(),
                f'{(t.get("snapshot") or {}).get("title")}' + ('' if resolve(db, t) is not None else ' (not in the latest analysis)'),

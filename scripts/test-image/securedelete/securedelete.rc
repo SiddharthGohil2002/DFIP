@@ -1,0 +1,30 @@
+#include <winver.h>
+
+1 VERSIONINFO
+FILEVERSION 1,4,0,0
+PRODUCTVERSION 1,4,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "SecureDelete Project"
+            VALUE "FileDescription", "SecureDelete secure file wiper"
+            VALUE "FileVersion", "1.4.0.0"
+            VALUE "InternalName", "SecureDelete"
+            VALUE "LegalCopyright", "Copyright (C) 2026 SecureDelete Project"
+            VALUE "OriginalFilename", "SecureDelete.exe"
+            VALUE "ProductName", "SecureDelete"
+            VALUE "ProductVersion", "1.4.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

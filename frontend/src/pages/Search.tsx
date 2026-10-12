@@ -155,6 +155,15 @@ export function SearchPage() {
               </tr>
             ))}
           </Group>
+          <Group title="Programs" total={res.totals.programs ?? 0} shown={(res.results.programs || []).length} link={{ to: '/app/indicators', label: 'Open indicators' }}>
+            {(res.results.programs || []).map((p) => (
+              <tr key={p._id}>
+                <td className="cell-path small mono">{p.path}</td>
+                <td className="small">{p.pe?.version_info?.CompanyName || '—'}</td>
+                <td className="small" colSpan={2}>{(p.flags || []).filter((f: any) => f.severity !== 'low').map((f: any) => f.label).join('; ') || 'nothing stands out'}</td>
+              </tr>
+            ))}
+          </Group>
           <Group title="Email" total={res.totals.email ?? 0} shown={(res.results.email || []).length} link={{ to: '/app/email', label: 'Open email' }}>
             {(res.results.email || []).map((m) => (
               <tr key={m._id}>

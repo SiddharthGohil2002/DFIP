@@ -506,13 +506,14 @@ def t_analysis():
 
 
 STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc',
-                    'email', 'chat_cloud', 'media', 'hash_match', 'yara']
+                    'email', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
 ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc', 'containers',
-               'email', 'chat_cloud', 'media', 'ocr', 'hash_match', 'yara', 'content', 'unallocated', 'found_data']
+               'email', 'chat_cloud', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content', 'unallocated',
+               'found_data']
 # What re-reading the file system index refreshes on evidence analysed with the standard profile.
 AFTER_FS_INDEX = ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc', 'email', 'chat_cloud',
-                  'media', 'hash_match', 'yara']
+                  'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
 
 
 def _ids(db, col, q):
@@ -1507,6 +1508,13 @@ def t_content():
     # Security.evtx holds the namespace of event 1102's UserData as text, which the strings of the log expose. (The event
     # namespace is there too, but it follows a length byte that reads as "5", so it is not a separate word.)
     history.add('http://manifests.microsoft.com/win/2004/08/windows/eventlog')
+    # SecureDelete.exe's signature holds its publisher's link as a DER string with nothing after it but the next element's
+    # tag, 0x30, which reads as "0" (as "http://www.microsoft.com0" in the strings of Microsoft-signed files): the known
+    # run-on of values in binary strings. Taken from the program's bytes.
+    link = b'https://tools.example.org/securedelete'
+    exe = icat_bytes(SECUREDELETE_EXE)
+    tail = exe[exe.index(link) + len(link):][:1]
+    history.add((link + tail).decode() if tail == b'0' else link.decode())
     urls = set(by_kind.get('url', {}))
     check('web addresses are exactly the URLs of the browser history and the contacts file, each whole (database values read apart)',
           urls == history, (sorted(urls - history), sorted(history - urls)))
@@ -1570,7 +1578,8 @@ def t_containers():
     j = _analyse(inv, E, {'modules': ['containers', 'unallocated']})
     s = (j.get('result') or {}).get('summary') or {}
     check('the new modules run, and the modules that read their output are refreshed',
-          j.get('status') == 'COMPLETED' and s.get('plan') == ['containers', 'chat_cloud', 'media', 'hash_match', 'yara', 'content', 'unallocated', 'found_data'],
+          j.get('status') == 'COMPLETED' and s.get('plan') == ['containers', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content',
+                                                         'unallocated', 'found_data'],
           (j.get('status'), s.get('plan'), j.get('error')))
     # Archive and document members (email attachments are members too, from the email module: see 12m).
     members = {x['path']: x for x in db.fs_entries.find({'evidence_id': E, 'container': {'$exists': True}, 'container.kind': {'$ne': 'email'}})}
@@ -3070,6 +3079,188 @@ def t_media():
     check("the whiteboard's details include the text OCR read", 'WIPE AFTER UPLOAD' in (full.get('ocr') or {}).get('text', ''), full.get('ocr'))
 
 
+# Phase 11: the scenario's programs (scripts/test-image/securedelete) and a VirusTotal stand-in run by this script.
+SECUREDELETE_EXE = '/Users/alice/Downloads/SecureDelete.exe'
+FAKE_SVCHOST = '/Users/alice/AppData/Local/Temp/svchost.exe'
+VT_REQUESTS, VT_KNOWN = [], {}
+
+
+def _start_vt_mock():
+    """A VirusTotal API v3 stand-in on port 18080 (VIRUSTOTAL_BASE_URL in compose.yml): records every request; knows the
+    hashes in VT_KNOWN and answers 404 for the rest."""
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _record(self):
+            VT_REQUESTS.append({'method': self.command, 'path': self.path, 'key': self.headers.get('x-apikey'),
+                                'body': self.headers.get('Content-Length')})
+
+        def do_GET(self):
+            self._record()
+            m = re.match(r'^/api/v3/files/([0-9a-f]{64})$', self.path)
+            stats = VT_KNOWN.get(m.group(1)) if m else None
+            body = json.dumps({'data': {'id': m.group(1), 'type': 'file', 'attributes': {'last_analysis_stats': stats}}} if stats
+                              else {'error': {'code': 'NotFoundError'}}).encode()
+            self.send_response(200 if stats else 404)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            self._record()
+            self.send_response(405)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(('0.0.0.0', 18080), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
+def _objdump_imports(text):
+    """{dll: {function}} from objdump -p's import tables."""
+    out, dll = {}, None
+    for line in text.splitlines():
+        m = re.match(r'^\s*DLL Name: (\S+)', line)
+        if m:
+            dll = m.group(1)
+            out[dll] = set()
+            continue
+        m = re.match(r'^\s+[0-9a-f]{8}\s+<none>\s+[0-9a-f]{4}\s+(\S+)$', line) or re.match(r'^\s+[0-9a-f]+\s+([A-Za-z_][\w@?]*)$', line)
+        if dll and m:
+            out[dll].add(m.group(1))
+        elif not line.strip():
+            dll = None if dll and out.get(dll) else dll
+    return out
+
+
+@section('12r Malware checks (programs vs objdump, ExifTool, osslsigncode and UPX; ClamAV and YARA rule sets; capa; VirusTotal vs a stand-in)')
+def t_malware():
+    inv, admin, A, E = C['INVESTIGATOR'], C['ADMIN'], C['A'], C['E']
+    db = mongo()
+    mods = get(f'/api/evidence/{E}', inv).json['modules']
+    check('the programs, ClamAV and reputation modules ran with the standard analysis',
+          all((mods.get(m) or {}).get('status') == 'COMPLETED' for m in ('executables', 'clamav', 'reputation')), {m: mods.get(m) for m in ('executables', 'clamav', 'reputation')})
+    progs = {x['path']: x for x in get(f'/api/forensics/executables?case_id={A}&evidence_id={E}&limit=500', inv).json['data']}
+    check('the two programs on the disk are analysed (and nothing else is taken for one)', set(progs) == {SECUREDELETE_EXE, FAKE_SVCHOST}, sorted(progs))
+    sd = get(f"/api/forensics/executables/{progs[SECUREDELETE_EXE]['artifact_id']}", inv).json
+    sv = get(f"/api/forensics/executables/{progs[FAKE_SVCHOST]['artifact_id']}", inv).json
+    sd_local, sv_local = _local(SECUREDELETE_EXE), _local(FAKE_SVCHOST)
+    od = sh('objdump', '-p', str(sd_local)).stdout.decode()
+    when = re.search(r'Time/Date\s+(.+)', od).group(1).strip()
+    check('compile time and imports as objdump reads them (13 August 2026 09:30 UTC; every DLL and function)',
+          iso(sd['pe']['compiled']) == datetime.strptime(when, '%a %b %d %H:%M:%S %Y').replace(tzinfo=timezone.utc) == utc(2026, 8, 13, 9, 30)
+          and {k.lower(): set(v) for k, v in sd['pe']['imports'].items()} == {k.lower(): v for k, v in _objdump_imports(od).items()},
+          (when, sd['pe']['compiled'], sorted(sd['pe']['imports'])))
+    ex = json.loads(sh('exiftool', '-j', str(sd_local)).stdout)[0]
+    vi = sd['pe']['version_info']
+    check('version information as ExifTool reads it', (vi.get('OriginalFilename'), vi.get('CompanyName'), vi.get('FileDescription'), vi.get('ProductVersion'))
+          == (ex.get('OriginalFileName'), ex.get('CompanyName'), ex.get('FileDescription'), str(ex.get('ProductVersion'))), (vi, {k: ex.get(k) for k in ('OriginalFileName', 'CompanyName')}))
+    ossl = sh('osslsigncode', 'verify', '-in', str(sd_local)).stdout.decode()
+    subject = re.search(r'Subject:\s*(.+)', ossl).group(1).strip()
+    signer = sd['signature']['signers'][0]
+    check('signature: present, by "SecureDelete Project" (osslsigncode reads the same signer), self-signed so untrusted; signed 13 August 09:40 UTC',
+          sd['signature']['status'] == 'untrusted' and 'self-signed' in (sd['signature']['detail'] or '')
+          and sorted(x.strip() for x in signer['signer'].split(',')) == sorted(x for x in subject.strip('/').split('/'))
+          and iso(signer['signing_time']) == utc(2026, 8, 13, 9, 40) and signer['more_info'] == 'https://tools.example.org/securedelete',
+          (sd['signature'], subject))
+    codes = lambda p: {f['code'] for f in p['flags']}
+    check('SecureDelete.exe stands out for its wiping imports and untrusted signature (in a user folder)',
+          codes(sd) == {'APIS_FILE_WIPING', 'UNTRUSTED_SIGNATURE', 'USER_FOLDER'}
+          and set(next(g['functions'] for g in sd['api_groups'] if g['group'] == 'file_wiping')) >= {'DeleteFileW', 'WriteFile', 'MoveFileExW'}, sd['flags'])
+    upx = sh('upx', '-t', str(sv_local))
+    sections = re.findall(r'^\s*\d+\s+(\S+)\s', sh('objdump', '-h', str(sv_local)).stdout.decode(), re.M)
+    check('the svchost.exe in Temp: packed with UPX (upx -t confirms; objdump lists UPX0, UPX1), built as SecureDelete.exe, a system name outside Windows, unsigned',
+          upx.returncode == 0 and sections[:2] == ['UPX0', 'UPX1'] and [s['name'] for s in sv['pe']['sections']][:2] == ['UPX0', 'UPX1']
+          and codes(sv) == {'PACKED', 'NAME_MISMATCH', 'SYSTEM_NAME', 'USER_FOLDER'} and sv['signature']['status'] == 'unsigned', (sections, sv['flags']))
+    caps = {c['name'] for c in (sd.get('capa') or {}).get('capabilities') or []}
+    check('capa ran on both: SecureDelete writes, moves and deletes files (what its source does); the packed copy is reported as packed with UPX',
+          {'write file on Windows', 'move file', 'delete file'} <= caps and sd['capa']['ran'] == 'automatically'
+          and sv['capa']['status'] == 'limited' and 'packed with UPX' in {c['name'] for c in sv['capa']['capabilities']}, (sorted(caps), sv.get('capa')))
+    r = post(f"/api/forensics/executables/{sd['artifact_id']}/capa", inv, timeout=900)
+    check('capa on request: run again, recorded with who asked, audited; a viewer may not (403), another investigator sees nothing (404)',
+          r.status == 200 and r.json['capa']['ran'] == 'on request by Demo Investigator' and db.audit_logs.find_one({'action': 'CAPA_RUN', 'metadata.path': SECUREDELETE_EXE})
+          and post(f"/api/forensics/executables/{sd['artifact_id']}/capa", C['VIEWER']).status == 403
+          and get(f"/api/forensics/executables/{sd['artifact_id']}", C['INV2']).status == 404 and get(f'/api/forensics/executables?case_id={A}', C['INV2']).status == 404, r)
+    fact = (db.analysis_facts.find_one({'evidence_id': E}) or {}).get('clamav') or {}
+    check('without a ClamAV database the scan is skipped and says why', fact.get('status', '').startswith('no database')
+          and not db.forensic_artifacts.count_documents({'evidence_id': E, 'source': 'CLAMAV'}), fact)
+
+    # ClamAV databases (administrators): a hash list with the EICAR test file, and a body signature for SecureDelete's banner.
+    eicar = icat_bytes('/Users/alice/Downloads/eicar.com')
+    hdb = f'{hashlib.md5(eicar).hexdigest()}:{len(eicar)}:Eicar-Test-Signature\n'.encode()
+    ndb = f'DFIP.Test.SecureDelete:1:*:{b"SDWIPE/3-PASS".hex()}\n'.encode()
+    up = lambda token, name, data: form('POST', '/api/malware/clamav', token, {}, name, data)
+    check('only an administrator adds databases (403); a broken database or a wrong file type is refused (400)',
+          up(inv, 'dfip.hdb', hdb).status == 403 and up(admin, 'broken.ndb', b'not a signature\n').status == 400
+          and up(admin, 'notes.txt', hdb).status == 400)
+    a1, a2 = up(admin, 'dfip.hdb', hdb), up(admin, 'dfip.ndb', ndb)
+    _wait_jobs(admin, a1.json['rescan_jobs'] + a2.json['rescan_jobs'])
+    _analyse(inv, E, {'modules': ['clamav']})  # settle: the last rescan sees both files
+    hits = {(x['original_path'], x['rule']) for x in db.forensic_artifacts.find({'evidence_id': E, 'source': 'CLAMAV'})}
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / 'dfip.hdb').write_bytes(hdb)
+    (tmp / 'dfip.ndb').write_bytes(ndb)
+    truth = set()
+    for path, local in ((SECUREDELETE_EXE, sd_local), (FAKE_SVCHOST, sv_local), ('/Users/alice/Downloads/eicar.com', _local('/Users/alice/Downloads/eicar.com'))):
+        out = sh('clamscan', '--no-summary', f'--database={tmp}', str(local)).stdout.decode()
+        truth |= {(path, m) for m in re.findall(r': (\S+) FOUND', out)}
+    check('ClamAV finds EICAR and SecureDelete, the packed copy too (ClamAV unpacks UPX): what clamscan run directly finds',
+          hits == truth == {('/Users/alice/Downloads/eicar.com', 'Eicar-Test-Signature.UNOFFICIAL'), (SECUREDELETE_EXE, 'DFIP.Test.SecureDelete.UNOFFICIAL'),
+                            (FAKE_SVCHOST, 'DFIP.Test.SecureDelete.UNOFFICIAL')}, (hits, truth))
+    listed = {d['name']: d for d in get('/api/malware/clamav', inv).json['data']}
+    check('databases are listed to everyone with their signature counts; additions are audited',
+          (listed.get('dfip.hdb') or {}).get('signatures') == 1 and (listed.get('dfip.ndb') or {}).get('signatures') == 1
+          and db.audit_logs.count_documents({'action': 'CLAMAV_DATABASE_ADDED'}) >= 2, listed)
+
+    # YARA rule sets (administrators).
+    rules = b'rule DFIP_Test_Wiper { strings: $banner = "SDWIPE/3-PASS" condition: $banner }\n'
+    yup = lambda token, data, name='Test wiper rules': form('POST', '/api/malware/yara', token, {'name': name}, 'wiper.yar', data)
+    check('YARA rule sets: only administrators (403); rules that do not compile or that include files are refused (400)',
+          yup(inv, rules).status == 403 and yup(admin, b'rule broken { condition: }').status == 400
+          and yup(admin, b'include "/etc/passwd"\nrule x { condition: true }').status == 400)
+    y = yup(admin, rules)
+    _wait_jobs(admin, y.json.get('rescan_jobs', []))
+    yhits = {(x['original_path'], x['rule'], x.get('ruleset')) for x in db.forensic_artifacts.find({'evidence_id': E, 'type': 'MALWARE_INDICATOR', 'source': 'YARA'})}
+    check('the added set finds SecureDelete.exe; the packed copy\'s strings are compressed, so YARA (unlike ClamAV) misses it',
+          y.status == 200 and y.json['rule_count'] == 1 and (SECUREDELETE_EXE, 'DFIP_Test_Wiper', 'Test wiper rules') in yhits
+          and not any(p == FAKE_SVCHOST for p, _, _ in yhits), yhits)
+    off = req('PATCH', f"/api/malware/yara/{y.json['set_id']}", admin, {'enabled': False})
+    _wait_jobs(admin, off.json.get('rescan_jobs', []))
+    gone = not db.forensic_artifacts.find_one({'evidence_id': E, 'rule': 'DFIP_Test_Wiper'})
+    d = req('DELETE', f"/api/malware/yara/{y.json['set_id']}", admin)
+    _wait_jobs(admin, d.json.get('rescan_jobs', []))
+    check('a disabled set no longer matches; deleting it is audited', gone and d.status == 200
+          and {a['action'] for a in db.audit_logs.find({'resource_id': y.json['set_id']})} >= {'YARA_RULESET_ADDED', 'YARA_RULESET_DISABLED', 'YARA_RULESET_DELETED'})
+
+    # VirusTotal: nothing is sent until the case turns lookups on; then only hashes.
+    check('no VirusTotal request was made while automatic lookups were off (the default)', not VT_REQUESTS, VT_REQUESTS[:3])
+    VT_KNOWN[sd['sha256']] = {'malicious': 3, 'suspicious': 1, 'harmless': 0, 'undetected': 66}
+    path = f'/api/cases/{A}/threat-intel'
+    check('a viewer cannot turn lookups on (403), another investigator sees no case (404)',
+          req('PUT', path, C['VIEWER'], {'auto_lookup': True}).status == 403 and req('PUT', path, C['INV2'], {'auto_lookup': True}).status == 404)
+    on = req('PUT', path, inv, {'auto_lookup': True})
+    _wait_jobs(inv, on.json['jobs'])
+    after = {x['path']: x.get('vt') or {} for x in db.forensic_artifacts.find({'evidence_id': E, 'type': 'EXECUTABLE'})}
+    hashes = {p['sha256'] for p in progs.values()}
+    check('turned on: each program\'s SHA-256 looked up once, nothing else sent (GET /files/<hash> with the key, no body)',
+          on.status == 200 and on.json['key_configured'] is True and sorted(r_['path'] for r_ in VT_REQUESTS) == sorted(f'/api/v3/files/{h}' for h in hashes)
+          and all(r_['method'] == 'GET' and r_['key'] == 'test-vt-key' and not r_['body'] for r_ in VT_REQUESTS), VT_REQUESTS)
+    check('VirusTotal\'s answer is kept with the program: 3 engines for SecureDelete.exe, not known for the packed copy',
+          (after[SECUREDELETE_EXE].get('status'), after[SECUREDELETE_EXE].get('malicious')) == ('COMPLETED', 3)
+          and after[FAKE_SVCHOST].get('status') == 'NOT_FOUND' and db.audit_logs.find_one({'action': 'THREAT_INTEL_AUTO_LOOKUP_SET', 'metadata.case_id': A}), after)
+    n = len(VT_REQUESTS)
+    _analyse(inv, E, {'modules': ['reputation']})
+    check('looking up again uses the cached answers (no new request)', len(VT_REQUESTS) == n, VT_REQUESTS[n:])
+    req('PUT', path, inv, {'auto_lookup': False})
+    t = post('/api/tags', inv, {'case_id': A, 'item_type': 'PROGRAM', 'item_id': sv['_id'], 'label': 'NOTABLE'}).json
+    check('a program can be tagged', 'Packed (UPX)' in ((t.get('snapshot') or {}).get('detail') or ''), t)
+    req('DELETE', f"/api/tags/{t.get('tag_id')}", inv)
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -3431,10 +3622,12 @@ def t_websocket():
 def t_misc():
     inv, A = C['INVESTIGATOR'], C['A']
     p = get('/api/threat-intel/providers', inv).json
-    check('providers report which have keys (none configured here)', p == {'virustotal': False, 'abuseipdb': False, 'otx': False, 'urlhaus': False}, p)
+    check('providers report which have keys (only VirusTotal here, pointed at the stand-in)', p == {'virustotal': True, 'abuseipdb': False, 'otx': False, 'urlhaus': False}, p)
     h = post(f"/api/threat-intel/hash/{hashlib.sha256(CLEANUP).hexdigest()}?case_id={A}", inv)
-    check('hash lookup without keys answers cleanly', h.status == 200, h)
-    note('hash lookup result without keys', json.dumps(h.json)[:300])
+    check('a manual hash lookup goes to the configured VirusTotal address and reports an unknown hash as not found', h.status == 200
+          and (h.json.get('virustotal') or {}).get('status') == 'NOT_FOUND'
+          and any(r_['path'].endswith(hashlib.sha256(CLEANUP).hexdigest()) for r_ in VT_REQUESTS), h)
+    note('manual hash lookup result', json.dumps(h.json)[:300])
     ip = post(f'/api/threat-intel/ip/203.0.113.7?case_id={A}', inv)
     check('IP lookup without keys answers cleanly', ip.status == 200, ip)
     dm = post(f'/api/threat-intel/domain/example.com?case_id={A}', inv, timeout=60)
@@ -3575,6 +3768,8 @@ def t_overview():
         'videos': q(f'/api/forensics/media?case_id={A}&kind=video&limit=1')['total'],
         'media_with_gps': q(f'/api/forensics/media?case_id={A}&gps=true&limit=1')['total'],
         'ocr_files': q(f'/api/forensics/media?case_id={A}&text=true&limit=1')['total'],
+        'programs': q(f'/api/forensics/executables?case_id={A}&limit=1')['total'],
+        'programs_flagged': q(f'/api/forensics/executables?case_id={A}&flagged=true&limit=1')['total'],
     }
     check('email attachments are counted', c.get('email_attachments') == 1, c.get('email_attachments'))
     diff = {k: (c.get(k), v) for k, v in exp.items() if c.get(k) != v}
@@ -3856,7 +4051,7 @@ PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
              t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_email, t_chat_cloud, t_browser_depth,
-             t_comms_samples, t_media, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_comms_samples, t_media, t_malware, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],
@@ -3865,6 +4060,7 @@ PHASES = {
 
 if __name__ == '__main__':
     t0 = time.time()
+    _start_vt_mock()
     selected = PHASES[PHASE]
     # DFIP_SECTIONS=07b,12b runs only those sections (by number prefix), after the sections every other one
     # builds on: sign-in (02), cases (04), the evidence upload (06) and its analysis (07). A section that needs

@@ -1,14 +1,16 @@
 """YARA scan, in-process (yara-python), of every executable, script, document and archive on the evidence.
 
 Candidates are chosen by their real content type (from the fileproc module), not their name, so a renamed
-executable is scanned too; deleted files are scanned as their content is on the disk now. Matches are leads for
-review, not conclusions.
+executable is scanned too; deleted files are scanned as their content is on the disk now. DFIP's own rules and every
+enabled rule set an administrator added (Administration -> Malware rules) are used, each set in its own namespace.
+Matches are leads for review, not conclusions.
 """
 from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..rulesets import compile_rules
 from ..source import TskImageSource, open_entry
 from .base import Module
 
@@ -24,7 +26,7 @@ class YaraModule(Module):
     name = 'yara'
     label = 'YARA scan'
     description = "Scans every executable, script, document and archive (chosen by content, deleted ones included) with DFIP's YARA rules."
-    version = '3'  # 2: in-process, chosen by content type, all users and deleted files; 3: archive members
+    version = '4'  # 2: in-process, chosen by content type, all users and deleted files; 3: archive members; 4: rule sets
     requires = ('fileproc',)
     follows = ('containers', 'email')  # archive members and email attachments are scanned too
     weight = 10
@@ -33,11 +35,14 @@ class YaraModule(Module):
     def run(self, ctx):
         ctx.count('files_scanned', 0)
         ctx.count('yara_matches', 0)
-        if not RULES_FILE.is_file():
-            ctx.warn('No YARA rules file; the scan was skipped')
+        sets = list(ctx.db['yara_rulesets'].find({'enabled': True}, {'set_id': 1, 'name': 1, 'sha256': 1, 'rules': 1}))
+        names = {s['set_id']: s['name'] for s in sets}
+        rules = compile_rules(RULES_FILE, sets)
+        ctx.set_fact('rulesets', [{'set_id': s['set_id'], 'name': s['name'], 'sha256': s.get('sha256'), 'rules': len(s.get('rules') or [])}
+                                  for s in sets])
+        if rules is None:
+            ctx.warn('No YARA rules; the scan was skipped')
             return
-        import yara
-        rules = yara.compile(filepath=str(RULES_FILE))
         candidates = list(ctx.db['fs_entries'].find(
             {'evidence_id': ctx.eid, 'pipeline': True, 'file_category': {'$in': list(CATEGORIES)}, 'size': {'$gt': 0}},
             {'path': 1, 'inode': 1, 'volume_id': 1, 'size': 1, 'deleted': 1, 'file_category': 1, 'container': 1}).sort('path', 1))
@@ -66,7 +71,8 @@ class YaraModule(Module):
             total_bytes += len(data)
             for m in matches:
                 hits.append({'artifact_id': str(uuid.uuid4()), 'case_id': ctx.case_id, 'evidence_id': ctx.eid,
-                             'type': 'MALWARE_INDICATOR', 'rule': m.rule, 'original_path': c['path'], 'inode': c['inode'],
+                             'type': 'MALWARE_INDICATOR', 'rule': m.rule, 'engine': 'YARA', 'ruleset': names.get(m.namespace, 'DFIP'),
+                             'ruleset_id': m.namespace if m.namespace in names else None, 'original_path': c['path'], 'inode': c['inode'],
                              'volume_id': c.get('volume_id'), 'deleted': bool(c.get('deleted')), 'file_category': c.get('file_category'),
                              'description': f'YARA rule {m.rule} matched {c["path"]}' + (' (deleted)' if c.get('deleted') else ''),
                              'timestamp': datetime.now(timezone.utc), 'source': 'YARA'})

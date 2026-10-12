@@ -155,6 +155,10 @@ def overview(case_id: str, u=Depends(current_user)):
         'videos': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'media.kind': 'video'}),
         'media_with_gps': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'media.gps': {'$exists': True}}),
         'ocr_files': db['fs_entries'].count_documents({'evidence_id': {'$in': eids}, 'ocr.text': {'$exists': True}}),
+        'programs': art.count_documents({'case_id': case_id, 'type': 'EXECUTABLE'}),
+        'programs_flagged': art.count_documents({'case_id': case_id, 'type': 'EXECUTABLE', 'score': {'$gte': 3}}),
+        'clamav_detections': art.count_documents({'case_id': case_id, 'type': 'MALWARE_INDICATOR', 'source': 'CLAMAV'}),
+        'reputation_malicious': art.count_documents({'case_id': case_id, 'type': 'EXECUTABLE', 'vt.malicious': {'$gt': 0}}),
         'usb_devices': db['usb_artifacts'].count_documents({'case_id': case_id}),
         'programs_run': art.count_documents({'case_id': case_id, 'type': 'PROGRAM_RUN'}),
         'recent_files': art.count_documents({'case_id': case_id, 'type': 'RECENT_FILE'}),
@@ -221,6 +225,29 @@ def dashboard(case_id: str, tz: str = 'UTC', scope: str = 'activity', evidence_i
     return {'tz': tz, 'scope': scope, 'types': types, 'heatmap': heat, 'per_day': days,
             'top_domains': dash.top_domains(db, case_id, evidence_id), 'file_types': dash.file_types(db, eids),
             'usb_spans': _plain(dash.usb_spans(db, case_id, evidence_id))}
+
+
+class ThreatIntelIn(BaseModel):
+    auto_lookup: bool
+
+
+@r.put('/{case_id}/threat-intel')
+def threat_intel_setting(case_id: str, body: ThreatIntelIn, u=Depends(require_write('CASE_UPDATE'))):
+    """Turns automatic VirusTotal lookups of this case's program hashes on or off (off unless an investigator turns them
+    on). Only SHA-256 hashes are sent. Turning them on looks up the programs of the evidence already analysed."""
+    from ..core.config import settings
+    from ..tasks import _rematch_all
+    c = get_case(case_id, u)
+    if not c:
+        raise HTTPException(404, 'Case not found or access denied')
+    now = datetime.now(timezone.utc)
+    setting = {'auto_lookup': body.auto_lookup, 'set_by': str(u['_id']), 'set_by_name': u.get('name'), 'set_at': now}
+    get_db()['cases'].update_one({'case_id': case_id}, {'$set': {'threat_intel': setting, 'updated_at': now}})
+    jobs = _rematch_all(str(u['_id']), 'reputation', case_id) if body.auto_lookup else []
+    log(u, 'THREAT_INTEL_AUTO_LOOKUP_SET', 'case', c['_id'], {'case_id': case_id, 'auto_lookup': body.auto_lookup,
+                                                              'key_configured': bool(settings.virustotal_api_key)})
+    manager.emit_sync('CASE_UPDATED', {'case_id': case_id})
+    return {'case_id': case_id, 'threat_intel': _plain(setting), 'key_configured': bool(settings.virustotal_api_key), 'jobs': jobs}
 
 
 class LegalHoldIn(BaseModel):

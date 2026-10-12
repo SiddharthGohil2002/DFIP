@@ -9,6 +9,7 @@ import { useApi } from '../lib/useApi';
 import type { Artifact, FsEntry } from '../lib/types';
 import { Badge, Button, Card, Empty, Hash, Loading, PageHeader, StatusBadge, useToast } from '../ui';
 import { FileDetails, HASH_KIND } from './Files';
+import { ProgramsCard } from './Programs';
 
 export function IndicatorsPage() {
   const { caseId, reloadOverview } = useCase();
@@ -49,7 +50,7 @@ export function IndicatorsPage() {
     <div className="stack">
       <PageHeader
         title="Indicators"
-        subtitle="Leads for the investigator to review, not conclusions: YARA signature matches, files in known-bad or notable hash sets, files whose name hides what they are or whose content is encrypted, rule-based activity patterns, and statistically unusual events."
+        subtitle="Leads for the investigator to review, not conclusions: YARA and ClamAV signature matches, programs that stand out, files in known-bad or notable hash sets, files whose name hides what they are or whose content is encrypted, rule-based activity patterns, and statistically unusual events."
       />
 
       <Card title="Hash set matches" subtitle="Files whose MD5, SHA-1 or SHA-256 is in a known-bad or notable hash set (Administration → Hash sets). Every copy is listed, deleted ones too." flush>
@@ -106,16 +107,19 @@ export function IndicatorsPage() {
       </Card>
       <FileDetails caseId={caseId} file={details} onClose={() => setDetails(null)} />
 
-      <Card title="Malware signature matches (YARA)" subtitle="Programs, scripts, documents and archives anywhere on the disk, chosen by their real type, are scanned with the server's YARA rules during analysis." flush>
+      <ProgramsCard />
+
+      <Card title="Malware signature matches (YARA and ClamAV)" subtitle="Programs, scripts, documents and archives anywhere on the disk, chosen by their real type, are scanned with DFIP's YARA rules, the rule sets and ClamAV databases added in Administration, during analysis." flush>
         {yara.loading && !yara.data ? <Loading /> : !yara.data?.data.length ? (
-          <Empty title="No YARA matches" text="No scanned file matched the rule set." />
+          <Empty title="No signature matches" text="No scanned file matched a YARA rule or a ClamAV signature." />
         ) : (
           <table className="table">
-            <thead><tr><th>Rule</th><th>File in image</th><th>Inode</th><th>Evidence</th></tr></thead>
+            <thead><tr><th>Engine</th><th>Rule or signature</th><th>File in image</th><th>Inode</th><th>Evidence</th></tr></thead>
             <tbody>
               {yara.data.data.map((m) => (
                 <tr key={m._id}>
-                  <td><Badge tone="danger">{m.rule}</Badge></td>
+                  <td className="small">{m.engine || (m.source === 'CLAMAV' ? 'ClamAV' : 'YARA')}</td>
+                  <td><Badge tone="danger">{m.rule}</Badge>{m.ruleset && m.ruleset !== 'DFIP' && <div className="tiny muted">{m.ruleset}</div>}</td>
                   <td className="cell-path mono small">{m.original_path}{m.deleted && <div><Badge tone="danger">DELETED</Badge></div>}</td>
                   <td className="mono small">{m.inode}</td>
                   <td className="mono small">{m.evidence_id}</td>
