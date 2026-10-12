@@ -1,6 +1,6 @@
 import {
   Activity, BarChart3, Monitor, Bookmark, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, Mail,
-  MessagesSquare, NotebookPen, ScanSearch, ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
+  MessagesSquare, NotebookPen, Images, ScanSearch, ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
 
@@ -79,6 +79,12 @@ export const NAV: NavGroup[] = [
         description: 'Skype messages, calls and file transfers, encrypted chat apps found, and files synced by OneDrive, Google Drive and Dropbox.',
         count: (c) => (c.chat_messages ?? 0) + (c.cloud_files ?? 0),
         countLabel: (c) => `${n(c.chat_messages ?? 0)} messages · ${n(c.chat_apps ?? 0)} apps · ${n(c.cloud_files ?? 0)} cloud files`,
+      },
+      {
+        to: '/app/media', label: 'Pictures and videos', icon: Images, tone: 'teal',
+        description: 'Every picture and video with its thumbnail, camera, date and GPS location on an offline map, video keyframes and text read in pictures.',
+        count: (c) => (c.pictures ?? 0) + (c.videos ?? 0),
+        countLabel: (c) => `${n(c.pictures ?? 0)} pictures · ${n(c.videos ?? 0)} videos · ${n(c.media_with_gps ?? 0)} with a location`,
       },
       {
         to: '/app/usb', label: 'USB devices', icon: Usb, tone: 'amber',

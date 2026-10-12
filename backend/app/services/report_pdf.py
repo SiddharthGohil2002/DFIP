@@ -241,6 +241,36 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
               for x in art.find(q).sort('last_used', -1).limit(MAX_ROWS)],
              [0.7, 1.3, 2.4, 0.5, 1.3, 1.3], 'No form history was found.', total=art.count_documents(q), heading=H3)
 
+    # Pictures and videos (modules media and ocr).
+    pv_title = T('Pictures and videos')
+    story.append(Paragraph(escape(pv_title), H2))
+    fs = db['fs_entries']
+    n_pic = fs.count_documents({'evidence_id': {'$in': eids}, 'media.kind': 'picture'})
+    n_vid = fs.count_documents({'evidence_id': {'$in': eids}, 'media.kind': 'video'})
+    story.append(Paragraph(f'{n_pic:,} pictures and {n_vid:,} videos were found by their content (deleted files, archive members and '
+                           'email attachments included). Times of pictures come from their camera metadata, made UTC with the offset '
+                           'or GPS time they record, else with the computer\'s time zone; the basis is given for each. Text in pictures '
+                           'and scanned PDFs was read by OCR, which can misread characters.', NOTE))
+    n = pv_title.split('.')[0]
+    q = {'evidence_id': {'$in': eids}, 'media.gps': {'$exists': True}}
+    _section(story, f'{n}.1 Pictures and videos with a location', ['File', 'Taken (UTC)', 'Camera', 'Latitude, longitude', 'Time basis'],
+             [[x['path'] + (' (deleted)' if x.get('deleted') else ''), x['media'].get('taken'), x['media'].get('camera'),
+               f"{x['media']['gps']['lat']:.5f}, {x['media']['gps']['lon']:.5f}", x['media'].get('taken_basis')]
+              for x in fs.find(q, {'path': 1, 'deleted': 1, 'media': 1}).sort('media.taken', -1).limit(MAX_ROWS)],
+             [2.6, 1.3, 1.1, 1.2, 1.5], 'No picture or video records a location.', total=fs.count_documents(q), heading=H3)
+    q = {'evidence_id': {'$in': eids}, 'media.kind': 'video'}
+    _section(story, f'{n}.2 Videos', ['File', 'Recorded (UTC)', 'Length', 'Size', 'Format', 'SHA-256'],
+             [[x['path'] + (' (deleted)' if x.get('deleted') else ''), x['media'].get('taken'),
+               f"{(x['media'].get('video') or {}).get('duration') or 0:.1f} s", x.get('size'),
+               f"{(x['media'].get('video') or {}).get('video_codec') or ''} {x['media'].get('width') or ''}x{x['media'].get('height') or ''}".strip(),
+               x.get('sha256')] for x in fs.find(q, {'path': 1, 'deleted': 1, 'media': 1, 'size': 1, 'sha256': 1}).sort('media.taken', -1).limit(MAX_ROWS)],
+             [2.4, 1.3, 0.6, 0.7, 1.0, 1.8], 'No videos were found.', mono_cols=(5,), total=fs.count_documents(q), heading=H3)
+    q = {'evidence_id': {'$in': eids}, 'ocr.text': {'$exists': True}}
+    _section(story, f'{n}.3 Text read in pictures and scans (OCR)', ['File', 'Pages', 'Text (beginning)'],
+             [[x['path'] + (' (deleted)' if x.get('deleted') else ''), x['ocr'].get('pages'), ' '.join(x['ocr']['text'].split())[:300]]
+              for x in fs.find(q, {'path': 1, 'deleted': 1, 'ocr': 1}).sort('path', 1).limit(MAX_ROWS)],
+             [2.4, 0.5, 4.5], 'No text was read in pictures or scans (OCR runs with the Full profile).', total=fs.count_documents(q), heading=H3)
+
     # Email (module email).
     mail_title = T('Email')
     story.append(Paragraph(escape(mail_title), H2))

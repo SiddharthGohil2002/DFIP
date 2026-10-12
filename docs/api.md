@@ -39,6 +39,11 @@ Recent additions:
 | `GET /api/forensics/email/messages/{id}/html` | The HTML body with inline pictures as `data:` URIs (up to 4 MiB) and `remote_references` (never loaded). The caller sanitises it before display. Audited |
 | `GET /api/forensics/chat-cloud?case_id&type&evidence_id&user&provider&conversation&files_only&search&skip&limit` | Chat and cloud records of one type: `CHAT_ACCOUNT`, `CHAT_CONTACT`, `CHAT_MESSAGE`, `CHAT_CALL`, `CHAT_FILE_TRANSFER`, `CHAT_APP` (detected apps, with `parsed` and `reason`), `CLOUD_ACCOUNT`, `CLOUD_FILE` (with `hash`, `hash_algorithm` and `same_content`: files on the evidence with the same SHA-1) |
 | `GET /api/forensics/chat-cloud/conversations?case_id&evidence_id` | Chat conversations with their message counts and first and last message times |
+| `GET /api/forensics/media?case_id&evidence_id&kind&gps&camera&deleted&source&text&search&skip&limit` | Pictures and videos (newest taken first): `kind` picture or video, `gps=true` with a location, `source` disk, archive or email, `text=true` with OCR text; each with `media` (size, format, camera, `exif`, `gps`, `taken`, `taken_local`, `taken_basis`, `video`, `frames`, `thumb`) |
+| `GET /api/forensics/media/cameras?case_id` | Cameras with how many items each took, and the first and last time |
+| `GET /api/forensics/media/locations?case_id&evidence_id` | Every picture and video with a GPS location |
+| `GET /api/forensics/media/{entry_id}` | One item with all its metadata and the full OCR text |
+| `GET /api/forensics/media/{entry_id}/thumb?frame` | The thumbnail (or keyframe `frame`) DFIP made, as a JPEG with `nosniff`, `attachment` and a sandbox CSP; audited (`FILE_CONTENT_VIEWED`, view `thumbnail` or `keyframe n`) |
 | `GET /api/forensics/user-activity/files?case_id` | The Jump List, Timeline, thumbnail cache, SRUM and search index files read, with their SHA-256 |
 | `GET /api/forensics/eventlogs/facets?case_id&evidence_id` | Channels, categories, event IDs and users with their record counts (for the filters) |
 | `GET /api/forensics/hash?case_id&digest` | Every file in the case with this MD5, SHA-1 or SHA-256, and recovered, carved and extracted copies with this SHA-256; 400 if the value is not a hash |

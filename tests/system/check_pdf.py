@@ -16,7 +16,8 @@ import re
 # Section titles in order; the numbers are checked to run 1, 2, 3, ... rather than listed, so adding a section
 # does not need every later number edited here.
 titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer and users', 'Deleted files', 'Recovered files',
-          'USB device history', 'Browser history', 'Browser downloads', 'Browser searches, bookmarks, logins and recovered history', 'Email',
+          'USB device history', 'Browser history', 'Browser downloads', 'Browser searches, bookmarks, logins and recovered history',
+          'Pictures and videos', 'Email',
           'Chat and cloud storage', 'Windows activity', 'Execution evidence', 'Folders browsed',
           'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives',
           'Jump lists, Timeline, thumbnails, SRUM and search index', 'NTFS: timestomping, alternate data streams and USN journal',
@@ -43,6 +44,11 @@ check('browser, email, chat and cloud sections have their subsections',
 check('browser depth listed: a recovered search, the deleted upload page, the bookmark folder, the saved login, the private address typed',
       all(x in flat for x in ('how to permanently delete files from usb', 'filetransfer.example.net/d/7Hq2xK', 'bar/tools',
                               'filetransfer.example.net/login', 'alice.private@mailbox.example', 'WAL frame 1')))
+subs = [m.group(1) for m in re.finditer(r'^\s*\d+\.\d+ (Pictures and videos with a location|Videos|Text read in pictures and scans \(OCR\))', a, re.M)]
+check('Pictures and videos has its three subsections', subs == ['Pictures and videos with a location', 'Videos', 'Text read in pictures and scans (OCR)'])
+check('pictures and videos listed: the GPS photo and the video with their positions, the camera, the text OCR read',
+      all(x in flat for x in ('IMG_20260901_101032.jpg', '42.36010, -71.05890', 'Google Pixel 8', 'VID_20260901_101800.mp4', '3.0 s',
+                              'PAYROLL EXPORT', 'PAYMENT INSTRUCTION')))
 check('no saved password, encrypted or not, is in the report', 'password_value' not in flat and 'encryptedPassword' not in flat)
 check('email listed: the Thunderbird folders, the export sent home with its attachment, the deleted reply',
       all(x in flat for x in ('Thunderbird', 'backup', 'Re: the list', '(deleted)', 'alice.private@mailbox.')))

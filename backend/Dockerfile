@@ -4,6 +4,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     sleuthkit libewf2 ewf-tools libimage-exiftool-perl tshark yara binutils file ca-certificates \
     testdisk scalpel tzdata tzdata-legacy poppler-utils 7zip regripper pff-tools sqlite3 \
+    ffmpeg tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system dfip && useradd --system --gid dfip --uid 10001 dfip
 COPY requirements.txt .

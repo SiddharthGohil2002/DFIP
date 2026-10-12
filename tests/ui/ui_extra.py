@@ -200,6 +200,38 @@ with sync_playwright() as p:
     expect(page.locator('tr', has_text='filetransfer.example.net/login').get_by_text('SAVED (ENCRYPTED)')).to_be_visible()
     check('browser: the 4 deleted visits with where each was found, 3 recovered searches, saved logins without passwords', True)
 
+    print('== pictures and videos')
+    page.get_by_role('link', name='Pictures and videos').first.click()
+    expect(page.locator('svg.world-map circle.world-point')).to_have_count(2)
+    photo = page.get_by_role('button', name='Open IMG_20260901_101032.jpg')
+    expect(photo.get_by_text('GPS', exact=True)).to_be_visible()
+    expect(photo.locator('img')).to_have_js_property('complete', True)
+    loaded = photo.locator('img').evaluate('(i) => i.naturalWidth')
+    check('gallery: the photo with its GPS badge and its thumbnail; the map shows the photo and the video', loaded == 320, loaded)
+    page.screenshot(path=f'{OUT}/x9-media.png', full_page=True)
+    photo.click()
+    d = page.get_by_role('dialog')
+    expect(d).to_contain_text('offset -04:00 in the picture')
+    expect(d).to_contain_text('Google Pixel 8')
+    osm = d.get_by_role('link', name=re.compile('Open in OpenStreetMap'))
+    check('details: when it was taken and on what basis, the camera, and OpenStreetMap only as a link the user chooses',
+          osm.get_attribute('href') == 'https://www.openstreetmap.org/?mlat=42.3601&mlon=-71.0589#map=16/42.3601/-71.0589'
+          and osm.get_attribute('target') == '_blank' and 'noopener' in (osm.get_attribute('rel') or ''), osm.get_attribute('href'))
+    page.keyboard.press('Escape')
+    page.get_by_role('tab', name=re.compile(r'^Videos')).click()
+    page.get_by_role('button', name='Open VID_20260901_101800.mp4').click()
+    frames = page.get_by_role('dialog').locator('.keyframes img')
+    expect(frames).to_have_count(3)
+    expect(page.get_by_role('dialog')).to_contain_text('Keyframes (scene change)')
+    check('a video opens with its three keyframes', True)
+    page.screenshot(path=f'{OUT}/x10-video.png')
+    page.keyboard.press('Escape')
+    requests_out = []
+    page.on('request', lambda r: requests_out.append(r.url) if 'openstreetmap' in r.url or 'tile' in r.url else None)
+    page.get_by_role('tab', name=re.compile(r'^With a location')).click()
+    expect(page.locator('.media-card')).to_have_count(2)
+    check('the map and gallery load nothing from map servers', not requests_out, requests_out)
+
     print('== bad session')
     page.evaluate("() => { sessionStorage.setItem('dfip_token', 'garbage'); sessionStorage.setItem('dfip_refresh', 'garbage'); }")
     page.goto(BASE + '/app/timeline')
@@ -302,7 +334,7 @@ with sync_playwright() as p:
         sign_in(page, 'investigator@dfip.local')
         expect(page.get_by_text('Investigation functions')).to_be_visible()
         bad = []
-        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/usb', '/app/reports', '/app/custody'):
+        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/usb', '/app/reports', '/app/custody'):
             page.goto(BASE + path)
             page.wait_for_load_state('networkidle')
             sw = page.evaluate('document.documentElement.scrollWidth')

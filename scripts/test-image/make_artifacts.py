@@ -940,6 +940,112 @@ def comms_files():
     chat_cloud_files()
 
 
+# ---------------------------------------------------------------------------------------------------- Phase 10
+# Pictures and videos. The phone photo of the SanDisk drive on alice's desk (EXIF: Pixel 8, taken 10:10:32 local with its
+# offset -04:00, GPS at the office), an earlier photo without an offset (its time is local, read with the computer's zone),
+# the whiteboard with the plan written on it (for OCR), a scanned payment instruction (an image-only PDF, for OCR and found
+# data), and a 3-second video in three scenes with a creation time and a location.
+PHOTO_GPS = {'path': 'Users/alice/Pictures/IMG_20260901_101032.jpg', 'make': 'Google', 'model': 'Pixel 8',
+             'local': '2026:09:01 10:10:32', 'offset': '-04:00', 'taken': utc(2026, 9, 1, 14, 10, 32),
+             'lat': 42.3601, 'lon': -71.0589, 'alt': 12.5, 'size': (1024, 768)}
+PHOTO_LOCAL = {'path': 'Users/alice/Pictures/IMG_20260830_181500.jpg', 'make': 'Google', 'model': 'Pixel 8',
+               'local': '2026:08:30 18:15:00', 'taken': utc(2026, 8, 30, 22, 15), 'size': (800, 600)}
+WHITEBOARD_TEXT = ['PAYROLL EXPORT -> USB', 'WIPE AFTER UPLOAD']
+SCAN_LINES = ['PAYMENT INSTRUCTION', 'Beneficiary: A. Example', 'IBAN: GB33 BUKB 2020 1555 5555 55', 'Reference: September payroll']
+SCAN_IBAN = 'GB33BUKB20201555555555'
+VIDEO = {'path': 'Users/alice/Videos/VID_20260901_101800.mp4', 'recorded': utc(2026, 9, 1, 14, 18), 'duration': 3,
+         'size': (320, 240), 'location': '+42.3601-071.0589+012.500/', 'scenes': ('testsrc', 'smptebars', 'red')}
+FONT = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+
+
+def _font(size):
+    from PIL import ImageFont
+    return ImageFont.truetype(FONT, size)
+
+
+def _rational(value):
+    deg = int(value)
+    minutes = int((value - deg) * 60)
+    seconds = round(((value - deg) * 60 - minutes) * 60 * 100)
+    return ((deg, 1), (minutes, 1), (seconds, 100))
+
+
+def photo(spec, gps=True) -> bytes:
+    import piexif
+    from PIL import Image, ImageDraw
+    w, h = spec['size']
+    img = Image.new('RGB', (w, h), (139, 108, 66))  # a wooden desk
+    d = ImageDraw.Draw(img)
+    d.rectangle((w * 0.35, h * 0.42, w * 0.62, h * 0.55), fill=(196, 22, 28))   # the drive
+    d.rectangle((w * 0.62, h * 0.45, w * 0.70, h * 0.52), fill=(190, 190, 190))  # its connector
+    d.text((w * 0.37, h * 0.45), 'SanDisk', fill=(255, 255, 255), font=_font(int(h * 0.04)))
+    zeroth = {piexif.ImageIFD.Make: spec['make'], piexif.ImageIFD.Model: spec['model'], piexif.ImageIFD.Software: 'HDR+ 1.0',
+              piexif.ImageIFD.Orientation: 1}
+    exif = {piexif.ExifIFD.DateTimeOriginal: spec['local'], piexif.ExifIFD.PixelXDimension: w, piexif.ExifIFD.PixelYDimension: h}
+    if spec.get('offset'):
+        exif[piexif.ExifIFD.OffsetTimeOriginal] = spec['offset']
+    gps_ifd = {}
+    if gps and 'lat' in spec:
+        t = spec['taken']
+        gps_ifd = {piexif.GPSIFD.GPSLatitudeRef: 'N' if spec['lat'] >= 0 else 'S', piexif.GPSIFD.GPSLatitude: _rational(abs(spec['lat'])),
+                   piexif.GPSIFD.GPSLongitudeRef: 'E' if spec['lon'] >= 0 else 'W', piexif.GPSIFD.GPSLongitude: _rational(abs(spec['lon'])),
+                   piexif.GPSIFD.GPSAltitudeRef: 0, piexif.GPSIFD.GPSAltitude: (int(spec['alt'] * 10), 10),
+                   piexif.GPSIFD.GPSDateStamp: t.strftime('%Y:%m:%d'), piexif.GPSIFD.GPSTimeStamp: ((t.hour, 1), (t.minute, 1), (t.second, 1))}
+    buf = io.BytesIO()
+    img.save(buf, 'JPEG', quality=85, exif=piexif.dump({'0th': zeroth, 'Exif': exif, 'GPS': gps_ifd}))
+    return buf.getvalue()
+
+
+def whiteboard_png() -> bytes:
+    from PIL import Image, ImageDraw
+    img = Image.new('RGB', (1280, 440), (246, 246, 242))
+    d = ImageDraw.Draw(img)
+    for y in (310, 340, 370):
+        d.line((60, y, 1200, y + 10), fill=(60, 110, 200), width=4)
+    d.text((60, 70), WHITEBOARD_TEXT[0], fill=(20, 20, 20), font=_font(64))
+    d.text((60, 170), WHITEBOARD_TEXT[1], fill=(170, 20, 20), font=_font(48))
+    buf = io.BytesIO()
+    img.save(buf, 'PNG')
+    return buf.getvalue()
+
+
+def scan_pdf() -> bytes:
+    from PIL import Image, ImageDraw
+    page = Image.new('L', (1240, 1754), 250)  # A4 at 150 dpi, greyscale, like a scanner's output
+    d = ImageDraw.Draw(page)
+    y = 160
+    for i, line in enumerate(SCAN_LINES):
+        d.text((120, y), line, fill=15, font=_font(56 if i == 0 else 40))
+        y += 130 if i == 0 else 90
+    buf = io.BytesIO()
+    page.save(buf, 'PDF', resolution=150)
+    return buf.getvalue()
+
+
+def video(dest: Path):
+    import subprocess
+    w, h = VIDEO['size']
+    srcs = {'testsrc': f'testsrc=size={w}x{h}:rate=25:duration=1', 'smptebars': f'smptebars=size={w}x{h}:rate=25:duration=1',
+            'red': f'color=c=red:size={w}x{h}:rate=25:duration=1'}
+    args = ['ffmpeg', '-v', 'error', '-y']
+    for s in VIDEO['scenes']:
+        args += ['-f', 'lavfi', '-i', srcs[s]]
+    n = len(VIDEO['scenes'])
+    args += ['-filter_complex', ''.join(f'[{i}:v]' for i in range(n)) + f'concat=n={n}:v=1:a=0[v]', '-map', '[v]',
+             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-g', '25', '-bf', '0',
+             '-metadata', 'creation_time=' + VIDEO['recorded'].strftime('%Y-%m-%dT%H:%M:%S.000000Z'),
+             '-metadata', 'location=' + VIDEO['location'], '-movflags', '+faststart', str(dest)]
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(args, check=True)
+
+
+def media_files():
+    write(PHOTO_GPS['path'], photo(PHOTO_GPS))
+    write(PHOTO_LOCAL['path'], photo(PHOTO_LOCAL, gps=False))
+    write('Users/alice/Documents/scan-payment-instruction.pdf', scan_pdf())
+    video(OUT / VIDEO['path'])
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     write('Windows/INF/setupapi.dev.log', SETUPAPI.replace('\n', '\r\n'))
@@ -953,7 +1059,7 @@ def main():
     write('Users/alice/Documents/payroll-export.csv', PAYROLL)
     write('Users/alice/Downloads/cleanup.ps1', CLEANUP_PS1)
     windows_activity()
-    write('Users/alice/Pictures/whiteboard.png', png())
+    write('Users/alice/Pictures/whiteboard.png', whiteboard_png())
     write('Users/alice/Documents/offer-letter.pdf', pdf())
     hidden_files()
     content_files()
@@ -961,6 +1067,7 @@ def main():
     event_logs()
     user_activity_files()
     comms_files()
+    media_files()
     print(PREFETCH_NAME)
 
 

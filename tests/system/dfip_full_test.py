@@ -506,13 +506,13 @@ def t_analysis():
 
 
 STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc',
-                    'email', 'chat_cloud', 'hash_match', 'yara']
+                    'email', 'chat_cloud', 'media', 'hash_match', 'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
 ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc', 'containers',
-               'email', 'chat_cloud', 'hash_match', 'yara', 'content', 'unallocated', 'found_data']
+               'email', 'chat_cloud', 'media', 'ocr', 'hash_match', 'yara', 'content', 'unallocated', 'found_data']
 # What re-reading the file system index refreshes on evidence analysed with the standard profile.
 AFTER_FS_INDEX = ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'browser_depth', 'fileproc', 'email', 'chat_cloud',
-                  'hash_match', 'yara']
+                  'media', 'hash_match', 'yara']
 
 
 def _ids(db, col, q):
@@ -1570,7 +1570,7 @@ def t_containers():
     j = _analyse(inv, E, {'modules': ['containers', 'unallocated']})
     s = (j.get('result') or {}).get('summary') or {}
     check('the new modules run, and the modules that read their output are refreshed',
-          j.get('status') == 'COMPLETED' and s.get('plan') == ['containers', 'chat_cloud', 'hash_match', 'yara', 'content', 'unallocated', 'found_data'],
+          j.get('status') == 'COMPLETED' and s.get('plan') == ['containers', 'chat_cloud', 'media', 'hash_match', 'yara', 'content', 'unallocated', 'found_data'],
           (j.get('status'), s.get('plan'), j.get('error')))
     # Archive and document members (email attachments are members too, from the email module: see 12m).
     members = {x['path']: x for x in db.fs_entries.find({'evidence_id': E, 'container': {'$exists': True}, 'container.kind': {'$ne': 'email'}})}
@@ -2963,6 +2963,113 @@ def t_comms_samples():
     note('recovered rows in real samples', [(r['browser'], r['url'][:80], r['recovered_from']) for r in rec][:10])
 
 
+# Phase 10 ground truth: make_artifacts.py's PHOTO_GPS, PHOTO_LOCAL, WHITEBOARD_TEXT, SCAN_LINES and VIDEO.
+PHOTO_GPS = '/Users/alice/Pictures/IMG_20260901_101032.jpg'
+PHOTO_LOCAL = '/Users/alice/Pictures/IMG_20260830_181500.jpg'
+WHITEBOARD = '/Users/alice/Pictures/whiteboard.png'
+SCAN_PDF = '/Users/alice/Documents/scan-payment-instruction.pdf'
+VIDEO_MP4 = '/Users/alice/Videos/VID_20260901_101800.mp4'
+
+
+@section('12q Pictures and videos (vs Pillow on the files in the image, ffprobe, and the text drawn on them)')
+def t_media():
+    from PIL import Image
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    db = mongo()
+    mods = get(f'/api/evidence/{E}', inv).json['modules']
+    check('the pictures and videos module ran with the standard analysis', (mods.get('media') or {}).get('status') == 'COMPLETED', mods.get('media'))
+    items = {x['path']: x for x in get(f'/api/forensics/media?case_id={A}&evidence_id={E}&limit=500', inv).json['data']}
+    pictures = {}
+    for f in json.loads(IMG.with_suffix('.manifest.json').read_text())['files']:
+        try:
+            with Image.open(io.BytesIO(icat_bytes(f['path']))) as im:
+                pictures[f['path']] = (im.width, im.height)
+        except Exception:
+            continue
+    got = {p: (x['media'].get('width'), x['media'].get('height')) for p, x in items.items() if '!/' not in p and x['media']['kind'] == 'picture'}
+    check(f'every picture on the disk that Pillow opens ({len(pictures)}) is in the gallery with its size, renamed holiday.jpg aside (it is the payroll CSV)',
+          got == pictures and '/Users/alice/Pictures/holiday.jpg' not in items, (sorted(set(got) ^ set(pictures)), {p: (got.get(p), pictures.get(p)) for p in pictures if got.get(p) != pictures[p]}))
+    with Image.open(io.BytesIO(icat_bytes(PHOTO_GPS))) as im:
+        exif = im.getexif()
+        sub, gps = exif.get_ifd(0x8769), exif.get_ifd(0x8825)
+    dms = lambda v, ref: (1 if ref in ('N', 'E') else -1) * (float(v[0]) + float(v[1]) / 60 + float(v[2]) / 3600)
+    lat, lon = dms(gps[2], gps[1]), dms(gps[4], gps[3])
+    m = items.get(PHOTO_GPS, {}).get('media', {})
+    check('the phone photo: camera, the time it records with its offset made UTC (14:10:32), and the GPS position Pillow reads',
+          m.get('camera') == f'{exif[0x010F]} {exif[0x0110]}' == 'Google Pixel 8' and m.get('exif', {}).get('DateTimeOriginal') == sub[0x9003]
+          and iso(m.get('taken')) == utc(2026, 9, 1, 14, 10, 32) and m.get('taken_basis') == 'offset -04:00 in the picture'
+          and abs(m['gps']['lat'] - lat) < 1e-5 and abs(m['gps']['lon'] - lon) < 1e-5 and m['gps']['alt'] == float(gps[6]), m)
+    m2 = items.get(PHOTO_LOCAL, {}).get('media', {})
+    check("a photo without an offset or GPS: its local time read with the computer's time zone (18:15 EDT = 22:15 UTC)",
+          iso(m2.get('taken')) == utc(2026, 8, 30, 22, 15) and m2.get('taken_basis') == "computer's time zone (America/New_York)" and 'gps' not in m2, m2)
+    t = get(f"/api/forensics/media/{items[PHOTO_GPS]['_id']}/thumb", inv)
+    h = {k.lower(): v for k, v in t.headers.items()}
+    with Image.open(io.BytesIO(t.body)) as th:
+        size = th.size
+    check('the thumbnail is a JPEG DFIP made, 320 pixels across with the photo\'s proportions, served sandboxed and recorded in the audit log',
+          t.status == 200 and h.get('content-type') == 'image/jpeg' and size == (320, 240) and h.get('x-content-type-options') == 'nosniff'
+          and 'sandbox' in h.get('content-security-policy', '')
+          and db.audit_logs.find_one({'action': 'FILE_CONTENT_VIEWED', 'metadata.view': 'thumbnail', 'metadata.path': PHOTO_GPS}), (t.status, size, h))
+    local = Path(tempfile.mkdtemp()) / 'clip.mp4'
+    local.write_bytes(icat_bytes(VIDEO_MP4))
+    fp = json.loads(sh('ffprobe', '-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', str(local)).stdout)
+    stream = next(s for s in fp['streams'] if s['codec_type'] == 'video')
+    v = items.get(VIDEO_MP4, {}).get('media', {})
+    check('the video: length, size and codec as ffprobe gives them, recorded at 14:18:00 UTC, its location',
+          v.get('kind') == 'video' and v.get('video', {}).get('duration') == round(float(fp['format']['duration']), 3) == 3.0
+          and (v.get('width'), v.get('height'), v['video'].get('video_codec')) == (stream['width'], stream['height'], stream['codec_name']) == (320, 240, 'h264')
+          and iso(v.get('taken')) == utc(2026, 9, 1, 14, 18) and v.get('gps', {}).get('lat') == 42.3601 and v['gps'].get('lon') == -71.0589, v)
+    frames = v.get('frames') or []
+    colours = []
+    for i in range(len(frames)):
+        with Image.open(io.BytesIO(get(f"/api/forensics/media/{items[VIDEO_MP4]['_id']}/thumb?frame={i}", inv).body)) as fr:
+            colours.append(fr.convert('RGB').resize((1, 1)).getpixel((0, 0)))
+    check('three keyframes, one per scene (at 0, 1 and 2 seconds); the last one is the red scene',
+          [f['method'] for f in frames] == ['scene change'] * 3 and [round(f['time']) for f in frames] == [0, 1, 2]
+          and colours[-1][0] > 200 and colours[-1][1] < 60 and colours[-1][2] < 60, (frames, colours))
+    places = get(f'/api/forensics/media/locations?case_id={A}&evidence_id={E}', inv).json['data']
+    cams = get(f'/api/forensics/media/cameras?case_id={A}', inv).json['data']
+    check('locations: the photo and the video; cameras: the Pixel 8 with its two photos',
+          sorted(p['path'] for p in places) == sorted([PHOTO_GPS, VIDEO_MP4]) and [(c['camera'], c['items']) for c in cams] == [('Google Pixel 8', 2)], (places, cams))
+    q = lambda extra: get(f'/api/forensics/media?case_id={A}&evidence_id={E}&limit=1{extra}', inv).json['total']
+    logo = [p for p in items if p.startswith(f'{TB}/INBOX!/')]
+    check('filters: 1 video, 2 with a location, 2 by the Pixel 8, the inline email logo from emails, none deleted',
+          (q('&kind=video'), q('&gps=true'), q('&camera=Google%20Pixel%208'), q('&source=email'), q('&deleted=true')) == (1, 2, 2, len(logo), 0) and len(logo) == 1,
+          (q('&kind=video'), q('&gps=true'), q('&camera=Google%20Pixel%208'), q('&source=email'), q('&deleted=true')))
+    ev = [e for e in get(f'/api/forensics/timeline?case_id={A}&type=PICTURE_TAKEN,VIDEO_RECORDED&limit=50', inv).json['data'] if e['evidence_id'] == E]
+    check('timeline: the photo taken at 14:10:32 at its position, the video recorded at 14:18',
+          any(e['type'] == 'PICTURE_TAKEN' and iso(e['timestamp']) == utc(2026, 9, 1, 14, 10, 32) and '42.36010, -71.05890' in e['description'] for e in ev)
+          and any(e['type'] == 'VIDEO_RECORDED' and iso(e['timestamp']) == utc(2026, 9, 1, 14, 18) for e in ev), [e['description'] for e in ev])
+    other = items[PHOTO_GPS]['_id']
+    check('bad filters are refused (400); another investigator gets 404 for the gallery, an item and its thumbnail',
+          get(f'/api/forensics/media?case_id={A}&kind=audio', inv).status == 400 and get(f'/api/forensics/media?case_id={A}&source=cloud', inv).status == 400
+          and get(f'/api/forensics/media?case_id={A}', C['INV2']).status == 404 and get(f'/api/forensics/media/{other}', C['INV2']).status == 404
+          and get(f'/api/forensics/media/{other}/thumb', C['INV2']).status == 404 and get(f'/api/forensics/media/{other}/thumb?frame=3', inv).status == 404)
+
+    # Text in pictures and scans: the OCR module (full profile), then the content index and found data built on it.
+    j = _analyse(inv, E, {'modules': ['ocr']})
+    s = j.get('result', {}).get('summary', {})
+    check('OCR runs, and the content index and found data are rebuilt with its text', j['status'] == 'COMPLETED'
+          and s.get('plan') == ['ocr', 'content', 'found_data'], (j['status'], s.get('plan')))
+    ocr = {x['path']: x.get('ocr') for x in db.fs_entries.find({'evidence_id': E, 'ocr': {'$exists': True}}, {'path': 1, 'ocr': 1})}
+    wb = ' '.join((ocr.get(WHITEBOARD) or {}).get('text', '').split())
+    sc = ' '.join((ocr.get(SCAN_PDF) or {}).get('text', '').split())
+    check('OCR reads what is written on the whiteboard and on the scanned page (one page); typed PDFs and tiny pictures are not read',
+          'PAYROLL EXPORT' in wb and 'USB' in wb and 'WIPE AFTER UPLOAD' in wb and 'PAYMENT INSTRUCTION' in sc and 'GB33 BUKB 2020 1555 5555 55' in sc
+          and ocr[SCAN_PDF]['pages'] == 1 and '/Users/alice/Documents/offer-letter.pdf' not in ocr and not any(p.startswith(f'{TB}/INBOX!/') for p in ocr),
+          {p: (o.get('text') or '')[:80] for p, o in ocr.items()})
+    listed = {x['path'] for x in get(f'/api/forensics/media?case_id={A}&evidence_id={E}&text=true&limit=100', inv).json['data']}
+    check('the "text in pictures" list holds exactly the files OCR read, the scanned PDF included', listed == set(ocr) and SCAN_PDF in listed,
+          (sorted(listed), sorted(ocr)))
+    cs = get(f'/api/forensics/content-search?case_id={A}&mode=text&q={urllib.parse.quote("wipe after upload")}', inv).json
+    check('content search finds the words on the whiteboard photo', [(h['path'], h['method']) for h in cs['files']] == [(WHITEBOARD, 'ocr')], cs['files'])
+    iban = next((x for x in get(f'/api/forensics/entities?case_id={A}&kind=iban&limit=50', inv).json['data'] if x.get('value') == 'GB33BUKB20201555555555'), None)
+    check('found data: the IBAN on the scanned payment instruction (valid check digits), found through OCR',
+          iban and iban.get('first') == SCAN_PDF and iban.get('file_count') == 1, iban)
+    full = get(f"/api/forensics/media/{items[WHITEBOARD]['_id']}", inv).json
+    check("the whiteboard's details include the text OCR read", 'WIPE AFTER UPLOAD' in (full.get('ocr') or {}).get('text', ''), full.get('ocr'))
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -3464,6 +3571,10 @@ def t_overview():
         'chat_apps': q(f'/api/forensics/chat-cloud?case_id={A}&type=CHAT_APP&limit=1')['total'],
         'cloud_accounts': q(f'/api/forensics/chat-cloud?case_id={A}&type=CLOUD_ACCOUNT&limit=1')['total'],
         'cloud_files': q(f'/api/forensics/chat-cloud?case_id={A}&type=CLOUD_FILE&files_only=true&limit=1')['total'],
+        'pictures': q(f'/api/forensics/media?case_id={A}&kind=picture&limit=1')['total'],
+        'videos': q(f'/api/forensics/media?case_id={A}&kind=video&limit=1')['total'],
+        'media_with_gps': q(f'/api/forensics/media?case_id={A}&gps=true&limit=1')['total'],
+        'ocr_files': q(f'/api/forensics/media?case_id={A}&text=true&limit=1')['total'],
     }
     check('email attachments are counted', c.get('email_attachments') == 1, c.get('email_attachments'))
     diff = {k: (c.get(k), v) for k, v in exp.items() if c.get(k) != v}
@@ -3745,7 +3856,7 @@ PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
              t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_email, t_chat_cloud, t_browser_depth,
-             t_comms_samples, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_comms_samples, t_media, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

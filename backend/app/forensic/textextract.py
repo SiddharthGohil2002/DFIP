@@ -12,8 +12,8 @@ How a file's text is obtained depends on its real type (from file processing), n
   * everything else that may hold text (programs, databases, registry hives, shortcuts, legacy Office, unknown
     binary data): printable ASCII and UTF-16LE strings of at least 6 characters, each with its byte offset
 
-Pictures, video, audio, archives (their members are a later addition), empty files and encrypted files have no
-text here. Every file is read at most MAX_READ bytes deep and gives at most MAX_CHARS characters.
+Pictures and scanned PDFs give the text the OCR module read in them (stored on their file-index entry). Video, audio,
+archives (their members are indexed themselves), empty files and encrypted files have no text here. Every file is read at most MAX_READ bytes deep and gives at most MAX_CHARS characters.
 """
 from __future__ import annotations
 import io
@@ -43,7 +43,7 @@ SQLITE_TIMEOUT = 120
 @dataclass
 class Extracted:
     text: str
-    method: str                      # text | strings | pdf | ooxml | odf | rtf | sqlite | sqlite-wal
+    method: str                      # text | strings | pdf | ooxml | odf | rtf | sqlite | sqlite-wal | ocr
     encoding: str | None = None      # text: the encoding the bytes were decoded with
     bom: int = 0                     # text: bytes of byte-order mark before the text
     spans: list = field(default_factory=list)  # strings: [text_start, byte_start, bytes per character]
@@ -54,6 +54,8 @@ def method_for(entry: dict) -> str | None:
     """How to get text out of a file-index entry processed by fileproc, or None when it has none to give."""
     if entry.get('encryption') or entry.get('hash_error') or not entry.get('size'):
         return None
+    if (entry.get('ocr') or {}).get('text'):  # a picture or scan the OCR module read
+        return 'ocr'
     mime, cat = entry.get('mime') or '', entry.get('file_category') or ''
     if mime in RTF_MIMES:
         return 'rtf'

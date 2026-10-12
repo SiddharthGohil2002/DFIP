@@ -200,6 +200,10 @@ export interface CaseCounts {
   chat_apps?: number;
   cloud_accounts?: number;
   cloud_files?: number;
+  pictures?: number;
+  videos?: number;
+  media_with_gps?: number;
+  ocr_files?: number;
   renamed_files?: number;
   encrypted_files?: number;
   known_bad_files?: number;

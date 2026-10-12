@@ -12,9 +12,9 @@
 #   docker run --rm -v "$PWD:/repo" -w /repo python:3.11-slim sh scripts/test-image/make-test-image.sh
 set -eu
 
-apt-get update -qq >/dev/null && apt-get install -y -qq mtools dosfstools fdisk tzdata python3-hivex 7zip >/dev/null
+apt-get update -qq >/dev/null && apt-get install -y -qq mtools dosfstools fdisk tzdata python3-hivex 7zip ffmpeg fonts-dejavu-core >/dev/null
 # Encrypted ZIP and Office test files, and a PDF with an attachment.
-pip install -q --root-user-action=ignore pyzipper==0.4.0 msoffcrypto-tool==6.0.0 pypdf==6.19.0
+pip install -q --root-user-action=ignore pyzipper==0.4.0 msoffcrypto-tool==6.0.0 pypdf==6.19.0 pillow==11.3.0 piexif==1.1.3
 
 WORK=$(mktemp -d)
 TREE="$WORK/tree"
@@ -79,6 +79,10 @@ stamp '2026-09-01 14:15:20' '$Recycle.Bin/S-1-5-21-3623811015-3361044348-3030082
 stamp '2026-09-01 09:41:02' '$Recycle.Bin/S-1-5-21-3623811015-3361044348-30300820-1001/$R3K9D2A.csv'
 touch -d '2026-09-01 14:18:40 UTC' "$TREE"/Windows/Prefetch/SECUREDELETE.EXE-*.pf
 stamp '2026-08-31 17:22:00' 'Users/alice/Pictures/whiteboard.png'
+stamp '2026-09-01 14:10:33' 'Users/alice/Pictures/IMG_20260901_101032.jpg'
+stamp '2026-08-30 22:15:01' 'Users/alice/Pictures/IMG_20260830_181500.jpg'
+stamp '2026-09-01 14:18:04' 'Users/alice/Videos/VID_20260901_101800.mp4'
+stamp '2026-09-01 12:02:00' 'Users/alice/Documents/scan-payment-instruction.pdf'
 stamp '2026-08-30 11:00:00' 'Users/alice/Documents/offer-letter.pdf'
 # Hidden and encrypted files: the renamed copy keeps the export's own time, as a copy does.
 stamp '2026-09-01 09:41:02' 'Users/alice/Pictures/holiday.jpg'

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added — Pictures and videos
+- **Pictures and videos** (new `media` module, standard and full profiles, and a new page): every picture and video found by its content (renamed and deleted files, archive members and email attachments included) with a thumbnail, its camera, when it was taken (made UTC from the picture's own offset or GPS time, else the computer's time zone, with the basis shown), its GPS position on an offline world map, and for videos their length, format, creation time, location and a keyframe per scene.
+- **Text in pictures and scans** (new `ocr` module, full profile): tesseract reads pictures and scanned PDFs; the text is searchable and found data (account numbers, addresses) covers it.
+- Picture and video times on the timeline; filters by camera, location, deleted, where found; a report section; overview counts.
+- The backend image gains ffmpeg and tesseract. The test disk gains a GPS-tagged photo, a whiteboard with writing, a scanned payment instruction and a video in three scenes.
+
 ### Added — Email, chat, cloud storage and browser depth
 - **Email** (new `email` module and page): Outlook PST/OST (libpff), MBOX, Thunderbird folders and EML/MSG files, with folders, people, times, bodies and headers. Messages Thunderbird users deleted but that are still in the folder file are found and marked. Attachments become files in the file index, so hash sets, YARA and content search cover them. HTML email is shown sanitised in a sandbox that loads nothing from the internet (tracking pixels are counted, never fetched).
 - **Chat and cloud storage** (new `chat_cloud` module and page): Skype (classic) messages, calls, file transfers and contacts; Teams, WhatsApp, Telegram, Signal and other apps detected with where their (encrypted) data is; every file OneDrive and Google Drive for desktop synced, with OneDrive's SHA-1 linked to the same content on the disk; Dropbox accounts.
