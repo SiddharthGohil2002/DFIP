@@ -13,6 +13,7 @@ import { DeleteEvidenceModal } from './DeleteEvidence';
 import { AnalysisModulesCard, AnalysisOptionsModal } from './AnalysisModules';
 import { TimeZoneBanner } from './TimeZone';
 import { ImageFilesCard, VolumesCard } from './Volumes';
+import { Comments } from '../ui/Comments';
 
 const RUNNING = new Set(['QUEUED', 'RUNNING']);
 
@@ -216,6 +217,7 @@ export function EvidenceDetailPage() {
         )}
       </Card>
       {!e.demo && <AnalysisModulesCard evidence={e} running={running} canRun={can('ANALYSIS_RUN')} onQueued={queuedJob} />}
+      {!e.demo && <Card><Comments caseId={e.case_id ?? ''} targetType="EVIDENCE" targetId={e.evidence_id} title="Comments on this evidence" /></Card>}
     </div>
   );
 }

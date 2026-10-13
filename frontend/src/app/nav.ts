@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Monitor, Bookmark, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, Mail,
+  Activity, Archive, BarChart3, CalendarClock, ClipboardList, Monitor, Bookmark, Share2, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, Mail,
   MessagesSquare, NotebookPen, Images, Bug, History, Network, ScanSearch, Smartphone, SquareTerminal, ScrollText, Search, ShieldAlert, Usb, Users, Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -46,6 +46,12 @@ export const NAV: NavGroup[] = [
         to: '/app/evidence', label: 'Evidence', icon: HardDrive,
         description: 'Upload disk images, verify SHA-256 integrity and run the full analysis.',
         count: (c) => c.evidence, countLabel: (c) => `${n(c.evidence_analyzed)} of ${n(c.evidence)} analyzed`,
+      },
+      {
+        to: '/app/physical', label: 'Physical evidence', icon: Archive,
+        description: 'Seized devices and media: bag and seal numbers, storage, photos, check-out and check-in, and a custody form to print.',
+        count: (c) => c.physical_items ?? 0, alert: (c) => (c.physical_checked_out ?? 0) > 0,
+        countLabel: (c) => `${n(c.physical_items ?? 0)} items · ${n(c.physical_checked_out ?? 0)} checked out`,
       },
     ],
   },
@@ -164,6 +170,14 @@ export const NAV: NavGroup[] = [
         count: (c) => c.found_data ?? 0, countLabel: () => 'values found',
       },
       {
+        to: '/app/graph', label: 'Link graph', icon: Share2, tone: 'teal',
+        description: 'People, devices, files, programs, internet hosts and accounts, joined by what the records say they did.',
+      },
+      {
+        to: '/app/summary', label: 'Case summary', icon: ClipboardList, tone: 'teal',
+        description: 'What the records show, as numbered facts that cite them; optionally ask Claude about selected facts.',
+      },
+      {
         to: '/app/search', label: 'Keyword search', icon: Search,
         description: 'Search names and records, or the text inside files (with regular expressions).',
       },
@@ -175,7 +189,8 @@ export const NAV: NavGroup[] = [
       {
         to: '/app/findings', label: 'Findings', icon: NotebookPen, tone: 'amber',
         description: 'Record investigator observations linked to evidence.',
-        count: (c) => c.findings, countLabel: () => 'findings',
+        count: (c) => c.findings, alert: (c) => (c.findings_in_review ?? 0) > 0,
+        countLabel: (c) => `${n(c.findings)} findings · ${n(c.findings_in_review ?? 0)} in review · ${n(c.findings_approved ?? 0)} approved`,
       },
       {
         to: '/app/tagged', label: 'Tagged items', icon: Bookmark, tone: 'red',
@@ -201,6 +216,7 @@ export const NAV: NavGroup[] = [
       { to: '/app/admin/audit', label: 'Audit log', icon: ListChecks, permission: 'AUDIT_READ', noTile: true },
       { to: '/app/admin/hashsets', label: 'Hash sets', icon: Fingerprint, permission: 'HASHSET_MANAGE', noTile: true },
       { to: '/app/admin/malware-rules', label: 'Malware rules', icon: Bug, permission: 'RULES_MANAGE', noTile: true },
+      { to: '/app/admin/retention', label: 'Retention', icon: CalendarClock, permission: 'SYSTEM_MANAGE', noTile: true },
       { to: '/app/admin/system', label: 'System & tools', icon: Wrench, noTile: true },
     ],
   },

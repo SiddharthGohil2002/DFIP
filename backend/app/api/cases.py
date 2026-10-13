@@ -17,6 +17,20 @@ class CaseCreate(BaseModel):
     priority: str = 'MEDIUM'
     investigator_id: str | None = None
 
+class DeleteCase(BaseModel):
+    confirm: str = Field(min_length=1, max_length=60)
+    reason: str = Field(min_length=5, max_length=500)
+
+    @field_validator('reason', 'confirm', mode='before')
+    @classmethod
+    def strip(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+
+class Members(BaseModel):
+    member_ids: list[str] = Field(default_factory=list, max_length=200)
+
+
 class CaseUpdate(BaseModel):
     name: str | None = Field(None, min_length=2, max_length=120)
     description: str | None = None
@@ -83,7 +97,13 @@ async def update_case(case_id: str, x: CaseUpdate, u=Depends(require_write('CASE
         raise HTTPException(400, 'Invalid priority')
     
     updates['updated_at'] = datetime.now(timezone.utc)
-    col().update_one({'case_id': case_id}, {'$set': updates})
+    unset = {}
+    if 'status' in updates and updates['status'] != c.get('status'):
+        # Closing a case starts its retention period; reopening it ends it (services/retention.py).
+        from ..services.retention import on_status_change
+        extra, unset = on_status_change(c.get('status'), updates['status'], updates['updated_at'])
+        updates.update(extra)
+    col().update_one({'case_id': case_id}, {'$set': updates, **({'$unset': unset} if unset else {})})
     fresh = get_case(case_id, u)
     log(u, 'CASE_UPDATED', 'case', fresh['_id'], updates)
     
@@ -224,6 +244,10 @@ def overview(case_id: str, u=Depends(current_user)):
         'patterns': db['patterns'].count_documents({'case_id': case_id}),
         'anomalies_flagged': db['anomalies'].count_documents({'case_id': case_id, 'is_anomaly': True}),
         'findings': db['findings'].count_documents({'case_id': case_id}),
+        'findings_in_review': db['findings'].count_documents({'case_id': case_id, 'status': 'IN_REVIEW'}),
+        'findings_approved': db['findings'].count_documents({'case_id': case_id, 'status': 'APPROVED'}),
+        'physical_items': db['physical_items'].count_documents({'case_id': case_id}),
+        'physical_checked_out': db['physical_items'].count_documents({'case_id': case_id, 'status': 'CHECKED_OUT'}),
         'tags': db['tags'].count_documents({'case_id': case_id}),
         'reports': db['reports'].count_documents({'case_id': case_id}),
         'custody_events': db['chain_of_custody'].count_documents({'case_id': case_id}),
@@ -292,6 +316,110 @@ class LegalHoldIn(BaseModel):
         return v.strip() if isinstance(v, str) else v
 
 
+@r.get('/{case_id}/people')
+def people(case_id: str, u=Depends(current_user)):
+    """Who can see the case (its investigator, creator and members, and the administrators): the people a comment can
+    mention and a finding can be sent to for review (`can_review`)."""
+    from ..services.team import case_people
+    c = col().find_one({'case_id': case_id})
+    if not c or not get_case(case_id, u):
+        raise HTTPException(404, 'Case not found or access denied')
+    return {'data': case_people(c)}
+
+
+@r.put('/{case_id}/members')
+def set_members(case_id: str, x: Members, u=Depends(require_write('CASE_UPDATE'))):
+    """Shares the case with other users (besides its investigator and creator): they can then see it, comment and be
+    asked to review findings, as their role allows. Added members are notified; every change is audited."""
+    from ..services.team import case_people
+    c = get_case(case_id, u)
+    if not c:
+        raise HTTPException(404, 'Case not found or access denied')
+    ids = list(dict.fromkeys(i for i in x.member_ids if i))
+    found = {str(v['_id']) for v in get_db()['users'].find({'_id': {'$in': [ObjectId(i) for i in ids if ObjectId.is_valid(i)]}, 'status': 'ACTIVE'}, {'_id': 1})}
+    unknown = [i for i in ids if i not in found]
+    if unknown:
+        raise HTTPException(400, f'Not active users: {", ".join(unknown)}')
+    before = set(c.get('member_ids') or [])
+    added, removed = [i for i in ids if i not in before], sorted(before - set(ids))
+    now = datetime.now(timezone.utc)
+    col().update_one({'case_id': case_id}, {'$set': {'member_ids': ids, 'updated_at': now}})
+    log(u, 'CASE_MEMBERS_CHANGED', 'case', c['_id'], {'case_id': case_id, 'added': added, 'removed': removed})
+    manager.emit_sync('CASE_UPDATED', {'case_id': case_id, 'members': ids})
+    for uid in added:
+        if uid != str(u['_id']):
+            notify_sync(uid, 'Added to a case', f'{u.get("name")} added you to {case_id} ({c["name"]}).')
+    return {'member_ids': ids, 'added': added, 'removed': removed, 'people': case_people(col().find_one({'case_id': case_id}))}
+
+
+@r.delete('/{case_id}')
+def delete_case(case_id: str, body: DeleteCase, u=Depends(require_write('CASE_DELETE'))):
+    """Deletes a case's data (administrators, typically when its retention period has ended): every evidence item as
+    evidence deletion does, findings, comments, tags, reports, imported timelines and physical-evidence records. The
+    name must be typed to confirm. Refused under legal hold (423), while work runs on its evidence (409) and while
+    physical evidence is still held (409). The case remains as a record that it existed (`deleted`), with the chain of
+    custody and the audit trail."""
+    from .evidence import ACTIVE_JOB_STATES, _delete_one, _derived_tree
+    c = get_case(case_id, u)
+    if not c:
+        raise HTTPException(404, 'Case not found or access denied')
+    if body.confirm != case_id:
+        raise HTTPException(400, f'Type the case number ({case_id}) to confirm')
+    hold = c.get('legal_hold') or {}
+    if hold.get('active'):
+        raise HTTPException(423, f'{case_id} is under legal hold ({hold.get("set_by_name")}: {hold.get("reason")}); release the hold first')
+    db = get_db()
+    evidence = list(db['evidence'].find({'case_id': case_id}))
+    active = db['jobs'].find_one({'payload.evidence_id': {'$in': [e['evidence_id'] for e in evidence]}, 'status': {'$in': ACTIVE_JOB_STATES}},
+                                 {'job_id': 1, 'status': 1})
+    if active:
+        raise HTTPException(409, f"{active['job_id']} is {active['status'].lower()}; wait for it or cancel it first")
+    held = [p['item_id'] for p in db['physical_items'].find({'case_id': case_id, 'status': {'$in': ['IN_STORAGE', 'CHECKED_OUT']}}, {'item_id': 1})]
+    if held:
+        raise HTTPException(409, f'Physical evidence is still held ({", ".join(held)}): release or dispose of it first, recording the custody')
+    reason = f'Case deleted: {body.reason}'
+    done, removed, warnings = [], 0, []
+    derived = {d['evidence_id'] for e in evidence for d in _derived_tree(db, e['evidence_id'])}
+    for e in sorted(evidence, key=lambda e: e['evidence_id'] not in derived):  # derived copies before what they came from
+        if db['evidence'].find_one({'_id': e['_id']}, {'_id': 1}):
+            out = _delete_one(db, e, u, reason)
+            done.append(out['evidence_id'])
+            removed += out['files_removed']
+            warnings += out['warnings']
+    from pathlib import Path
+    from ..core.config import settings
+    counts = {'evidence': len(done)}
+    for name, q in (('findings', {'case_id': case_id}), ('comments', {'case_id': case_id}), ('tags', {'case_id': case_id}),
+                    ('timeline_events', {'case_id': case_id}), ('forensic_artifacts', {'case_id': case_id}), ('patterns', {'case_id': case_id}),
+                    ('anomalies', {'case_id': case_id}), ('ai_requests', {'case_id': case_id})):
+        counts[name] = db[name].delete_many(q).deleted_count
+    storage = Path(settings.storage_path).resolve()
+    for rep in db['reports'].find({'case_id': case_id}, {'path': 1}):
+        p = Path(rep.get('path') or '')
+        if p.is_file() and storage in p.resolve().parents:
+            p.unlink()
+            removed += 1
+    counts['reports'] = db['reports'].delete_many({'case_id': case_id}).deleted_count
+    from .timeline_imports import remove_import
+    counts['timeline_imports'] = 0
+    for imp in db['timeline_imports'].find({'case_id': case_id}):
+        remove_import(db, imp)
+        counts['timeline_imports'] += 1
+    import shutil
+    for p in db['physical_items'].find({'case_id': case_id}, {'item_id': 1}):
+        folder = storage / 'physical' / p['item_id']
+        if folder.is_dir():
+            shutil.rmtree(folder, ignore_errors=True)
+    counts['physical_items'] = db['physical_items'].delete_many({'case_id': case_id}).deleted_count
+    now = datetime.now(timezone.utc)
+    col().update_one({'case_id': case_id}, {'$set': {'deleted': True, 'status': 'DELETED', 'deleted_at': now, 'deleted_by': str(u['_id']),
+                                                     'deleted_by_name': u.get('name'), 'deletion_reason': body.reason, 'updated_at': now}})
+    log(u, 'CASE_DELETED', 'case', c['_id'], {'case_id': case_id, 'name': c.get('name'), 'reason': body.reason, 'removed': counts,
+                                               'files_removed': removed})
+    manager.emit_sync('CASE_DELETED', {'case_id': case_id})
+    return {'case_id': case_id, 'deleted': True, 'removed': counts, 'files_removed': removed, 'warnings': warnings}
+
+
 @r.post('/{case_id}/legal-hold')
 def legal_hold(case_id: str, body: LegalHoldIn, u=Depends(require_write('LEGAL_HOLD_MANAGE'))):
     """Places or releases a legal hold. While a case is held, its evidence cannot be deleted.
@@ -318,3 +446,19 @@ def legal_hold(case_id: str, body: LegalHoldIn, u=Depends(require_write('LEGAL_H
         notify_sync(fresh['investigator_id'], 'Legal hold placed' if body.active else 'Legal hold released',
                     f'{case_id} {"is now under" if body.active else "is no longer under"} legal hold ({u.get("name")}): {body.reason}')
     return _plain(fresh)
+
+
+@r.get('/{case_id}/graph')
+def graph(case_id: str, types: str | None = None, focus: str | None = None, u=Depends(current_user)):
+    """The case's link graph: people, devices, files, programs, internet hosts and accounts joined by what the records
+    say (each edge with up to three of its records). `types` limits the node types (comma separated); `focus` returns
+    one node and its neighbours."""
+    from ..services.graph import TYPES, view
+    if not get_case(case_id, u):
+        raise HTTPException(404, 'Case not found or access denied')
+    wanted = {t.strip() for t in (types or '').split(',') if t.strip()}
+    if wanted - set(TYPES):
+        raise HTTPException(400, f'types must be among {", ".join(TYPES)}')
+    if focus and len(focus) > 400:
+        raise HTTPException(400, 'focus is too long')
+    return view(case_id, wanted or None, focus)

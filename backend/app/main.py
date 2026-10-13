@@ -7,12 +7,12 @@ from .api import auth,cases,evidence,notifications,reports,admin,forensics,findi
 from .api import email as email_api
 from .api import media as media_api
 from .api import executables as executables_api, malware as malware_api, shadow as shadow_api, volumes as volumes_api, timeline_imports as timeline_imports_api, unix as unix_api
-from .api import network as network_api, phones as phones_api
+from .api import network as network_api, phones as phones_api, comments as comments_api, physical as physical_api, assistant as assistant_api
 from .ws import r as ws_router
 from datetime import datetime,timezone
 app=FastAPI(title='DFIP API',version='2.1.0',description='Digital Forensics Investigation Platform')
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in settings.cors_origins.split(',') if x.strip()],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
-for router in [auth.r,cases.r,evidence.r,notifications.r,reports.r,admin.r,forensics.r,content.r,registry.r,eventlogs.r,useractivity.r,ntfs.r,email_api.r,chatcloud.r,media_api.r,executables_api.r,malware_api.r,shadow_api.r,volumes_api.r,timeline_imports_api.r,unix_api.r,network_api.r,phones_api.r,findings.r,chain.r,jobs.r,threatintel.r,tags.r,hashsets.r,desktop_module.r]:app.include_router(router,prefix='/api')
+for router in [auth.r,cases.r,evidence.r,notifications.r,reports.r,admin.r,forensics.r,content.r,registry.r,eventlogs.r,useractivity.r,ntfs.r,email_api.r,chatcloud.r,media_api.r,executables_api.r,malware_api.r,shadow_api.r,volumes_api.r,timeline_imports_api.r,unix_api.r,network_api.r,phones_api.r,comments_api.r,physical_api.r,assistant_api.r,findings.r,chain.r,jobs.r,threatintel.r,tags.r,hashsets.r,desktop_module.r]:app.include_router(router,prefix='/api')
 app.include_router(ws_router)
 @app.on_event('startup')
 async def startup():
@@ -74,7 +74,11 @@ async def startup():
                                        ('shadow_files',[('evidence_id',1),('nk',1)],False),('shadow_files',[('case_id',1),('change',1)],False),
                                        ('volume_keys',[('key_id',1)],True),('volume_keys',[('evidence_id',1),('volume_id',1)],False),
                                        ('evidence',[('derived_from.evidence_id',1)],False),
-                                       ('timeline_events',[('import_id',1)],False),('timeline_imports',[('import_id',1)],True)]:
+                                       ('timeline_events',[('import_id',1)],False),('timeline_imports',[('import_id',1)],True),
+                                       ('comments',[('case_id',1),('target_type',1),('target_id',1),('created_at',1)],False),
+                                       ('physical_items',[('item_id',1)],True),('physical_items',[('case_id',1),('item_id',1)],False),
+                                       ('ai_requests',[('ai_request_id',1)],True),('ai_requests',[('case_id',1),('at',-1)],False),
+                                       ('cases',[('retention.due_at',1)],False)]:
             try:db[collection].create_index(keys,unique=unique)
             except Exception:pass
         # Tags made with older natural keys move to the current ones (idempotent).

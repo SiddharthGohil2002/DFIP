@@ -15,7 +15,7 @@ check('title and case', 'Digital Forensics Investigation Report' in a and exp['c
 import re
 # Section titles in order; the numbers are checked to run 1, 2, 3, ... rather than listed, so adding a section
 # does not need every later number edited here.
-titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer and users', 'Deleted files', 'Recovered files',
+titles = ['Evidence register', 'Chain of custody', 'Physical evidence', 'Analysis summary', 'Computer and users', 'Deleted files', 'Recovered files',
           'USB device history', 'Browser history', 'Browser downloads', 'Browser searches, bookmarks, logins and recovered history',
           'Pictures and videos', 'Email',
           'Chat and cloud storage', 'Windows activity', 'Execution evidence', 'Folders browsed',
@@ -57,13 +57,15 @@ check('chat and cloud listed: Skype messages and the transfer, WhatsApp not read
                               'holiday.jpg', r'C:\Users\alice\Dropbox')))
 check('evidence ID and full SHA-256', exp['evidence'] in a and exp['sha256'] in flat.replace(' ', '') )
 import re
-custody = ' '.join(a[a.index('2. Chain of custody'):a.index('3. Analysis summary')].split())
+custody = ' '.join(a[a.index('2. Chain of custody'):a.index('3. Physical evidence')].split())
 check('custody actions listed as readable labels', all(x in custody for x in ('Evidence registered', 'Evidence verified', 'Analysis integrity check', 'File recovered')))
 check('custody shows people by name, never a database ID', not re.search(r'\b[0-9a-f]{24}\b(?!…)', custody))
 check('deleted payroll export listed', 'payroll-export.csv' in flat)
 check('USB serials listed', 'AA951D0000007252' in flat and '4C530001230518109141' in flat)
 check('browser visits and downloads listed', all(x in flat for x in ('filetransfer.example.net', 'pastebin.example.com', 'SecureDelete.exe', 'archiver.zip')))
 check('YARA hit on cleanup.ps1 listed', 'cleanup.ps1' in flat)
+check('findings show their review status (the reviewed one approved by the administrator)', 'Payroll export copied to the SanDisk drive' in flat
+      and 'approved by' in flat)
 subs = [m.group(1) for m in re.finditer(r'^\s*\d+\.\d+ (Signature matches|Programs that stand out)', a, re.M)]
 check('Malware indicators has its two subsections', subs == ['Signature matches', 'Programs that stand out'])
 net_subs = ['Captures', 'HTTP requests and the files they carried', 'DNS lookups', 'TLS connections (server names)', 'Largest conversations']

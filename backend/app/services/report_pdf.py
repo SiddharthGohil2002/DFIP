@@ -151,6 +151,18 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
               for c in custody],
              [1.6, 0.9, 1.6, 1.6, 2.2], 'No custody events recorded.')
 
+    # Physical evidence (api/physical.py): the items seized, where they are and their custody.
+    items = list(db['physical_items'].find({'case_id': cid}).sort('item_id', 1))
+    _section(story, T('Physical evidence'), ['Item', 'Description', 'Bag / seal', 'Status', 'Kept at / held by', 'Custody actions', 'Images made'],
+             [[p['item_id'], ' '.join(x for x in (p.get('description'), f'({p["kind"]})' if p.get('kind') else None,
+                                                  f'serial {p["serial_number"]}' if p.get('serial_number') else None) if x),
+               ' / '.join(x or '—' for x in (p.get('bag_number'), p.get('seal_number'))), (p.get('status') or '').replace('_', ' ').lower(),
+               (p.get('holder') or {}).get('person') or p.get('location'),
+               '; '.join(f'{_fmt(e.get("at"))} {e.get("action", "").replace("_", " ").lower()}'
+                         + (' (seal broken)' if e.get('seal_intact') is False else '') for e in p.get('custody') or []),
+               p.get('evidence_ids')] for p in items],
+             [1.1, 1.9, 1.1, 0.8, 1.2, 2.2, 0.8], 'No physical evidence is recorded for this case.')
+
     story.append(Paragraph(T('Analysis summary'), H2))
     runs = []
     for e in evidence:
@@ -708,7 +720,10 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     if not findings:
         story.append(Paragraph('No findings recorded.', NOTE))
     for f in findings:
-        story.append(Paragraph(f'<b>{escape(f["title"])}</b> [{escape(f.get("severity", ""))}]', BODY))
+        status = (f.get('status') or 'DRAFT').replace('_', ' ').lower()
+        review = (f' by {f["reviewed_by_name"]} on {_fmt(f.get("reviewed_at"))}' if f.get('reviewed_by_name') and f.get('status') in ('APPROVED', 'CHANGES_REQUESTED')
+                  else '')
+        story.append(Paragraph(f'<b>{escape(f["title"])}</b> [{escape(f.get("severity", ""))}] <i>{escape(status + review)}</i>', BODY))
         story.append(Paragraph(escape(f.get('description', '')), BODY))
         if f.get('evidence_ids'):
             story.append(Paragraph('Evidence: ' + escape(', '.join(f['evidence_ids'])), NOTE))

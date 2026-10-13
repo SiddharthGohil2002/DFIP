@@ -459,3 +459,10 @@ TASKS_BY_TYPE = {
     'VOLUME_DECRYPT': volume_decrypt_task,
     'TIMELINE_IMPORT': timeline_import_task,
 }
+
+
+@celery_app.task(name='dfip.retention_check')
+def retention_check_task():
+    """Daily: notifies administrators of closed cases whose retention period has ended (nothing is deleted)."""
+    from .services.retention import run_check
+    return run_check()

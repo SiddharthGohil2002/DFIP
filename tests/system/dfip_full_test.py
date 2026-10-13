@@ -4424,6 +4424,317 @@ def t_tags():
     check('another investigator cannot list the case\'s tags (404)', get(f'/api/tags?case_id={A}', C['INV2']).status == 404)
 
 
+@section('16c Peer review of findings, case members and comments with mentions')
+def t_review():
+    inv, adm, an, A, E = C['INVESTIGATOR'], C['ADMIN'], C['ANALYST'], C['A'], C['E']
+    db = mongo()
+    people = lambda: get(f'/api/cases/{A}/people', inv).json['data']
+    m = req('PUT', f'/api/cases/{A}/members', inv, {'member_ids': [C['ANALYST_id']]})
+    check('the investigator adds the analyst to the case as a member; the analyst can then see it and is notified',
+          m.status == 200 and m.json['added'] == [C['ANALYST_id']] and get(f'/api/cases/{A}', an).status == 200
+          and any(n['title'] == 'Added to a case' and A in n['message'] for n in get('/api/notifications', an).json['data']), m)
+    pp = {p['user_id']: p for p in people()}
+    check('the case\'s people: investigator, member and administrators, with who may review findings',
+          pp[C['INVESTIGATOR_id']]['investigator'] and pp[C['ANALYST_id']]['member'] and not pp[C['ANALYST_id']]['can_review']
+          and pp[C['ADMIN_id']]['can_review'] and C['INV2_id'] not in pp, pp)
+    check('members can only be active users (400), and only by someone who may update the case (403)',
+          req('PUT', f'/api/cases/{A}/members', inv, {'member_ids': ['000000000000000000000000']}).status == 400
+          and req('PUT', f'/api/cases/{A}/members', an, {'member_ids': []}).status == 403)
+
+    f = post('/api/findings', inv, {'case_id': A, 'title': 'Payroll export copied to the SanDisk drive', 'severity': 'HIGH', 'evidence_ids': [E],
+                                    'description': 'payroll-export.csv was opened from E: at 14:14 UTC.'}).json
+    fid = f['_id']
+    e1 = patch(f'/api/findings/{fid}', inv, {'description': 'payroll-export.csv was opened from E: (CRUZER) at 14:14 UTC.'})
+    check('a new finding is a draft; the author edits it (version and history kept)',
+          f['status'] == 'DRAFT' and e1.status == 200 and e1.json['version'] == 2 and [h['action'] for h in e1.json['history']] == ['CREATED', 'EDITED']
+          and 'description' in e1.json['history'][-1]['changes'], e1)
+    check('someone else cannot edit it (403); a viewer cannot record or review findings (403); another investigator sees none of it (404)',
+          patch(f'/api/findings/{fid}', an, {'title': 'Changed by the analyst'}).status == 403
+          and post('/api/findings', C['VIEWER'], {'case_id': A, 'title': 'x', 'description': 'x'}).status == 403
+          and post(f'/api/findings/{fid}/review', C['VIEWER'], {'decision': 'APPROVED'}).status == 403
+          and get(f'/api/findings/{fid}', C['INV2']).status == 404)
+    check('a reviewer must be able to see the case and review findings (400); the author cannot review their own finding (403 later)',
+          post(f'/api/findings/{fid}/submit', inv, {'reviewer_id': C['ANALYST_id']}).status == 400
+          and post(f'/api/findings/{fid}/submit', inv, {'reviewer_id': C['INV2_id']}).status == 400)
+    s = post(f'/api/findings/{fid}/submit', inv, {'reviewer_id': C['ADMIN_id'], 'note': 'Please check the LNK times.'})
+    check('submitted for review to the administrator, who is notified; it is locked while in review (409)',
+          s.status == 200 and s.json['status'] == 'IN_REVIEW' and s.json['reviewer_id'] == C['ADMIN_id']
+          and any(n['title'] == 'Finding to review' for n in get('/api/notifications', adm).json['data'])
+          and patch(f'/api/findings/{fid}', inv, {'title': 'Edited in review'}).status == 409, s)
+    check('the author cannot review it (403); the analyst may not review findings (403)',
+          post(f'/api/findings/{fid}/review', inv, {'decision': 'APPROVED'}).status == 403
+          and post(f'/api/findings/{fid}/review', an, {'decision': 'APPROVED'}).status == 403)
+    check('asking for changes needs a note (400)', post(f'/api/findings/{fid}/review', adm, {'decision': 'CHANGES_REQUESTED'}).status == 400)
+    cr = post(f'/api/findings/{fid}/review', adm, {'decision': 'CHANGES_REQUESTED', 'note': 'Add the volume serial number.'})
+    check('the reviewer asks for changes; the author is notified with the note', cr.status == 200 and cr.json['status'] == 'CHANGES_REQUESTED'
+          and any(n['title'] == 'Changes requested on a finding' and 'volume serial' in n['message'] for n in get('/api/notifications', inv).json['data']), cr)
+    patch(f'/api/findings/{fid}', inv, {'description': 'payroll-export.csv was opened from E: (CRUZER, serial 6A3C-91F2) at 14:14 UTC.'})
+    post(f'/api/findings/{fid}/submit', inv, {'reviewer_id': C['ADMIN_id']})
+    ap = post(f'/api/findings/{fid}/review', adm, {'decision': 'APPROVED', 'note': 'Matches the shortcut.'})
+    check('after the change it is approved; approved findings cannot be edited or deleted (409)',
+          ap.status == 200 and ap.json['status'] == 'APPROVED' and ap.json['reviewed_by'] == C['ADMIN_id']
+          and patch(f'/api/findings/{fid}', inv, {'title': 'x' * 5}).status == 409 and req('DELETE', f'/api/findings/{fid}', inv, {'reason': 'no longer needed'}).status == 409, ap)
+    ro = post(f'/api/findings/{fid}/reopen', inv, {'reason': 'Add the event log time'})
+    check('the author reopens it (a reason is kept); the history has every step in order',
+          ro.status == 200 and ro.json['status'] == 'DRAFT' and [h['action'] for h in ro.json['history']] ==
+          ['CREATED', 'EDITED', 'SUBMITTED', 'CHANGES_REQUESTED', 'EDITED', 'SUBMITTED', 'APPROVED', 'REOPENED'], [h['action'] for h in ro.json['history']])
+    post(f'/api/findings/{fid}/submit', inv, {})
+    post(f'/api/findings/{fid}/review', adm, {'decision': 'APPROVED', 'note': ''})
+    acts = {a['action'] for a in db.audit_logs.find({'resource_id': fid})}
+    check('every step is in the audit log', {'FINDING_CREATED', 'FINDING_UPDATED', 'FINDING_SUBMITTED', 'FINDING_CHANGES_REQUESTED', 'FINDING_APPROVED',
+                                             'FINDING_REOPENED'} <= acts, acts)
+    d = post('/api/findings', an, {'case_id': A, 'title': 'Analyst draft to delete', 'description': 'x'}).json
+    rm = req('DELETE', f"/api/findings/{d['_id']}", an, {'reason': 'Recorded twice'})
+    check('a draft can be deleted by its author with a reason (audited with what it said)', rm.status == 200
+          and db.audit_logs.find_one({'action': 'FINDING_DELETED', 'resource_id': d['_id']})['metadata']['finding']['title'] == 'Analyst draft to delete', rm)
+
+    # Comments with mentions.
+    inv2_email = get('/api/auth/me', C['INV2']).json['email']
+    c1 = post('/api/comments', inv, {'case_id': A, 'target_type': 'FINDING', 'target_id': fid,
+                                     'text': f'@analyst@dfip.local please confirm; cc @{inv2_email} and @nobody@nowhere.example'})
+    check('a comment mentions the analyst (who can see the case: notified) and two people who cannot (not notified, reported back)',
+          c1.status == 200 and [m['email'] for m in c1.json['mentioned']] == ['analyst@dfip.local'] and sorted(c1.json['not_notified']) == sorted([inv2_email.lower(), 'nobody@nowhere.example'])
+          and any(n['title'] == 'You were mentioned' and A in n['message'] for n in get('/api/notifications', an).json['data'])
+          and not any(n['title'] == 'You were mentioned' for n in get('/api/notifications', C['INV2']).json['data']), c1)
+    tag_id = get(f'/api/tags?case_id={A}', inv).json['data'][0]['tag_id']
+    pay = get(f'/api/forensics/evidence/{E}/files?q=payroll-export.csv&limit=1', inv).json['data'][0]  # 16b re-analysed: files have new IDs
+    targets = {'FILE': pay['_id'], 'EVIDENCE': E, 'TAG': tag_id}
+    made = {t: post('/api/comments', an, {'case_id': A, 'target_type': t, 'target_id': i, 'text': f'Note on the {t.lower()}'}) for t, i in targets.items()}
+    check('files, evidence and tags take comments too; something from another case does not (404); a viewer cannot comment (403)',
+          all(r.status == 200 for r in made.values())
+          and post('/api/comments', inv, {'case_id': A, 'target_type': 'EVIDENCE', 'target_id': C['B_E'], 'text': 'x'}).status == 404
+          and post('/api/comments', C['VIEWER'], {'case_id': A, 'target_type': 'EVIDENCE', 'target_id': E, 'text': 'x'}).status == 403,
+          {t: r.status for t, r in made.items()})
+    cid = c1.json['_id']
+    check('only the author edits a comment (403 for others); deleting leaves a marker', patch(f'/api/comments/{cid}', an, {'text': 'hijacked'}).status == 403
+          and patch(f'/api/comments/{cid}', inv, {'text': 'Please confirm the serial, @analyst@dfip.local'}).status == 200
+          and req('DELETE', f"/api/comments/{made['EVIDENCE'].json['_id']}", an).status == 200
+          and [c['deleted'] for c in get(f'/api/comments?case_id={A}&target_type=EVIDENCE&target_id={E}', inv).json['data']] == [True])
+    lst = {x['_id']: x for x in get(f'/api/findings?case_id={A}', inv).json['data']}
+    check('the finding lists its comment count and status; other investigators cannot read the comments (404)',
+          lst[fid]['comment_count'] == 1 and lst[fid]['status'] == 'APPROVED' and get(f'/api/comments?case_id={A}', C['INV2']).status == 404, lst[fid])
+    acts = {a['action'] for a in db.audit_logs.find({'action': {'$in': ['COMMENT_ADDED', 'COMMENT_EDITED', 'COMMENT_DELETED', 'CASE_MEMBERS_CHANGED']},
+                                                    'metadata.case_id': A})}
+    check('comments and membership changes are audited', acts == {'COMMENT_ADDED', 'COMMENT_EDITED', 'COMMENT_DELETED', 'CASE_MEMBERS_CHANGED'}, acts)
+    r = req('PUT', f'/api/cases/{A}/members', inv, {'member_ids': []})
+    check('removing the member takes the case away from them again', r.status == 200 and r.json['removed'] == [C['ANALYST_id']]
+          and get(f'/api/cases/{A}', an).status == 404, r)
+    C['APPROVED_FINDING'] = fid
+
+
+def _jpeg(color=(30, 90, 200)) -> bytes:
+    from PIL import Image
+    b = io.BytesIO()
+    Image.new('RGB', (64, 48), color).save(b, 'JPEG')
+    return b.getvalue()
+
+
+def _photo_upload(token, item_id, data: bytes, name='photo.jpg'):
+    b = uuid.uuid4().hex
+    body = (f'--{b}\r\nContent-Disposition: form-data; name="caption"\r\n\r\nFront view\r\n'
+            f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() + data + f'\r\n--{b}--\r\n'.encode()
+    return req('POST', f'/api/physical/{item_id}/photos', token, raw=body, ctype=f'multipart/form-data; boundary={b}')
+
+
+@section('16d Physical evidence and its custody')
+def t_physical():
+    inv, an = C['INVESTIGATOR'], C['ANALYST']
+    db = mongo()
+    P = C['PHYS_CASE'] = post('/api/cases', inv, {'name': 'Seized laptop', 'priority': 'MEDIUM'}).json['case_id']
+    ev = upload(inv, P, b'\x00' * 4096 + b'seized-laptop-image', 'laptop.dd').json['evidence_id']
+    base = {'case_id': P, 'description': 'Dell Latitude 7420 laptop', 'kind': 'Laptop', 'make': 'Dell', 'model': 'Latitude 7420', 'serial_number': 'CN-0X1234',
+            'bag_number': 'B-0042', 'seal_number': 'S-100231', 'seized_at': '2026-09-03T09:15:00+00:00', 'seized_from': "Alice's desk, 4th floor",
+            'seized_by': 'DC Patel', 'location': 'Evidence room A, shelf 3', 'evidence_ids': [ev]}
+    r = post('/api/physical', inv, base)
+    item = r.json
+    iid = item.get('item_id')
+    check('an item is booked into storage with its bag and seal numbers, linked to its disk image; the first custody entry says where',
+          r.status == 200 and re.fullmatch(r'PHY-\d{4}', iid or '') and item['status'] == 'IN_STORAGE' and item['evidence_ids'] == [ev]
+          and [(c['action'], c['location'], c['seal_number']) for c in item['custody']] == [('RECEIVED', base['location'], 'S-100231')], r)
+    check('wrong kinds and evidence from another case are refused (400); a viewer or analyst cannot record items (403); another investigator sees none (404)',
+          post('/api/physical', inv, dict(base, kind='Toaster')).status == 400 and post('/api/physical', inv, dict(base, evidence_ids=[C['E']])).status == 400
+          and post('/api/physical', C['VIEWER'], base).status == 403 and post('/api/physical', an, base).status == 403
+          and get(f'/api/physical/{iid}', C['INV2']).status == 404 and get(f'/api/physical?case_id={P}', C['INV2']).status == 404)
+    jpg = _jpeg()
+    ph = _photo_upload(inv, iid, jpg)
+    got = get(f"/api/physical/{iid}/photos/{ph.json.get('photo_id')}", inv)
+    check('a photo is kept under its SHA-256 and served back byte for byte, never sniffed or rendered as a page',
+          ph.status == 200 and ph.json['sha256'] == hashlib.sha256(jpg).hexdigest() and got.body == jpg
+          and {k.lower(): v for k, v in got.headers.items()}.get('x-content-type-options') == 'nosniff'
+          and 'sandbox' in ({k.lower(): v for k, v in got.headers.items()}.get('content-security-policy') or ''), (ph, got.status, got.headers))
+    check('the same photo twice (409) and a file that is not a JPEG or PNG (415) are refused',
+          _photo_upload(inv, iid, jpg).status == 409 and _photo_upload(inv, iid, b'<html>not a photo</html>', 'x.jpg').status == 415)
+    cust = lambda body, tok=inv: post(f'/api/physical/{iid}/custody', tok, body)
+    check('custody actions must fit the item\'s state (409) and say what they need (400)',
+          cust({'action': 'CHECK_IN', 'location': 'Room A', 'seal_intact': True}).status == 409
+          and cust({'action': 'CHECK_OUT', 'person': 'Lab tech'}).status == 400 and cust({'action': 'LOSE'}).status == 400)
+    out = cust({'action': 'CHECK_OUT', 'person': 'J. Rivera (lab)', 'purpose': 'Imaging with a write blocker'})
+    o = get(f'/api/cases/{P}/overview', inv).json['counts']
+    check('checked out to the lab: the holder and purpose are kept, the overview counts it',
+          out.status == 200 and out.json['status'] == 'CHECKED_OUT' and out.json['holder']['person'] == 'J. Rivera (lab)'
+          and (o.get('physical_items'), o.get('physical_checked_out')) == (1, 1), out)
+    check('checking it back in needs the seal state (400)', cust({'action': 'CHECK_IN', 'location': 'Evidence room A, shelf 3'}).status == 400)
+    back = cust({'action': 'CHECK_IN', 'location': 'Evidence room B', 'seal_intact': False, 'seal_number': 'S-100777', 'notes': 'Resealed after imaging'})
+    check('checked in with a broken seal: resealed (new seal number), kept somewhere new, every step in the custody log and the audit log',
+          back.status == 200 and back.json['status'] == 'IN_STORAGE' and back.json['seal_number'] == 'S-100777' and back.json['location'] == 'Evidence room B'
+          and [c['action'] for c in back.json['custody']] == ['RECEIVED', 'CHECK_OUT', 'CHECK_IN'] and back.json['custody'][-1]['seal_intact'] is False
+          and {a['action'] for a in db.audit_logs.find({'resource_id': iid})} >= {'PHYSICAL_ITEM_CREATED', 'PHYSICAL_PHOTO_ADDED', 'PHYSICAL_CHECK_OUT', 'PHYSICAL_CHECK_IN'},
+          back)
+    ed = patch(f'/api/physical/{iid}', inv, {'notes': 'Charger in a separate bag (B-0043)', 'seal_number': 'S-1'})
+    check('the description can be corrected (audited with the change); the seal can only change through custody',
+          ed.status == 200 and ed.json['notes'].startswith('Charger') and ed.json['seal_number'] == 'S-100777', ed)
+    form = get(f'/api/physical/{iid}/form', inv)
+    text = ''
+    if form.status == 200:
+        (OUT / 'custody-form.pdf').write_bytes(form.body)
+        text = ' '.join(sh('pdftotext', str(OUT / 'custody-form.pdf'), '-').stdout.decode(errors='replace').split())
+    check('the custody form is a PDF with the item, its seals, the custody so far (the broken seal) and rows to sign; printing it is audited',
+          form.status == 200 and form.body[:5] == b'%PDF-' and all(x in text for x in (iid, 'Dell Latitude 7420 laptop', 'B-0042', 'S-100777', 'SEAL BROKEN',
+                                                                                     'Checked out', 'Released by (name, signature)'))
+          and db.audit_logs.find_one({'action': 'PHYSICAL_FORM_PRINTED', 'resource_id': iid}) is not None, text[:400])
+    post(f'/api/cases/{P}/legal-hold', inv, {'active': True, 'reason': 'Litigation expected'})
+    check('under legal hold the item cannot be released or destroyed (423), but can still be moved',
+          cust({'action': 'RELEASE', 'person': 'Owner'}).status == 423 and cust({'action': 'DESTROY', 'notes': 'Shredded'}).status == 423
+          and cust({'action': 'TRANSFER', 'location': 'Evidence room C'}).status == 200)
+    post(f'/api/cases/{P}/legal-hold', inv, {'active': False, 'reason': 'Litigation settled'})
+    rep = post(f'/api/reports?case_id={P}', inv)
+    rtext = ''
+    if rep.status == 200:
+        (OUT / 'report-physical.pdf').write_bytes(get(f"/api/reports/{rep.json['report_id']}/download", inv).body)
+        rtext = ' '.join(sh('pdftotext', str(OUT / 'report-physical.pdf'), '-').stdout.decode(errors='replace').split())
+    check("the case report's Physical evidence section lists the item, its seals and its custody", rep.status == 200
+          and all(x in rtext for x in ('Physical evidence', iid, 'B-0042', 'S-100777', 'check out', 'seal broken')), rtext[rtext.find('Physical evidence'):][:500])
+    C['PHYS_ITEM'] = iid
+
+
+@section('16e Link graph and case summary')
+def t_graph_summary():
+    from bson import ObjectId
+    inv, A = C['INVESTIGATOR'], C['A']
+    db = mongo()
+    g = get(f'/api/cases/{A}/graph', inv).json
+    nodes = {n['id']: n for n in g['nodes']}
+    edges = {(e['source'], e['kind'], e['target']): e for e in g['edges']}
+    want = [('computer:laptop-07', 'connected', 'usb:4C530001230518109141'), ('person:alice', 'opened', 'file:e:\\payroll-export.csv'),
+            ('file:e:\\payroll-export.csv', 'stored on', 'volume:6a3c-91f2'), ('person:alice', 'visited', 'domain:filetransfer.example.net'),
+            ('person:alice', 'deleted', 'file:c:\\users\\alice\\documents\\payroll-export.csv'), ('computer:laptop-07', 'ran', 'program:securedelete.exe'),
+            ('file:c:\\users\\alice\\downloads\\securedelete.exe', 'downloaded from', 'domain:tools.example.org')]
+    check('the graph joins the laptop, alice, the SanDisk drive, the payroll export on the CRUZER volume, the upload site and SecureDelete',
+          all(w in edges for w in want), [w for w in want if w not in edges])
+    refs = [(r, e) for e in g['edges'] for r in e['refs']]
+    bad = []
+    for r, e in refs:
+        doc = db[r['collection']].find_one({'_id': ObjectId(r['id'])}) if ObjectId.is_valid(r['id']) else None
+        if not doc or doc.get('case_id') != A:
+            bad.append((e['kind'], r))
+    lnk = db.forensic_artifacts.find_one({'_id': ObjectId(edges[want[1]]['refs'][0]['id'])})
+    check('every connection cites records of this case that exist (the "opened" one is the shortcut to E:\\payroll-export.csv)',
+          refs and not bad and lnk and lnk.get('target_path') == 'E:\\payroll-export.csv', bad[:5])
+    t = get(f'/api/cases/{A}/graph?types=person,domain', inv).json
+    f = get(f'/api/cases/{A}/graph?focus=person:alice', inv).json
+    near = {e['target'] for e in f['edges'] if e['source'] == 'person:alice'} | {e['source'] for e in f['edges'] if e['target'] == 'person:alice'}
+    check('node types can be filtered; focusing on alice gives her and her neighbours only',
+          {n['type'] for n in t['nodes']} <= {'person', 'domain'} and t['nodes']
+          and all(n['id'] == 'person:alice' or n['id'] in near for n in f['nodes']) and len(f['nodes']) == len(near) + 1, (len(f['nodes']), len(near)))
+    check('a bad type is refused (400); another investigator cannot see the graph (404)',
+          get(f'/api/cases/{A}/graph?types=planet', inv).status == 400 and get(f'/api/cases/{A}/graph', C['INV2']).status == 404)
+
+    s1, s2 = get(f'/api/cases/{A}/summary', inv).json, get(f'/api/cases/{A}/summary', inv).json
+    facts = s1['facts']
+    check('the summary is the same each time it is built (facts numbered F1, F2 ... in order)',
+          [f['text'] for f in facts] == [f['text'] for f in s2['facts']] and [f['id'] for f in facts] == [f'F{i}' for i in range(1, len(facts) + 1)], len(facts))
+    missing = [(f['id'], r) for f in facts for r in f['refs'] if not (ObjectId.is_valid(r['id']) and db[r['collection']].find_one({'_id': ObjectId(r['id'])}))]
+    text = ' '.join(f['text'] for f in facts)
+    check('every fact cites records that exist; the summary says the payroll export was recycled, the SanDisk drive was used, SecureDelete stands out and the finding was approved',
+          not missing and 'C:\\Users\\alice\\Documents\\payroll-export.csv was moved to the Recycle Bin at 2026-09-01' in text and '4C530001230518109141' in text
+          and 'securedelete' in text.lower() and 'Finding (approved' in text and all(f'[{f["id"]}]' in ' '.join(p['text'] for p in s1['paragraphs']) for f in facts),
+          (missing[:3], text[:600]))
+    C['SUMMARY_FACTS'] = facts
+
+
+CLAUDE_REQUESTS, CLAUDE_REPLY = [], {}
+
+
+def _start_claude_mock():
+    """An Anthropic Messages API stand-in on port 18081 (ANTHROPIC_BASE_URL in compose.yml): records every request and
+    answers with CLAUDE_REPLY's text (by default, a sentence citing every fact it was sent)."""
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+            CLAUDE_REQUESTS.append({'path': self.path, 'headers': {k.lower(): v for k, v in self.headers.items()}, 'body': body})
+            user = (body.get('messages') or [{}])[0].get('content') or ''
+            ids = re.findall(r'^\[(F\d+)\]', user, re.M)
+            text = CLAUDE_REPLY.get('text') or ('The records show this ' + ''.join(f'[{i}]' for i in ids) + '.')
+            out = json.dumps({'id': f'msg_{len(CLAUDE_REQUESTS)}', 'type': 'message', 'role': 'assistant', 'model': body.get('model'),
+                              'content': [] if CLAUDE_REPLY.get('stop') == 'refusal' else [{'type': 'text', 'text': text}],
+                              'stop_reason': CLAUDE_REPLY.get('stop') or 'end_turn', 'stop_sequence': None,
+                              **({'stop_details': {'type': 'refusal', 'category': 'cyber', 'explanation': 'declined'}} if CLAUDE_REPLY.get('stop') == 'refusal' else {}),
+                              'usage': {'input_tokens': 100 + len(user) // 4, 'output_tokens': 20}}).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(('0.0.0.0', 18081), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
+@section('16f Claude mode of the case assistant (against a recording stand-in)')
+def t_claude():
+    inv, A = C['INVESTIGATOR'], C['A']
+    db = mongo()
+    facts = C.get('SUMMARY_FACTS') or get(f'/api/cases/{A}/summary', inv).json['facts']
+    s = get(f'/api/cases/{A}/ai', inv).json
+    before = len(CLAUDE_REQUESTS)
+    pick = [f['id'] for f in facts if 'Recycle Bin' in f['text'] or '4C530001230518109141' in f['text']][:2]
+    check('Claude mode is off for a case until turned on: asking is refused (409) and nothing is sent',
+          s['enabled'] is False and s['configured'] is True and s['model'] == 'claude-opus-5-5'
+          and post(f'/api/cases/{A}/ai/ask', inv, {'question': 'What happened?', 'fact_ids': pick}).status == 409 and len(CLAUDE_REQUESTS) == before, s)
+    check('only someone who may update the case turns it on (viewer and analyst 403)',
+          req('PUT', f'/api/cases/{A}/ai', C['VIEWER'], {'enabled': True}).status == 403 and req('PUT', f'/api/cases/{A}/ai', C['ANALYST'], {'enabled': True}).status == 403)
+    on = req('PUT', f'/api/cases/{A}/ai', inv, {'enabled': True})
+    check('the investigator turns it on (audited)', on.status == 200 and on.json['enabled'] and db.audit_logs.find_one({'action': 'AI_ASSIST_ENABLED', 'metadata.case_id': A}), on)
+    check('facts that are not in the summary are refused (400)', post(f'/api/cases/{A}/ai/ask', inv, {'question': 'What happened?', 'fact_ids': ['F9999']}).status == 400)
+    q = 'In what order did the USB drive and the deletion happen?'
+    r = post(f'/api/cases/{A}/ai/ask', inv, {'question': q, 'fact_ids': pick})
+    sent = CLAUDE_REQUESTS[before:] if len(CLAUDE_REQUESTS) > before else [{}]
+    body, headers = sent[-1].get('body') or {}, sent[-1].get('headers') or {}
+    user = (body.get('messages') or [{}])[0].get('content') or ''
+    others = [f for f in facts if f['id'] not in pick]
+    check('one request to Claude (Opus 5.5, medium effort, server-side refusal fallback) carrying the two selected facts and the question, and nothing else from the case',
+          r.status == 200 and len(sent) == 1 and body.get('model') == 'claude-opus-5-5' and body.get('fallbacks') == 'default'
+          and 'server-side-fallback-2026-07-01' in headers.get('anthropic-beta', '') and body.get('output_config') == {'effort': 'medium'}
+          and headers.get('x-api-key') == 'test-anthropic-key' and len(re.findall(r'^\[F\d+\]', user, re.M)) == 2
+          and all(f'[{f["id"]}] {f["text"]}' in user for f in facts if f['id'] in pick) and not any(f['text'] in user for f in others)
+          and user.endswith(f'Question: {q}'), (r, user[:500]))
+    doc = db.ai_requests.find_one({'ai_request_id': r.json.get('ai_request_id')}) or {}
+    audit = db.audit_logs.find_one({'action': 'AI_PROMPT_SENT', 'metadata.ai_request_id': r.json.get('ai_request_id')}) or {}
+    check('the answer cites the facts sent; the prompt is kept with its SHA-256, which the audit record repeats',
+          r.json['status'] == 'ANSWERED' and r.json['citations'] == pick and r.json['unknown_citations'] == []
+          and doc.get('prompt') == user and doc.get('prompt_sha256') == hashlib.sha256(user.encode()).hexdigest() == (audit.get('metadata') or {}).get('prompt_sha256')
+          and (audit.get('metadata') or {}).get('fact_ids') == pick, (r.json, audit.get('metadata')))
+    CLAUDE_REPLY['text'] = f'It came first [{pick[0]}], then [F9999].'
+    r2 = post(f'/api/cases/{A}/ai/ask', inv, {'question': 'And then?', 'fact_ids': pick[:1]})
+    CLAUDE_REPLY.clear()
+    CLAUDE_REPLY['stop'] = 'refusal'
+    r3 = post(f'/api/cases/{A}/ai/ask', inv, {'question': 'Something declined', 'fact_ids': pick[:1]})
+    CLAUDE_REPLY.clear()
+    check('a citation of a fact that was not sent is reported; a declined request is kept as refused',
+          r2.json.get('unknown_citations') == ['F9999'] and r2.json.get('citations') == pick[:1]
+          and r3.status == 200 and r3.json['status'] == 'REFUSED' and r3.json['refusal_category'] == 'cyber', (r2.json, r3.json))
+    h = get(f'/api/cases/{A}/ai/requests', inv).json['data']
+    check('every question asked is listed for the case; another investigator cannot see them (404)',
+          [x['question'] for x in h[:3]] == ['Something declined', 'And then?', q] and get(f'/api/cases/{A}/ai/requests', C['INV2']).status == 404)
+    req('PUT', f'/api/cases/{A}/ai', inv, {'enabled': False})
+
+
 @section('17 Analyst assigned to a case')
 def t_analyst():
     inv, an, A = C['INVESTIGATOR'], C['ANALYST'], C['A']
@@ -5060,6 +5371,65 @@ def t_legal_hold():
 
 
 # ============================================================ OTHER PHASES
+@section('31c Retention: closed cases, the daily check and deleting a case')
+def t_retention():
+    from bson import ObjectId
+    adm, inv = C['ADMIN'], C['INVESTIGATOR']
+    db = mongo()
+    check('the daily check is scheduled (Celery beat, 02:00 UTC)', 'dfip.retention_check' in sh('python', '-c',
+          "from app.celery_app import celery_app; print(celery_app.conf.beat_schedule['retention-check']['task'])").stdout.decode())
+    check('only administrators see and set the policy (403)', get('/api/admin/retention', inv).status == 403
+          and req('PUT', '/api/admin/retention', inv, {'enabled': True, 'days': 1}).status == 403)
+    p = req('PUT', '/api/admin/retention', adm, {'enabled': True, 'days': 30})
+    check('the administrator keeps closed cases for 30 days (audited)', p.status == 200 and p.json['policy']['days'] == 30
+          and db.audit_logs.find_one({'action': 'RETENTION_POLICY_SET'}) is not None, p)
+    R = post('/api/cases', inv, {'name': 'Closed matter', 'priority': 'LOW'}).json['case_id']
+    up = upload(inv, R, os.urandom(1 << 20), 'closed.dd').json
+    stored = Path(up['storage_path'])
+    post('/api/findings', inv, {'case_id': R, 'title': 'Old finding', 'description': 'x', 'evidence_ids': [up['evidence_id']]})
+    item = post('/api/physical', inv, {'case_id': R, 'description': 'USB stick', 'kind': 'USB drive', 'location': 'Room A'}).json
+    post(f"/api/physical/{item['item_id']}/custody", inv, {'action': 'CHECK_OUT', 'person': 'Lab', 'purpose': 'Imaging'})
+    c1 = patch(f'/api/cases/{R}', inv, {'status': 'COMPLETED'}).json
+    due = iso(c1['retention']['due_at'])
+    closed = iso(c1['closed_at'])
+    check('closing the case starts its retention period: due 30 days after it was closed',
+          c1.get('closed_at') and abs((due - closed) - timedelta(days=30)) < timedelta(seconds=1), c1.get('retention'))
+    c2 = patch(f'/api/cases/{R}', inv, {'status': 'IN_PROGRESS'}).json
+    c3 = patch(f'/api/cases/{R}', inv, {'status': 'ARCHIVED'}).json
+    check('reopening ends it; archiving starts it again', 'retention' not in c2 and 'closed_at' not in c2 and c3.get('retention'), (c2.get('retention'), c3.get('retention')))
+    run = post('/api/admin/retention/run', adm).json
+    check('not due yet: the check lists nothing for it', R not in run['due'], run)
+    db.cases.update_one({'case_id': R}, {'$set': {'retention.due_at': datetime.now(timezone.utc) - timedelta(days=1)}})  # thirty days later
+    run = post('/api/admin/retention/run', adm).json
+    notes = [n for n in get('/api/notifications', adm).json['data'] if n['title'] == 'Cases due for deletion']
+    again = post('/api/admin/retention/run', adm).json
+    check('once due, the check notifies the administrators (once a day, not on every run) and lists it',
+          R in run['due'] and R in run['notified'] and notes and R in notes[0]['message'] and R in again['due'] and R not in again['notified']
+          and any(c['case_id'] == R for c in get('/api/admin/retention', adm).json['due']), (run, again))
+    post(f'/api/cases/{R}/legal-hold', inv, {'active': True, 'reason': 'Appeal lodged'})
+    held = post('/api/admin/retention/run', adm).json
+    d = req('DELETE', f'/api/cases/{R}', adm, {'confirm': R, 'reason': 'Retention period ended'})
+    check('under legal hold the case is held, not due, and cannot be deleted (423)', R in held['held'] and R not in held['due'] and d.status == 423, (held, d))
+    post(f'/api/cases/{R}/legal-hold', inv, {'active': False, 'reason': 'Appeal dismissed'})
+    check('deleting needs the case number typed (400) and the administrator\'s permission (investigator 403)',
+          req('DELETE', f'/api/cases/{R}', adm, {'confirm': 'CASE-0000-000', 'reason': 'Retention period ended'}).status == 400
+          and req('DELETE', f'/api/cases/{R}', inv, {'confirm': R, 'reason': 'Retention period ended'}).status == 403)
+    held_item = req('DELETE', f'/api/cases/{R}', adm, {'confirm': R, 'reason': 'Retention period ended'})
+    check('physical evidence still checked out blocks the deletion (409)', held_item.status == 409 and item['item_id'] in (held_item.detail or ''), held_item)
+    post(f"/api/physical/{item['item_id']}/custody", inv, {'action': 'CHECK_IN', 'location': 'Room A', 'seal_intact': True})
+    post(f"/api/physical/{item['item_id']}/custody", inv, {'action': 'RELEASE', 'person': 'The owner'})
+    d = req('DELETE', f'/api/cases/{R}', adm, {'confirm': R, 'reason': 'Retention period ended'})
+    custody = db.chain_of_custody.find_one({'evidence_id': up['evidence_id'], 'action': 'EVIDENCE_DELETED'}) or {}
+    check('the case is deleted: its evidence file, findings and physical records go; the case remains as a deleted record; custody and audit keep it',
+          d.status == 200 and d.json['removed']['evidence'] == 1 and d.json['removed']['findings'] == 1 and d.json['removed']['physical_items'] == 1
+          and not stored.exists() and get(f"/api/evidence/{up['evidence_id']}", inv).status == 404 and get(f'/api/cases/{R}', adm).status == 404
+          and all(c['case_id'] != R for c in get('/api/cases', adm).json['data'])
+          and any(c['case_id'] == R and c['reason'] == 'Retention period ended' for c in get('/api/admin/retention', adm).json['deleted'])
+          and custody.get('reason') == 'Case deleted: Retention period ended'
+          and db.audit_logs.find_one({'action': 'CASE_DELETED', 'metadata.case_id': R}) is not None, (d, custody))
+    req('PUT', '/api/admin/retention', adm, {'enabled': True, 'days': 2555})
+
+
 @section('32 Desktop-only writes (REQUIRE_DESKTOP_FOR_WRITES=true)')
 def t_desktop_writes():
     check('/health reports desktop-only writes', get('/health').json.get('require_desktop_for_writes') is True)
@@ -5114,8 +5484,8 @@ PHASES = {
              t_recovery, t_viewer, t_timeline,
              t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_email, t_chat_cloud, t_browser_depth,
              t_comms_samples, t_media, t_malware, t_disk_formats, t_encrypted_volumes, t_shadow_copies, t_packages, t_unix, t_more_filesystems, t_plaso, t_network, t_phones,
-             t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
-             t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
+             t_indicators, t_carving, t_search, t_findings, t_tags, t_review, t_physical, t_graph_summary, t_claude, t_analyst, t_reports, t_audit, t_notifications,
+             t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold, t_retention],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],
     'reg_disabled': [t_reg_disabled],
@@ -5124,6 +5494,7 @@ PHASES = {
 if __name__ == '__main__':
     t0 = time.time()
     _start_vt_mock()
+    _start_claude_mock()
     selected = PHASES[PHASE]
     # DFIP_SECTIONS=07b,12b runs only those sections (by number prefix), after the sections every other one
     # builds on: sign-in (02), cases (04), the evidence upload (06) and its analysis (07). A section that needs

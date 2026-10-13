@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bookmark } from 'lucide-react';
+import { Bookmark, MessageSquare } from 'lucide-react';
+import { useCase } from '../lib/caseContext';
+import { Comments } from '../ui/Comments';
 import { useTime } from '../lib/format';
 import { TAG_LABELS, TAG_TONES, TagButton, useTags, type Tag, type TagItemType, type TagLabel } from '../lib/tags';
-import { Badge, Card, Empty, PageHeader, Tabs } from '../ui';
+import { Badge, Button, Card, Empty, PageHeader, Tabs } from '../ui';
 
 const TYPE_NAMES: Record<TagItemType, string> = {
   FILE: 'File', TIMELINE_EVENT: 'Timeline event', BROWSER: 'Browser record', USB: 'USB device',
@@ -21,7 +23,9 @@ type Filter = 'ALL' | TagLabel;
 
 export function TaggedPage() {
   const { tags, reload } = useTags();
+  const { caseId } = useCase();
   const time = useTime();
+  const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('ALL');
   useEffect(() => reload(), [reload]);
 
@@ -54,7 +58,8 @@ export function TaggedPage() {
               <thead><tr><th>Label</th><th>Item</th><th>Time</th><th>Note</th><th>Tagged by</th><th /></tr></thead>
               <tbody>
                 {shown.map((t: Tag) => (
-                  <tr key={t.tag_id}>
+                  <Fragment key={t.tag_id}>
+                  <tr>
                     <td><Badge tone={TAG_TONES[t.label]}>{TAG_LABELS[t.label]}</Badge></td>
                     <td className="cell-path">
                       <div className="small strong">{t.snapshot.title || '—'}</div>
@@ -66,9 +71,12 @@ export function TaggedPage() {
                     <td className="small nowrap">{t.created_by_name}<div className="tiny muted">{time(t.created_at)} · {t.tag_id}</div></td>
                     <td className="nowrap right">
                       <TagButton type={t.item_type} id={t.item_id} title={t.snapshot.title} />{' '}
-                      <Link className="btn sm" to={SOURCE_PAGE[t.item_type] + (t.item_type === 'FILE' && t.evidence_id ? `?evidence=${t.evidence_id}` : '')}>Open</Link>
+                      <Link className="btn sm" to={SOURCE_PAGE[t.item_type] + (t.item_type === 'FILE' && t.evidence_id ? `?evidence=${t.evidence_id}` : '')}>Open</Link>{' '}
+                      <Button size="sm" variant="ghost" icon={<MessageSquare size={13} />} aria-expanded={open === t.tag_id} onClick={() => setOpen(open === t.tag_id ? null : t.tag_id)}>Comments</Button>
                     </td>
                   </tr>
+                  {open === t.tag_id && <tr><td colSpan={6}><Comments caseId={caseId} targetType="TAG" targetId={t.tag_id} title="Comments on this tag" /></td></tr>}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

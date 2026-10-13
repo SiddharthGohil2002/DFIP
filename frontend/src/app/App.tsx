@@ -31,6 +31,10 @@ import { ShadowCopiesPage } from '../pages/ShadowCopies';
 import { UnixPage } from '../pages/Unix';
 import { NetworkPage } from '../pages/Network';
 import { PhonePage } from '../pages/Phone';
+import { PhysicalPage } from '../pages/Physical';
+import { LinkGraphPage } from '../pages/LinkGraph';
+import { CaseSummaryPage } from '../pages/CaseSummary';
+import { RetentionPage } from '../pages/admin/Retention';
 import { EmailPage } from '../pages/Email';
 import { ChatCloudPage } from '../pages/ChatCloud';
 import { MediaPage } from '../pages/Media';
@@ -145,6 +149,9 @@ function Workspace() {
         <Route path="unix" element={c(<UnixPage />)} />
         <Route path="network" element={c(<NetworkPage />)} />
         <Route path="phones" element={c(<PhonePage />)} />
+        <Route path="physical" element={c(<PhysicalPage />)} />
+        <Route path="graph" element={c(<LinkGraphPage />)} />
+        <Route path="summary" element={c(<CaseSummaryPage />)} />
         <Route path="email" element={c(<EmailPage />)} />
         <Route path="chat-cloud" element={c(<ChatCloudPage />)} />
         <Route path="media" element={c(<MediaPage />)} />
@@ -163,6 +170,7 @@ function Workspace() {
         <Route path="admin/system" element={<SystemPage />} />
         <Route path="admin/hashsets" element={<HashSetsPage />} />
         <Route path="admin/malware-rules" element={<MalwareRulesPage />} />
+        <Route path="admin/retention" element={<RetentionPage />} />
         <Route path="*" element={<Navigate to="/app" replace />} />
       </Routes>
     </Shell>

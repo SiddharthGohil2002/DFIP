@@ -17,6 +17,9 @@ export interface CaseItem {
   status: string;
   priority: string;
   investigator_id?: string | null;
+  member_ids?: string[];
+  closed_at?: string;
+  retention?: { days: number; due_at: string; set_at: string; notified_at?: string };
   created_by?: string;
   created_at: string;
   updated_at: string;
@@ -222,6 +225,10 @@ export interface CaseCounts {
   phone_apps?: number;
   phone_apps_notable?: number;
   phone_wifi?: number;
+  physical_items?: number;
+  physical_checked_out?: number;
+  findings_in_review?: number;
+  findings_approved?: number;
   timeline_imports?: number;
   plaso_events?: number;
   browser_searches?: number;
@@ -551,6 +558,19 @@ export interface Artifact {
   [key: string]: any;
 }
 
+export type FindingStatus = 'DRAFT' | 'IN_REVIEW' | 'CHANGES_REQUESTED' | 'APPROVED';
+
+export interface FindingEvent {
+  at: string;
+  by: string;
+  by_name?: string;
+  action: 'CREATED' | 'EDITED' | 'SUBMITTED' | 'APPROVED' | 'CHANGES_REQUESTED' | 'REOPENED';
+  note?: string | null;
+  reason?: string;
+  reviewer_id?: string | null;
+  changes?: Record<string, [unknown, unknown]>;
+}
+
 export interface Finding {
   _id: string;
   case_id: string;
@@ -559,7 +579,17 @@ export interface Finding {
   severity: string;
   evidence_ids: string[];
   created_by?: string;
+  created_by_name?: string;
   created_at: string;
+  updated_at?: string;
+  status: FindingStatus;
+  version?: number;
+  reviewer_id?: string | null;
+  reviewed_by?: string;
+  reviewed_by_name?: string;
+  reviewed_at?: string;
+  history?: FindingEvent[];
+  comment_count?: number;
 }
 
 export interface Report {

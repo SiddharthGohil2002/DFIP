@@ -22,6 +22,9 @@ x-env: &env
   VIRUSTOTAL_API_KEY: test-vt-key
   VIRUSTOTAL_BASE_URL: http://backend:18080/api/v3
   VIRUSTOTAL_RATE_PER_MINUTE: "600"
+  # The case assistant's Claude mode talks to a stand-in the test script runs in the backend container (_start_claude_mock)
+  ANTHROPIC_API_KEY: test-anthropic-key
+  ANTHROPIC_BASE_URL: http://backend:18081
 services:
   mongodb:
     image: mongo:8

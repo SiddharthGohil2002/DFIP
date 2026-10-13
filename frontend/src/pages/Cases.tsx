@@ -24,6 +24,7 @@ export function CaseFormModal({ open, onClose, onSaved, existing }: {
   const [priority, setPriority] = useState('MEDIUM');
   const [status, setStatus] = useState('OPEN');
   const [investigator, setInvestigator] = useState('');
+  const [members, setMembers] = useState<string[]>([]);
   const [people, setPeople] = useState<User[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -35,8 +36,9 @@ export function CaseFormModal({ open, onClose, onSaved, existing }: {
     setPriority(existing?.priority || 'MEDIUM');
     setStatus(existing?.status || 'OPEN');
     setInvestigator(existing?.investigator_id || '');
+    setMembers(existing?.member_ids || []);
     setError('');
-    if (can('CASE_UPDATE')) api<{ data: User[] }>('/admin/investigators').then((r) => setPeople(r.data)).catch(() => setPeople([]));
+    if (can('CASE_UPDATE')) api<{ data: User[] }>('/admin/investigators?all=true').then((r) => setPeople(r.data)).catch(() => setPeople([]));
   }, [open, existing, can]);
 
   async function save() {
@@ -48,6 +50,9 @@ export function CaseFormModal({ open, onClose, onSaved, existing }: {
       const saved = existing
         ? await patch<CaseItem>(`/cases/${encodeURIComponent(existing.case_id)}`, { ...body, status })
         : await post<CaseItem>('/cases', body);
+      if (existing && [...members].sort().join() !== [...(existing.member_ids || [])].sort().join()) {
+        await api(`/cases/${encodeURIComponent(existing.case_id)}/members`, { method: 'PUT', json: { member_ids: members } });
+      }
       toast(existing ? `${saved.case_id} updated` : `${saved.case_id} created`, 'ok');
       await onSaved(saved);
       onClose();
@@ -96,9 +101,26 @@ export function CaseFormModal({ open, onClose, onSaved, existing }: {
         <Field label="Lead investigator" hint="Assigned investigators can open the case and its evidence.">
           <select className="select" value={investigator} onChange={(e) => setInvestigator(e.target.value)}>
             <option value="">{existing ? 'Unchanged' : 'Me'}</option>
-            {people.map((p) => <option key={p._id} value={p._id}>{p.name} ({p.role.toLowerCase()})</option>)}
+            {people.filter((p) => p.role !== 'VIEWER').map((p) => <option key={p._id} value={p._id}>{p.name} ({p.role.toLowerCase()})</option>)}
           </select>
         </Field>
+      )}
+      {existing && people.length > 0 && (
+        <fieldset className="field" style={{ border: 'none', padding: 0, margin: 0 }}>
+          <legend className="small strong" style={{ marginBottom: 6 }}>Team</legend>
+          <p className="tiny muted" style={{ margin: '0 0 6px' }}>Members can open the case, comment and be asked to review findings, as their role allows. Added members are notified.</p>
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            {people.filter((p) => p._id !== existing.investigator_id && p._id !== existing.created_by && p.role !== 'ADMIN').map((p) => (
+              <label key={p._id} className="check small">
+                <input type="checkbox" checked={members.includes(p._id)} onChange={(e) => setMembers(e.target.checked ? [...members, p._id] : members.filter((m) => m !== p._id))} />
+                {p.name} <span className="muted">({p.role.toLowerCase()})</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      {existing && ['COMPLETED', 'ARCHIVED'].includes(status) && !['COMPLETED', 'ARCHIVED'].includes(existing.status) && (
+        <p className="tiny muted" style={{ margin: 0 }}>Closing the case starts its retention period (see Administration &gt; Retention).</p>
       )}
       {error && <Banner tone="danger">{error}</Banner>}
     </Modal>

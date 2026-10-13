@@ -7,6 +7,7 @@ import { api, downloadFile, post } from '../lib/api';
 import { formatBytes, formatNumber, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
+import { Comments } from '../ui/Comments';
 import { ViewButton } from '../ui/FileViewer';
 import type { Artifact, FsEntry, HashKind } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Hash, Loading, Modal, PageHeader, Pager, Tabs, useToast, type Tone } from '../ui';
@@ -326,6 +327,7 @@ export function FileDetails({ caseId, file: f, onClose }: { caseId: string; file
               )}
             </div>
           )}
+          {f._id && <Comments caseId={caseId} targetType="FILE" targetId={f._id} title="Comments on this file" />}
         </div>
       )}
     </Modal>

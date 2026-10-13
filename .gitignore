@@ -21,6 +21,7 @@ storage/imports/**
 storage/hashsets/**
 storage/clamav/**
 storage/yara/**
+storage/physical/**
 !storage/**/
 !storage/**/.gitkeep
 

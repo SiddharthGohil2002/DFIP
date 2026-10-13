@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     virustotal_rate_per_minute:float=4.0
     abuseipdb_api_key:str=''
     otx_api_key:str=''
+    # Claude mode of the case assistant (off for every case until turned on); ANTHROPIC_BASE_URL for a proxy or the tests' stand-in
+    anthropic_api_key:str=''
+    anthropic_base_url:str=''
+    anthropic_model:str='claude-opus-5-5'
     urlhaus_api_key:str=''
     model_config=SettingsConfigDict(env_file='.env',extra='ignore',case_sensitive=False)
 

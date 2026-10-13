@@ -52,6 +52,9 @@ services:
       VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
       VIRUSTOTAL_BASE_URL: ${VIRUSTOTAL_BASE_URL:-https://www.virustotal.com/api/v3}
       VIRUSTOTAL_RATE_PER_MINUTE: ${VIRUSTOTAL_RATE_PER_MINUTE:-4}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5-5}
       ABUSEIPDB_API_KEY: ${ABUSEIPDB_API_KEY:-}
       OTX_API_KEY: ${OTX_API_KEY:-}
       URLHAUS_API_KEY: ${URLHAUS_API_KEY:-}
@@ -75,6 +78,15 @@ services:
     volumes: [./storage:/app/storage]
     depends_on:
       mongodb: {condition: service_healthy}
+      redis: {condition: service_healthy}
+  celery_beat:
+    # Starts scheduled work (the daily retention check) on the worker's queue; it runs no tasks itself.
+    build: ./backend
+    container_name: dfip-celery-beat
+    restart: unless-stopped
+    command: ["celery","-A","app.celery_app.celery_app","beat","--loglevel=INFO","--schedule","/tmp/celerybeat-schedule"]
+    environment: *backend_env
+    depends_on:
       redis: {condition: service_healthy}
   frontend:
     build: ./frontend

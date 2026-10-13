@@ -32,8 +32,10 @@ async def update_user(uid:str,x:UserUpdate,u=Depends(require_permission('USER_MA
     if not res.matched_count:raise HTTPException(404,'User not found')
     log(u,'USER_UPDATED','user',uid,updates);fresh=get_db()['users'].find_one({'_id':oid},{'password_hash':0});return user_serial(fresh)
 @r.get('/investigators')
-def investigators(u=Depends(require_permission('CASE_UPDATE'))):
-    return {'data':[user_serial(x) for x in get_db()['users'].find({'role':{'$in':['ADMIN','INVESTIGATOR','ANALYST']},'status':'ACTIVE'},{'password_hash':0}).sort('name',1)]}
+def investigators(all:bool=False,u=Depends(require_permission('CASE_UPDATE'))):
+    """Active users who can lead a case; `all=true` adds viewers (who can be case members)."""
+    roles=['ADMIN','INVESTIGATOR','ANALYST']+(['VIEWER'] if all else [])
+    return {'data':[user_serial(x) for x in get_db()['users'].find({'role':{'$in':roles},'status':'ACTIVE'},{'password_hash':0}).sort('name',1)]}
 @r.get('/roles')
 def roles(u=Depends(require_permission('ROLE_MANAGE'))):
     return {'data':[user_serial(x) for x in get_db()['roles'].find().sort('name',1)]}
@@ -70,3 +72,52 @@ def audit(u=Depends(require_permission('AUDIT_READ'))):
 @r.get('/stats')
 def stats(u=Depends(require_roles('ADMIN'))):
     db=get_db();return {'users':db['users'].count_documents({}),'active_users':db['users'].count_documents({'status':'ACTIVE'}),'cases':db['cases'].count_documents({}),'evidence':db['evidence'].count_documents({}),'verified':db['evidence'].count_documents({'verification_status':'VERIFIED'}),'reports':db['reports'].count_documents({})}
+
+
+class RetentionPolicy(BaseModel):
+    enabled: bool = True
+    days: int = Field(ge=1, le=36500)
+
+
+def _retention_view():
+    from ..services.retention import due_cases, policy
+    db = get_db()
+    plain = lambda v: v.isoformat() if hasattr(v, 'isoformat') else v
+    due = [{'case_id': c['case_id'], 'name': c.get('name'), 'status': c.get('status'), 'closed_at': plain(c.get('closed_at')),
+            'due_at': plain((c.get('retention') or {}).get('due_at')), 'notified_at': plain((c.get('retention') or {}).get('notified_at')),
+            'legal_hold': bool((c.get('legal_hold') or {}).get('active'))} for c in due_cases()]
+    closed = [{'case_id': c['case_id'], 'name': c.get('name'), 'status': c.get('status'), 'closed_at': plain(c.get('closed_at')),
+               'due_at': plain((c.get('retention') or {}).get('due_at'))}
+              for c in db['cases'].find({'retention.due_at': {'$exists': True}, 'deleted': {'$ne': True}}).sort('retention.due_at', 1).limit(500)]
+    runs = [{'at': plain(x['at']), 'due': x.get('due', []), 'held': x.get('held', []), 'notified': x.get('notified', [])}
+            for x in db['retention_runs'].find().sort('at', -1).limit(10)]
+    deleted = [{'case_id': c['case_id'], 'name': c.get('name'), 'deleted_at': plain(c.get('deleted_at')), 'deleted_by_name': c.get('deleted_by_name'),
+                'reason': c.get('deletion_reason')} for c in db['cases'].find({'deleted': True}).sort('deleted_at', -1).limit(100)]
+    p = policy()
+    return {'policy': {**p, 'set_at': plain(p.get('set_at'))}, 'due': due, 'closed': closed, 'runs': runs, 'deleted': deleted}
+
+
+@r.get('/retention')
+def retention(u=Depends(require_permission('SYSTEM_MANAGE'))):
+    """The retention policy, the closed cases with their due dates, those due now, the last daily checks and the cases
+    deleted."""
+    return _retention_view()
+
+
+@r.put('/retention')
+def set_retention(x: RetentionPolicy, u=Depends(require_permission('SYSTEM_MANAGE'))):
+    """Sets how long closed cases are kept. It applies to cases closed from now on; cases already closed keep their date."""
+    from ..services.retention import set_policy
+    set_policy(x.enabled, x.days, u)
+    log(u, 'RETENTION_POLICY_SET', 'settings', 'retention', {'enabled': x.enabled, 'days': x.days})
+    return _retention_view()
+
+
+@r.post('/retention/run')
+def run_retention(u=Depends(require_permission('SYSTEM_MANAGE'))):
+    """Runs the daily retention check now: administrators are notified of the cases due (cases under legal hold are
+    listed as held). Nothing is deleted."""
+    from ..services.retention import run_check
+    result = run_check()
+    log(u, 'RETENTION_CHECK_RUN', 'settings', 'retention', result)
+    return result

@@ -13,9 +13,9 @@ def allowed_case_query(user):
     if user['role']=='ADMIN': return {}
     uid=str(user['_id']); return {'$or':[{'investigator_id':uid},{'created_by':uid},{'member_ids':uid}]}
 
-def list_cases(user): return [serial(x) for x in col().find(allowed_case_query(user)).sort('updated_at',-1)]
+def list_cases(user): return [serial(x) for x in col().find({'$and':[allowed_case_query(user),{'deleted':{'$ne':True}}]}).sort('updated_at',-1)]
 def get_case(case_id,user=None):
-    q={'case_id':case_id}
+    q={'case_id':case_id,'deleted':{'$ne':True}}  # a deleted case is kept only as a record that it existed
     if user and user['role']!='ADMIN': q={'$and':[q,allowed_case_query(user)]}
     x=col().find_one(q); return serial(x) if x else None
 

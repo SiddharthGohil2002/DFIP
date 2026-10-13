@@ -34,5 +34,11 @@ celery_app.conf.update(
     task_default_queue='dfip_forensics',
 )
 
+# The daily retention check (services/retention.py), run by the `celery_beat` service at 02:00 UTC.
+from celery.schedules import crontab  # noqa: E402
+celery_app.conf.beat_schedule = {
+    'retention-check': {'task': 'dfip.retention_check', 'schedule': crontab(hour=2, minute=0), 'options': {'queue': 'dfip_forensics'}},
+}
+
 # Ensure task modules are registered when the worker boots.
 celery_app.autodiscover_tasks(['app'], related_name='tasks')

@@ -116,6 +116,17 @@ def phone_net_case():
 NET_PHONE_CASE = phone_net_case()
 
 
+REVIEW_TITLE = f'UI review finding {uuid.uuid4().hex[:4]}'
+
+
+def _png() -> bytes:
+    import struct, zlib
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    rows = b''.join(b'\x00' + bytes([200, 60, 40]) * 8 for _ in range(6))
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 8, 6, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
+
+
 def check(name, cond, detail=''):
     results.append(bool(cond))
     print(('  PASS ' if cond else '  FAIL ') + name + ('' if cond else f'  ::  {detail}'), flush=True)
@@ -432,6 +443,77 @@ with sync_playwright() as p:
     check('a Plaso timeline is imported from the Timeline page and its events shown with the Plaso filter', True)
     page.screenshot(path=f'{OUT}/x17-plaso-import.png', full_page=True)
 
+    print('== review, comments, physical evidence, link graph, case summary')
+    page.get_by_label('Active case').select_option(SHOWCASE)
+    page.get_by_role('link', name=re.compile(r'^Findings\b')).first.click()
+    page.get_by_role('button', name='Record finding').click()
+    d = page.get_by_role('dialog')
+    d.get_by_label('Title').fill(REVIEW_TITLE)
+    d.get_by_label('Observation').fill('payroll-export.csv was opened from E: at 14:14 UTC.')
+    d.get_by_role('button', name='Save finding').click()
+    card = page.locator('.card', has=page.get_by_role('heading', name=REVIEW_TITLE))
+    expect(card.get_by_text('Draft', exact=True)).to_be_visible()
+    card.get_by_role('button', name='Send for review').click()
+    d = page.get_by_role('dialog')
+    admin_opt = next(o for o in d.get_by_label('Reviewer', exact=True).locator('option').all_inner_texts() if '(admin)' in o)
+    d.get_by_label('Reviewer', exact=True).select_option(label=admin_opt)
+    d.get_by_role('button', name='Send', exact=True).click()
+    expect(card.get_by_text('In review', exact=True)).to_be_visible()
+    check('a finding is recorded as a draft and sent to the administrator for review', True)
+    card.get_by_role('button', name=re.compile('History and comments')).click()
+    box = card.get_by_label(re.compile('Add a comment'))
+    box.click()
+    box.press_sequentially('Please check the LNK time @adm')
+    page.get_by_role('option', name=re.compile('admin@dfip.local')).click()
+    expect(box).to_have_value(re.compile(r'@admin@dfip\.local '))
+    card.get_by_role('button', name='Comment', exact=True).click()
+    expect(card.locator('.comment .mention')).to_be_visible()
+    expect(card.get_by_role('status')).to_contain_text('Notified')
+    check('typing @ offers the case\'s people; the comment shows the mention and says who was notified', True)
+    page.screenshot(path=f'{OUT}/x20-finding-review.png', full_page=True)
+
+    page.get_by_role('link', name=re.compile(r'^Physical evidence\b')).first.click()
+    page.get_by_role('button', name='Add item').click()
+    d = page.get_by_role('dialog')
+    d.get_by_label('Description').fill('Grey laptop (UI test)')
+    d.get_by_label('Bag number').fill('B-UI-1')
+    d.get_by_label('Seal number').fill('S-UI-1')
+    d.get_by_label('Stored at').fill('Locker 7')
+    d.get_by_role('button', name='Book in').click()
+    d = page.get_by_role('dialog')
+    expect(d.get_by_text('Locker 7').first).to_be_visible()
+    d.get_by_role('button', name='Check out').click()
+    d.get_by_label('Taken by').fill('Lab tech')
+    d.get_by_label('Purpose').fill('Imaging')
+    d.get_by_role('button', name='Record', exact=True).click()
+    expect(d.get_by_text('Checked out', exact=True).first).to_be_visible()
+    d.get_by_label('Add photo').set_input_files({'name': 'front.png', 'mimeType': 'image/png', 'buffer': _png()})
+    expect(d.locator('.photo-strip img')).to_have_count(1)
+    with page.expect_download() as dl:
+        d.get_by_role('button', name='Print custody form').click()
+    check('physical evidence: booked in, checked out, photographed, and its custody form downloaded',
+          dl.value.suggested_filename.endswith('-custody.pdf'), dl.value.suggested_filename)
+    page.screenshot(path=f'{OUT}/x21-physical.png', full_page=True)
+    page.keyboard.press('Escape')
+
+    page.get_by_role('link', name='Link graph').first.click()
+    node = page.get_by_role('button', name='Person alice')
+    expect(node).to_be_visible(timeout=30000)
+    node.click()
+    side = page.get_by_role('complementary', name='Selected node')
+    expect(side.get_by_text('opened').first).to_be_visible()
+    side.get_by_role('button', name='Expand').click()
+    expect(page.locator('.card', has=page.get_by_role('heading', name='Connections')).locator('tbody tr').first).to_be_visible()
+    check('link graph: selecting alice lists her connections and the records behind them; the connections table lists every line', True)
+    page.screenshot(path=f'{OUT}/x22-link-graph.png', full_page=True)
+
+    page.get_by_role('link', name='Case summary').first.click()
+    page.get_by_role('button', name='Fact F1').first.click()
+    expect(page.get_by_role('region', name='Fact F1')).to_be_visible()
+    expect(page.get_by_text('Claude mode is off for this case')).to_be_visible()
+    check('case summary: citations open their fact and its records; Claude mode is off until turned on', True)
+    page.screenshot(path=f'{OUT}/x23-case-summary.png', full_page=True)
+
     print('== bad session')
     page.evaluate("() => { sessionStorage.setItem('dfip_token', 'garbage'); sessionStorage.setItem('dfip_refresh', 'garbage'); }")
     page.goto(BASE + '/app/timeline')
@@ -546,6 +628,21 @@ with sync_playwright() as p:
     row.get_by_role('button', name=f'Delete {rs_name}').click()
     expect(page.locator('tbody tr', has_text=rs_name)).to_have_count(0)
     check('...and deletes it', True)
+
+    print('== reviewing a finding and retention (administrator)')
+    page.get_by_label('Active case').select_option(SHOWCASE)
+    page.get_by_role('link', name=re.compile(r'^Findings\b')).first.click()
+    card = page.locator('.card', has=page.get_by_role('heading', name=REVIEW_TITLE))
+    card.get_by_role('button', name='Approve').click()
+    page.get_by_role('dialog').get_by_role('button', name='Approve').click()
+    expect(card.get_by_text('Approved', exact=True)).to_be_visible()
+    check('the administrator approves the finding sent to them', True)
+    page.locator('a.nav-link[href$="/admin/retention"]').click()
+    expect(page.get_by_role('heading', name='Retention', exact=True)).to_be_visible()
+    page.get_by_role('button', name='Run the check now').click()
+    expect(page.get_by_text(re.compile(r'case\(s\) due'))).to_be_visible()
+    check('the retention page shows the policy and runs the daily check on demand', True)
+    page.screenshot(path=f'{OUT}/x24-retention.png', full_page=True)
     ctx.close()
 
     print('== narrower windows')
@@ -557,7 +654,7 @@ with sync_playwright() as p:
         sign_in(page, 'investigator@dfip.local')
         expect(page.get_by_text('Investigation functions')).to_be_visible()
         bad = []
-        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/shadow-copies', '/app/unix', '/app/network', '/app/phones', '/app/usb', '/app/reports', '/app/custody'):
+        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/shadow-copies', '/app/unix', '/app/network', '/app/phones', '/app/physical', '/app/graph', '/app/summary', '/app/findings', '/app/usb', '/app/reports', '/app/custody'):
             page.goto(BASE + path)
             page.wait_for_load_state('networkidle')
             sw = page.evaluate('document.documentElement.scrollWidth')
