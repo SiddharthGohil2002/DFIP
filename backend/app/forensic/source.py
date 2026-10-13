@@ -380,11 +380,19 @@ def evidence_source(evidence: dict, image: Path) -> EvidenceSource:
     working copy) through pytsk3."""
     if str(evidence.get('format', '')).upper() == 'LOGICAL':
         return package_source(evidence, image)
+    if evidence_kind(evidence) == 'capture':  # files carried in the capture are members (open_entry reads them)
+        return DirectorySource(members_root() / 'capture' / evidence['evidence_id'])
     return TskImageSource(image)
 
 
 def is_logical(evidence: dict) -> bool:
     return str(evidence.get('format', '')).upper() == 'LOGICAL'
+
+
+def evidence_kind(evidence: dict) -> str:
+    """'capture' (a network capture), 'logical' (a package of collected files) or 'disk' (a disk image)."""
+    fmt = str(evidence.get('format', '')).upper()
+    return 'capture' if fmt == 'PCAP' else 'logical' if fmt == 'LOGICAL' else 'disk'
 
 
 # --------------------------------------------------------------------------------------------- container members

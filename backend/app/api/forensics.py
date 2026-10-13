@@ -7,7 +7,7 @@ import base64,re,uuid
 from ..forensic import content
 from ..forensic.filesystem import INODE_RE
 from ..forensic import apfs
-from ..forensic.source import BlobRef, evidence_source, is_logical, offset_of
+from ..forensic.source import BlobRef, evidence_kind, evidence_source, is_logical, offset_of
 from ..forensic.hashing import sha256_file
 from ..forensic.working_image import analysis_image,WorkingCopyUnavailable
 from ..repositories.cases import allowed_case_query
@@ -34,14 +34,18 @@ def tsk_image(e,create=False):
     if not Path(e['storage_path']).exists(): raise HTTPException(409,'Original evidence object is unavailable')
     if is_logical(e): raise HTTPException(409,'This evidence is a package of collected files, not a disk image: partitions, unallocated space, '
                                               'file system details and carving do not apply')
+    if evidence_kind(e)=='capture': raise HTTPException(409,'This evidence is a network capture, not a disk image: see Network for what it holds')
     try:
         return analysis_image(e,create=create,db=get_db(),actor='DFIP')
     except WorkingCopyUnavailable as exc:
         raise HTTPException(409,str(exc))
 
+PKG_VOLUME=re.compile(r'^pkg(?:-[a-z0-9]+)?$')  # a root of a logical package: pkg, pkg-d, pkg-2
+
 def _volume_offset(offset:int,volume_id:str|None)->int:
     """The partition start sector from a volume id ('p2048'); the older `offset=` parameter still works."""
     if volume_id is None: return offset
+    if PKG_VOLUME.match(volume_id): return 0
     if apfs.parse(volume_id): return apfs.parse(volume_id)[0]
     try: return offset_of(volume_id)
     except ValueError: raise HTTPException(400,'Invalid volume id')
@@ -112,7 +116,8 @@ def files(eid:str,deleted:bool|None=None,q:str|None=None,offset:int|None=None,vo
     if hash_status: query['hash_status']=hash_status
     if hide_known: query['hash_status']={'$ne':'KNOWN_GOOD'} if not hash_status else hash_status
     if sha256: query['sha256']=sha256.strip().lower()
-    if volume_id is not None: offset=_volume_offset(0,volume_id)
+    if volume_id is not None and PKG_VOLUME.match(volume_id): query['volume_id']=volume_id
+    elif volume_id is not None: offset=_volume_offset(0,volume_id)
     if offset is not None: query['partition_offset']=offset
     if q: query['path']={'$regex':re.escape(q),'$options':'i'}
     limit=max(1,min(limit,1000))
@@ -166,7 +171,7 @@ def flagged(case_id:str,kind:str,limit:int=500,u=Depends(current_user)):
 def recover(eid:str,inode:str,offset:int=0,volume_id:str|None=None,u=Depends(require_write('ANALYSIS_RUN'))):
     e=auth_evidence(eid,u)
     if e.get('demo'): raise HTTPException(400,'Demo evidence cannot be recovered')
-    if is_logical(e): return _recover_logical(e,inode,u)
+    if is_logical(e): return _recover_logical(e,inode,u,volume_id)
     offset=_volume_offset(offset,volume_id)
     if not INODE_RE.match(inode): raise HTTPException(400,'Invalid inode address')
     pool=apfs.args(volume_id) if apfs.parse(volume_id or '') else None
@@ -201,11 +206,11 @@ def download_artifact(artifact_id:str,u=Depends(require_permission('EVIDENCE_REA
     return FileResponse(str(p),filename=a.get('filename') or p.name,media_type='application/octet-stream',headers={'X-DFIP-SHA256':a.get('sha256','')})
 
 # ---------------------------------------------------------------- file content: hex viewer and preview
-def _image_file(eid, inode, offset, u):
+def _image_file(eid, inode, offset, u, volume_id=None):
     """An indexed file inside an evidence image, and the command that streams its content."""
     e = auth_evidence(eid, u)
     if e.get('demo'): raise HTTPException(400, 'Demo evidence has no file content')
-    if is_logical(e): return _logical_file(e, inode)
+    if is_logical(e): return _logical_file(e, inode, volume_id)
     if not INODE_RE.match(inode or ''): raise HTTPException(400, 'Invalid inode address')
     entry = get_db()['fs_entries'].find_one({'evidence_id': e['evidence_id'], 'inode': inode, 'partition_offset': offset,
                                              'container': {'$exists': False}})
@@ -226,8 +231,11 @@ def _image_file(eid, inode, offset, u):
     return e, entry.get('path'), entry.get('size') or 0, read, {'evidence_id': e['evidence_id'], 'inode': inode, 'offset': offset, 'path': entry.get('path')}
 
 
-def _logical_entry(e, inode):
-    entry = get_db()['fs_entries'].find_one({'evidence_id': e['evidence_id'], 'inode': inode, 'logical': True, 'container': {'$exists': False}})
+def _logical_entry(e, inode, volume_id=None):
+    """A collected file by its package path; a package with several roots (drives) needs the volume to tell them apart."""
+    q = {'evidence_id': e['evidence_id'], 'inode': inode, 'logical': True, 'container': {'$exists': False}}
+    if volume_id and PKG_VOLUME.match(volume_id): q['volume_id'] = volume_id
+    entry = get_db()['fs_entries'].find_one(q)
     if not entry: raise HTTPException(404, 'File not found in the file index')
     if entry.get('is_dir'): raise HTTPException(400, 'Folders cannot be viewed')
     try:
@@ -237,9 +245,9 @@ def _logical_entry(e, inode):
     return entry, src
 
 
-def _logical_file(e, inode):
+def _logical_file(e, inode, volume_id=None):
     """A file of a logical package (collected files), by the path that stands in for its inode."""
-    entry, src = _logical_entry(e, inode)
+    entry, src = _logical_entry(e, inode, volume_id)
     try:
         blob = src.open(BlobRef(e['evidence_id'], entry['volume_id'], inode=inode))
     except (OSError, ValueError):
@@ -247,9 +255,9 @@ def _logical_file(e, inode):
     return e, entry['path'], blob.size, blob.read, {'evidence_id': e['evidence_id'], 'inode': inode, 'volume_id': entry['volume_id'], 'path': entry['path']}
 
 
-def _recover_logical(e, inode, u):
+def _recover_logical(e, inode, u, volume_id=None):
     """Copies a file of a logical package out as a recovered file: hashed, in the chain of custody, downloadable."""
-    entry, src = _logical_entry(e, inode)
+    entry, src = _logical_entry(e, inode, volume_id)
     aid = str(uuid.uuid4())
     name = Path(entry['path']).name
     dest = Path(settings.storage_path).resolve() / 'analysis' / 'recovered' / e['evidence_id'] / aid / name
@@ -318,7 +326,7 @@ def _raw(target, u, resource):
 def _volume_file(eid, inode, offset, volume_id, u):
     """A file of an evidence item: on an APFS volume (read with the Sleuth Kit's tools), else as _image_file."""
     if not apfs.parse(volume_id or ''):
-        return _image_file(eid, inode, _volume_offset(offset, volume_id), u)
+        return _image_file(eid, inode, _volume_offset(offset, volume_id), u, volume_id)
     e = auth_evidence(eid, u)
     if not INODE_RE.match(inode or ''): raise HTTPException(400, 'Invalid inode address')
     entry = get_db()['fs_entries'].find_one({'evidence_id': e['evidence_id'], 'inode': inode, 'volume_id': volume_id})
@@ -544,6 +552,12 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
                     [('score',-1),('path',1)]),
         'unix':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['SHELL_COMMAND','UNIX_EVENT','SCHEDULED_JOB','RECENT_DOCUMENT','QUARANTINE_EVENT','WIFI_NETWORK']},
                  '$or':[{f:rx} for f in ('command','summary','text','path','url','origin_url','ssid','name','user','ip')]},[('type',1),('time',-1)]),
+        'network':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['NET_CONVERSATION','DNS_QUERY','HTTP_REQUEST','TLS_HANDSHAKE']},
+                    '$or':[{f:rx} for f in ('name','answers','host','url','server_name','server_names','server','client','files.name','user_agent')]},
+                    [('type',1),('time',1)]),
+        'phone':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['PHONE_MESSAGE','PHONE_CALL','PHONE_CONTACT','PHONE_APP','PHONE_WIFI','PHONE_DEVICE']},
+                  '$or':[{f:rx} for f in ('text','party','party_name','chat_name','name','numbers','emails','app_id','ssid','attachments.name','model')]},
+                  [('type',1),('time',1)]),
         'shadow':('shadow_files',{'case_id':case_id,'change':{'$in':['DELETED_SINCE','CHANGED_SINCE']},'path':rx},
                   [('evidence_id',1),('volume_id',1),('path',1)]),
         'cloud':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['CLOUD_FILE','CLOUD_ACCOUNT']},

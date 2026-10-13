@@ -165,6 +165,25 @@ export function SearchPage() {
               </tr>
             ))}
           </Group>
+          <Group title="Phones" total={res.totals.phone ?? 0} shown={(res.results.phone || []).length} link={{ to: '/app/phones', label: 'Open phones' }}>
+            {(res.results.phone || []).map((x) => (
+              <tr key={x._id}>
+                <td className="cell-path small">{x.text || x.name || x.ssid || x.party_name || x.party || x.model}</td>
+                <td className="small">{({ PHONE_MESSAGE: `${x.app} message`, PHONE_CALL: `${x.kind} call`, PHONE_CONTACT: 'contact', PHONE_APP: 'app',
+                  PHONE_WIFI: 'Wi-Fi network', PHONE_DEVICE: 'phone' } as Record<string, string>)[x.type]}</td>
+                <td className="small" colSpan={2}>{x.party_name || x.party || ''} <span className="muted">{x.platform} · {x.evidence_id}</span></td>
+              </tr>
+            ))}
+          </Group>
+          <Group title="Network captures" total={res.totals.network ?? 0} shown={(res.results.network || []).length} link={{ to: '/app/network', label: 'Open network' }}>
+            {(res.results.network || []).map((x) => (
+              <tr key={x._id}>
+                <td className="cell-path small mono">{x.url || x.name || x.server_name || `${x.client} → ${x.server}`}</td>
+                <td className="small">{({ HTTP_REQUEST: `HTTP ${x.method}`, DNS_QUERY: 'DNS lookup', TLS_HANDSHAKE: 'TLS connection', NET_CONVERSATION: 'conversation' } as Record<string, string>)[x.type]}</td>
+                <td className="small" colSpan={2}>{x.client} <span className="muted">{x.evidence_id}</span></td>
+              </tr>
+            ))}
+          </Group>
           <Group title="Shadow copies" total={res.totals.shadow ?? 0} shown={(res.results.shadow || []).length} link={{ to: '/app/shadow-copies', label: 'Open shadow copies' }}>
             {(res.results.shadow || []).map((x) => (
               <tr key={x._id}>

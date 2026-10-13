@@ -77,7 +77,7 @@ with sync_playwright() as p:
 
     step['v'] = 'analysis modules'
     modules_card = page.locator('.card', has=page.get_by_role('heading', name='Analysis modules'))
-    expect(modules_card.get_by_role('row')).to_have_count(1 + len(api_get(page, '/jobs/analysis/modules')['modules']))
+    expect(modules_card.get_by_role('row')).to_have_count(1 + len([m for m in api_get(page, '/jobs/analysis/modules')['modules'] if 'disk' in m.get('kinds', ['disk'])]))
     eid = page.url.rstrip('/').rsplit('/', 1)[-1]
     before = api_get(page, f'/evidence/{eid}')['modules']['yara']['run_id']
     page.get_by_role('button', name='Analysis options').click()

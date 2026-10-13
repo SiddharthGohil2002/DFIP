@@ -18,18 +18,21 @@ const TYPE_FILTERS: Record<string, { label: string; types: string }> = {
   usb: { label: 'USB activity', types: 'USB_ACTIVITY' },
   activity: { label: 'Windows activity', types: 'PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN' },
   unix: { label: 'Linux and macOS', types: 'SHELL_COMMAND,UNIX_EVENT,RECENT_DOCUMENT,QUARANTINE_EVENT,WIFI_NETWORK' },
+  phone: { label: 'Phones', types: 'PHONE_MESSAGE,PHONE_CALL,PHONE_APP,PHONE_WIFI' },
+  network: { label: 'Network captures', types: 'HTTP_REQUEST,DNS_QUERY,TLS_HANDSHAKE' },
   plaso: { label: 'Imported (Plaso)', types: 'PLASO_EVENT' },
 };
 const TYPE_TONE: Record<string, Tone> = {
   FILE_MACB: 'neutral', BROWSER_VISIT: 'info', BROWSER_DOWNLOAD: 'accent', USB_ACTIVITY: 'warn',
   PROGRAM_RUN: 'ok', RECENT_FILE_OPENED: 'info', FILE_DELETED_TO_RECYCLE_BIN: 'danger',
-  SHELL_COMMAND: 'accent', UNIX_EVENT: 'warn', PLASO_EVENT: 'neutral',
+  SHELL_COMMAND: 'accent', UNIX_EVENT: 'warn', PLASO_EVENT: 'neutral', PHONE_MESSAGE: 'info', PHONE_CALL: 'info', HTTP_REQUEST: 'accent',
 };
 const TYPE_LABEL: Record<string, string> = {
   FILE_MACB: 'File MACB', BROWSER_VISIT: 'Browser visit', BROWSER_DOWNLOAD: 'Download', USB_ACTIVITY: 'USB',
   PROGRAM_RUN: 'Program run', RECENT_FILE_OPENED: 'File opened', FILE_DELETED_TO_RECYCLE_BIN: 'Recycled',
   SHELL_COMMAND: 'Shell command', UNIX_EVENT: 'Login / log', RECENT_DOCUMENT: 'File opened', QUARANTINE_EVENT: 'Download',
-  WIFI_NETWORK: 'Wi-Fi', PLASO_EVENT: 'Plaso',
+  WIFI_NETWORK: 'Wi-Fi', PLASO_EVENT: 'Plaso', PHONE_MESSAGE: 'Message', PHONE_CALL: 'Call', PHONE_APP: 'App installed', PHONE_WIFI: 'Wi-Fi',
+  HTTP_REQUEST: 'HTTP', DNS_QUERY: 'DNS', TLS_HANDSHAKE: 'TLS',
 };
 
 export function TimelinePage() {

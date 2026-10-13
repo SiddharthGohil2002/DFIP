@@ -2,8 +2,9 @@
 
 Order of precedence: a time zone the investigator set on the evidence, else the SYSTEM hive's
 TimeZoneInformation, else on Linux and macOS /etc/timezone or /etc/localtime (the POSIX rule a TZif file ends with,
-or the zoneinfo name a link points at; in a package, the link as the archive recorded it), else UTC (and file
-systems that store local time are then flagged).
+or the zoneinfo name a link points at; in a package, the link as the archive recorded it), else a phone's own setting
+(Android's persist.sys.timezone, an iPhone's lockdown TimeZone), else UTC (and file systems that store local time are
+then flagged).
 """
 from __future__ import annotations
 import json
@@ -12,7 +13,8 @@ from ..registry import control_sets, open_hive
 from ..source import BlobRef
 from ..system_info import HIVE_PATHS, find_hive
 from ..timezone import UTC, read_time_zone, valid_zone
-from ..unix import tzif_posix, zone_from_link
+from ..phones import persistent_properties
+from ..unix import plist, tzif_posix, zone_from_link
 from .base import Module
 
 
@@ -78,6 +80,15 @@ class TzProbeModule(Module):
                     zone = data.decode(errors='replace').strip()
                 else:
                     zone = tzif_posix(data) or zone_from_link(data.decode(errors='replace').strip())
+                if zone and valid_zone(zone):
+                    return {'zone': zone, 'file': path, 'volume_id': vid}
+            for path, read in (('/data/property/persistent_properties', lambda d: persistent_properties(d).get('persist.sys.timezone')),
+                               ('/private/var/root/Library/Lockdown/data_ark.plist', lambda d: plist(d).get('-TimeZone'))):
+                try:
+                    handle = src.find(vid, path)
+                    zone = read(src.read_range(BlobRef(ctx.eid, vid, inode=handle), 0, 1 << 20)) if handle else None
+                except Exception:
+                    zone = None
                 if zone and valid_zone(zone):
                     return {'zone': zone, 'file': path, 'volume_id': vid}
         manifest = (ctx.evidence.get('package') or {}).get('manifest')

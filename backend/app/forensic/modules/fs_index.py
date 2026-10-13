@@ -162,7 +162,7 @@ class FsIndexModule(Module):
         for i, root in enumerate(roots):
             ctx.progress(i / len(roots), root['volume_id'])
             vid, prefix = root['volume_id'], root['path']
-            kind = {'windows': 'Windows', 'linux': 'Linux', 'macos': 'macOS'}.get(root.get('os'), 'files')
+            kind = {'windows': 'Windows', 'linux': 'Linux', 'macos': 'macOS', 'android': 'Android', 'ios': 'iOS'}.get(root.get('os'), 'files')
             entries, events = [], []
             files = 0
             for e in src.walk(vid):

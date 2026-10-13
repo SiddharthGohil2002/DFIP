@@ -21,10 +21,13 @@ EWF = ('E01', 'EX01')
 RAW = 'RAW'
 LABELS = {'E01': 'EnCase (E01)', 'EX01': 'EnCase (Ex01)', 'RAW': 'Raw (dd)', 'AFF': 'Advanced Forensic Format', 'AFF4': 'AFF4',
           'VHD': 'Virtual Hard Disk (VHD)', 'VHDX': 'Virtual Hard Disk v2 (VHDX)', 'VMDK': 'VMware disk (VMDK)', 'QCOW2': 'QEMU disk (QCOW2)',
-          'LOGICAL': 'Logical package (collected files)'}
+          'LOGICAL': 'Logical package (collected files)', 'PCAP': 'Network capture (pcap, pcapng)'}
 # File name extensions accepted for upload (numbered parts of a split raw image are accepted too).
 EXTENSIONS = ('E01', 'EX01', 'RAW', 'DD', 'IMG', 'AFF', 'AFF4', 'VHD', 'VHDX', 'VMDK', 'QCOW2', 'QCOW')
 LOGICAL = 'LOGICAL'  # a package of collected files (ZIP or TAR), see packages.py
+PCAP = 'PCAP'  # a network capture (pcap or pcapng), see network.py
+CAPTURE_EXTENSIONS = ('PCAP', 'PCAPNG', 'CAP')
+_PCAP_MAGIC = (b'\xd4\xc3\xb2\xa1', b'\xa1\xb2\xc3\xd4', b'\x4d\x3c\xb2\xa1', b'\xa1\xb2\x3c\x4d', b'\x0a\x0d\x0d\x0a')
 _SPLIT = re.compile(r'^(?P<base>.+)\.(?P<n>\d{3,4})$')
 _EWF = re.compile(r'^(?P<base>.+)\.(?P<seg>E(?:X)?(?:\d\d|[A-Z][A-Z]))$', re.I)
 CHUNK = 4 << 20
@@ -37,7 +40,7 @@ class SetError(ValueError):
 def extension_ok(name: str) -> bool:
     from .packages import is_package_name
     ext = Path(name).suffix.lstrip('.').upper()
-    return ext in EXTENSIONS or bool(_SPLIT.match(name)) or bool(_EWF.match(name)) or is_package_name(name)
+    return ext in EXTENSIONS or ext in CAPTURE_EXTENSIONS or bool(_SPLIT.match(name)) or bool(_EWF.match(name)) or is_package_name(name)
 
 
 def detect(path: Path) -> str:
@@ -49,6 +52,8 @@ def detect(path: Path) -> str:
         if size >= 512:
             f.seek(size - 512)
             tail = f.read(512)
+    if head[:4] in _PCAP_MAGIC:
+        return PCAP
     if head.startswith(b'EVF\x09\x0d\x0a\xff\x00'):
         return 'E01'
     if head.startswith(b'EVF2\x0d\x0a\x81\x00'):
@@ -173,6 +178,8 @@ def classify(paths: list[Path]) -> dict:
     formats = {p: detect(p) for p in paths}
     if LOGICAL in formats.values() and len(paths) > 1:
         raise SetError('A package of collected files (ZIP or TAR) is uploaded on its own, as one evidence item')
+    if PCAP in formats.values() and len(paths) > 1:
+        raise SetError('A network capture is uploaded on its own, as one evidence item')
     if len(paths) == 1:
         p = paths[0]
         fmt = formats[p]

@@ -35,7 +35,12 @@ ITEM_COLLECTIONS = {
     'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts', 'ENTITY': 'entities',
     'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records', 'WINDOWS': 'forensic_artifacts', 'USN': 'usn_records',
     'EMAIL': 'email_messages', 'CHAT_CLOUD': 'forensic_artifacts', 'PROGRAM': 'forensic_artifacts', 'SHADOW_FILE': 'shadow_files', 'UNIX': 'forensic_artifacts',
+    'NETWORK': 'forensic_artifacts', 'PHONE': 'forensic_artifacts',
 }
+NETWORK_LABELS = {'CAPTURE_INFO': 'Network capture', 'NET_CONVERSATION': 'Conversation', 'DNS_QUERY': 'DNS lookup', 'HTTP_REQUEST': 'HTTP request',
+                  'TLS_HANDSHAKE': 'TLS connection'}
+PHONE_LABELS = {'PHONE_DEVICE': 'Phone', 'PHONE_MESSAGE': 'Message', 'PHONE_CALL': 'Call', 'PHONE_CONTACT': 'Contact', 'PHONE_APP': 'App',
+                'PHONE_WIFI': 'Wi-Fi network'}
 LABELS = ('EVIDENCE', 'NOTABLE', 'FOLLOW_UP')
 _ARTIFACT_TYPES = {
     'BROWSER': {'BROWSER_HISTORY', 'BROWSER_DOWNLOAD', 'BROWSER_COOKIE', 'BROWSER_SEARCH', 'BROWSER_BOOKMARK', 'BROWSER_AUTOFILL',
@@ -43,6 +48,8 @@ _ARTIFACT_TYPES = {
     'CHAT_CLOUD': set(CHAT_CLOUD_LABELS),
     'PROGRAM': {'EXECUTABLE'},
     'UNIX': {'SHELL_COMMAND', 'UNIX_EVENT', 'SCHEDULED_JOB', 'RECENT_DOCUMENT', 'WIFI_NETWORK', 'QUARANTINE_EVENT'},
+    'NETWORK': set(NETWORK_LABELS),
+    'PHONE': set(PHONE_LABELS),
     'ACTIVITY': {'PROGRAM_RUN', 'RECENT_FILE', 'RECYCLE_BIN_ITEM'},
     'ARTIFACT': {'RECOVERED_FILE', 'CARVED_FILE', 'EXTRACTED_FILE', 'MALWARE_INDICATOR'},
     'REGISTRY': {'USERASSIST', 'SHELLBAG', 'TYPED_PATH', 'TYPED_URL', 'EXPLORER_SEARCH', 'RECENT_DOC', 'RUN_MRU', 'PERSISTENCE',
@@ -87,7 +94,7 @@ def natural_key(item_type: str, doc) -> dict:
         return {'evidence_id': e, 'type': t, 'source_path': doc.get('source_path'), 'row_id': doc.get('row_id')}
     if item_type == 'EMAIL':
         return {'evidence_id': e, 'nk': doc.get('nk')}
-    if item_type in ('CHAT_CLOUD', 'PROGRAM', 'UNIX'):
+    if item_type in ('CHAT_CLOUD', 'PROGRAM', 'UNIX', 'NETWORK', 'PHONE'):
         return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
     if item_type == 'USB':
         return {'evidence_id': e, 'instance_id': doc.get('instance_id')}
@@ -210,6 +217,31 @@ def snapshot(item_type: str, doc) -> dict:
         who = doc.get('user')
         return {'title': (title or '')[:300], 'detail': f'{doc.get("os_family") or "Unix"} · {label}' + (f' · {who}' if who else ''),
                 'timestamp': _iso(when), 'source': doc.get('source_path') or doc.get('log_path')}
+    elif item_type == 'NETWORK':
+        title, when = {
+            'CAPTURE_INFO': (f'{doc.get("file_type")}: {doc.get("packets") or 0:,} packets', doc.get('first')),
+            'NET_CONVERSATION': (f'{doc.get("protocol")} {doc.get("client")}:{doc.get("client_port")} to {doc.get("server")}:{doc.get("server_port")}'
+                                 + (f' ({", ".join(doc["server_names"][:3])})' if doc.get('server_names') else ''), doc.get('first')),
+            'DNS_QUERY': (f'{doc.get("name")} ({doc.get("query_type")})' + (f': {", ".join(doc["answers"][:5])}' if doc.get('answers') else ''), doc.get('time')),
+            'HTTP_REQUEST': (f'{doc.get("method")} {doc.get("url") or doc.get("uri")}', doc.get('time')),
+            'TLS_HANDSHAKE': (f'{doc.get("server_name") or doc.get("server")} ({doc.get("server")}:{doc.get("server_port")})', doc.get('time')),
+        }.get(t, (t, None))
+        detail = f'{NETWORK_LABELS.get(t, t)}' + (f' · from {doc["client"]}' if doc.get('client') else '')
+        return {'title': (title or '')[:300], 'detail': detail, 'timestamp': _iso(when), 'source': 'Network capture'}
+    elif item_type == 'PHONE':
+        who = doc.get('party_name') or doc.get('chat_name') or doc.get('party')
+        title, when = {
+            'PHONE_DEVICE': (' '.join(x for x in (doc.get('manufacturer'), doc.get('model'), doc.get('name') and f'({doc["name"]})') if x), None),
+            'PHONE_MESSAGE': (doc.get('text') or ', '.join(a.get('name') or '' for a in doc.get('attachments') or []), doc.get('time')),
+            'PHONE_CALL': (f'{(doc.get("direction") or "").capitalize()} {doc.get("kind")} call with {who}', doc.get('time')),
+            'PHONE_CONTACT': (doc.get('name'), None),
+            'PHONE_APP': (f'{doc.get("name")} ({doc.get("app_id")})', doc.get('installed')),
+            'PHONE_WIFI': (doc.get('ssid'), doc.get('last_joined')),
+        }.get(t, (t, None))
+        detail = f'{doc.get("platform") or "Phone"} · {PHONE_LABELS.get(t, t)}'
+        if t == 'PHONE_MESSAGE':
+            detail += f' · {doc.get("app")} {"to" if doc.get("direction") == "outgoing" else "from"} {who}'
+        return {'title': (title or '')[:300], 'detail': detail, 'timestamp': _iso(when), 'source': doc.get('source_path')}
     elif item_type == 'SHADOW_FILE':
         change = {'DELETED_SINCE': 'deleted since', 'CHANGED_SINCE': 'changed since', 'ADDED_SINCE': 'added since'}.get(doc.get('change'), '')
         created = doc.get('store_created')

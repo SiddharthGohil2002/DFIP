@@ -15,7 +15,7 @@ set -eu
 apt-get update -qq >/dev/null && apt-get install -y -qq mtools dosfstools fdisk tzdata python3-hivex 7zip ffmpeg fonts-dejavu-core \
   gcc-mingw-w64-i686 binutils-mingw-w64-i686 upx-ucl osslsigncode openssl e2fsprogs >/dev/null
 # Encrypted ZIP and Office test files, and a PDF with an attachment.
-pip install -q --root-user-action=ignore pyzipper==0.4.0 msoffcrypto-tool==6.0.0 pypdf==6.19.0 pillow==11.3.0 piexif==1.1.3
+pip install -q --root-user-action=ignore pyzipper==0.4.0 msoffcrypto-tool==6.0.0 pypdf==6.19.0 pillow==11.3.0 piexif==1.1.3 scapy==2.6.1
 
 WORK=$(mktemp -d)
 TREE="$WORK/tree"
@@ -138,6 +138,11 @@ python3 scripts/test-image/make_unix.py "$WORK/linux" "$WORK/mac" "$OUT_DIR/unix
 rm -f "$OUT_DIR/dfip-linux-disk.dd" "$OUT_DIR/dfip-test-macos.tar"
 mke2fs -q -t ext4 -L build-01 -E root_owner=0:0 -d "$WORK/linux" "$OUT_DIR/dfip-linux-disk.dd" 32M
 tar -C "$WORK/mac" --format=pax --transform 's,^\.,Macintosh HD,' -cf "$OUT_DIR/dfip-test-macos.tar" .
+# The laptop's network traffic (make_network.py, scapy): the DNS lookups, the HTTP upload of the payroll file, a TLS
+# connection to pastebin; network-expected.json for the tests.
+python3 scripts/test-image/make_network.py "$OUT_DIR/dfip-test-capture.pcap" "$OUT_DIR/network-expected.json"
+# Alice's phones (make_phones.py): an Android and an iPhone full file system extraction; phones-expected.json for the tests.
+python3 scripts/test-image/make_phones.py "$OUT_DIR"
 
 rm -rf "$WORK"
 echo "Built $IMG"

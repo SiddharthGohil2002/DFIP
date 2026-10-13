@@ -505,14 +505,15 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
-STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc',
-                    'email', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
+# The standard profile's modules that apply to a disk image (network applies only to network captures).
+STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'phone', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies',
+                    'browser_depth', 'fileproc', 'email', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
-ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc', 'containers',
-               'email', 'chat_cloud', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content', 'unallocated',
-               'found_data']
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'phone', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth',
+               'fileproc', 'containers', 'email', 'chat_cloud', 'network', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content',
+               'unallocated', 'found_data']
 # What re-reading the file system index refreshes on evidence analysed with the standard profile.
-AFTER_FS_INDEX = ['fs_index', 'artifacts', 'registry', 'unix', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc', 'email', 'chat_cloud',
+AFTER_FS_INDEX = ['fs_index', 'artifacts', 'registry', 'unix', 'phone', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc', 'email', 'chat_cloud',
                   'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
 
 
@@ -603,7 +604,7 @@ def t_modules():
     s = j['result']['summary']
     same = lambda counts: all(counts.get(k) == C['COUNTS'][k] for k in ('files', 'deleted_files', 'browser_history', 'usb_devices', 'programs_run'))
     check('the quick profile runs the file system index and artifacts only (no file hashing or YARA)',
-          s['plan'] == ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix'] and 'yara_matches' not in s['counts']
+          s['plan'] == ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'phone'] and 'yara_matches' not in s['counts']
           and 'files_hashed' not in s['counts'] and same(s['counts']),
           (s.get('plan'), s.get('counts')))
     j = _analyse(inv, qe, {'modules': ['yara']})
@@ -3962,6 +3963,341 @@ def t_plaso():
     C['PLASO_IMPORT'] = r.json.get('import_id')
 
 
+CAPTURE, NET_EXPECTED = Path('/testdata/dfip-test-capture.pcap'), Path('/testdata/network-expected.json')
+ANDROID_ZIP, IPHONE_ZIP = Path('/testdata/dfip-test-android.zip'), Path('/testdata/dfip-test-iphone.zip')
+PHONES_EXPECTED = Path('/testdata/phones-expected.json')
+HTTP_METHODS = (b'GET ', b'POST ', b'PUT ', b'HEAD ', b'DELETE ', b'OPTIONS ', b'PATCH ')
+# The standard profile's modules that apply to a network capture (it has no file system).
+CAPTURE_MODULES = ['network', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
+
+
+def _u(v):
+    d = iso(v) if isinstance(v, str) else v
+    return d.replace(tzinfo=timezone.utc) if isinstance(d, datetime) and d.tzinfo is None else d
+
+
+def _pcap_truth(path):
+    """A capture read by dpkt, independently of tshark: packets and their span, DNS questions, HTTP request lines, TLS
+    server names, and conversations (protocol and both ends) with their packets."""
+    import socket
+    import dpkt
+    t = {'packets': 0, 'first': None, 'last': None, 'dns': {}, 'http': [], 'sni': [], 'convs': {}}
+    with open(path, 'rb') as f:
+        head = f.read(4)
+        f.seek(0)
+        rd = dpkt.pcapng.Reader(f) if head == b'\x0a\x0d\x0d\x0a' else dpkt.pcap.Reader(f)
+        for ts, buf in rd:
+            t['packets'] += 1
+            t['first'] = ts if t['first'] is None else min(t['first'], ts)
+            t['last'] = ts if t['last'] is None else max(t['last'], ts)
+            try:
+                ip = dpkt.ethernet.Ethernet(buf).data
+            except Exception:
+                continue
+            if isinstance(ip, dpkt.ip.IP):
+                fam, p = socket.AF_INET, ip.p
+            elif isinstance(ip, dpkt.ip6.IP6):
+                fam, p = socket.AF_INET6, ip.nxt
+            else:
+                continue
+            src, dst, l4 = socket.inet_ntop(fam, ip.src), socket.inet_ntop(fam, ip.dst), ip.data
+            proto = {6: 'TCP', 17: 'UDP'}.get(p, 'IP')
+            ports = (str(l4.sport), str(l4.dport)) if proto != 'IP' else ('', '')
+            a, b = (src, ports[0]), (dst, ports[1])
+            key = (proto,) + ((a, b) if a <= b else (b, a))
+            t['convs'][key] = t['convs'].get(key, 0) + 1
+            if proto == 'UDP' and 53 in (l4.sport, l4.dport):
+                try:
+                    d = dpkt.dns.DNS(l4.data)
+                except Exception:
+                    continue
+                if d.qr == dpkt.dns.DNS_Q and d.qd:
+                    t['dns'][d.qd[0].name] = t['dns'].get(d.qd[0].name, 0) + 1
+            elif proto == 'TCP' and l4.data:
+                data = bytes(l4.data)
+                if data.startswith(HTTP_METHODS):
+                    lines = data.split(b'\r\n')
+                    method, uri = lines[0].decode('latin-1').split(' ')[:2]
+                    host = next((h.split(b':', 1)[1].strip().decode('latin-1') for h in lines[1:] if h.lower().startswith(b'host:')), None)
+                    t['http'].append((method, host, uri))
+                elif data[:1] == b'\x16' and len(data) > 5 and data[5] == 1:
+                    for rec in dpkt.ssl.tls_multi_factory(data)[0]:
+                        hs = dpkt.ssl.TLSHandshake(rec.data)
+                        if hs.type == 1:
+                            t['sni'] += [ed[5:5 + int.from_bytes(ed[3:5], 'big')].decode() for et, ed in hs.data.extensions if et == 0]
+    return t
+
+
+def _member_bytes(entry_id, token):
+    """A member's bytes, read through the paged content endpoint (raw serves only pictures and PDFs)."""
+    out, start = b'', 0
+    while True:
+        r = get(f'/api/forensics/members/{entry_id}/content?start={start}&length=1048576', token)
+        if r.status != 200:
+            return None
+        out += base64.b64decode(r.json['data_b64'])
+        start += r.json['length']
+        if r.json['eof'] or not r.json['length']:
+            return out
+
+
+def _conv_key(c):
+    a, b = (c['client'], str(c['client_port'] if c['client_port'] is not None else '')), (c['server'], str(c['server_port'] if c['server_port'] is not None else ''))
+    return (c['protocol'],) + ((a, b) if a <= b else (b, a))
+
+
+@section('12z Network captures (the scenario capture vs the generator and dpkt, and Plaso\'s test.pcap vs dpkt)')
+def t_network():
+    from collections import Counter
+    inv = C['INVESTIGATOR']
+    db = mongo()
+    if not CAPTURE.exists() or not NET_EXPECTED.exists():
+        note('Network captures', 'make-test-image.sh has not made them; skipped')
+        return
+    want = json.loads(NET_EXPECTED.read_text())
+    truth = _pcap_truth(CAPTURE)
+    case = C['NET_CASE'] = post('/api/cases', inv, {'name': 'Network capture', 'priority': 'LOW'}).json['case_id']
+    r = upload(inv, case, CAPTURE.read_bytes(), CAPTURE.name)
+    ev = r.json['evidence_id']
+    j = _analyse(inv, ev, {'profile': 'standard'})
+    s = (j.get('result') or {}).get('summary') or {}
+    check('a pcap is taken as a network capture; only the modules that apply to one run (it has no file system)',
+          r.status == 200 and r.json.get('format') == 'PCAP' and j['status'] == 'COMPLETED' and s.get('plan') == CAPTURE_MODULES
+          and 'fs_index' in (s.get('not_applicable') or []), (r.status, r.json.get('format'), j.get('error'), s.get('plan'), s.get('not_applicable')))
+    net = lambda t, extra='': get(f'/api/forensics/network?case_id={case}&type={t}&limit=1000{extra}', inv).json
+    ci = (net('CAPTURE_INFO')['data'] or [{}])[0]
+    check("the capture's packets, first and last packet equal the generator's and dpkt's",
+          ci.get('packets') == want['packets'] == truth['packets'] and _u(ci['first']) == iso(want['first']) and _u(ci['last']) == iso(want['last'])
+          and abs(_u(ci['first']).timestamp() - truth['first']) < 0.001 and abs(_u(ci['last']).timestamp() - truth['last']) < 0.001
+          and 'pcap' in (ci.get('file_type') or '').lower(), (ci, truth['packets'], truth['first'], truth['last']))
+    dns = net('DNS_QUERY')['data']
+    check('DNS lookups: each name with its time and answer (the generator), as many as dpkt reads',
+          [(d['name'], _u(d['time']), d['answers']) for d in dns] == [(x['name'], iso(x['time']), [x['answer']]) for x in want['dns']]
+          and Counter(d['name'] for d in dns) == truth['dns'], (dns, truth['dns']))
+    http = net('HTTP_REQUEST')['data']
+    check('HTTP requests: method, host, path and time (the generator), the same request lines as dpkt, each with its response',
+          [(h['method'], h['host'], h['uri'], _u(h['time'])) for h in http] == [(x['method'], x['host'], x['uri'], iso(x['time'])) for x in want['http']]
+          and sorted((h['method'], h['host'], h['uri']) for h in http) == sorted(truth['http']) and all(h.get('response_code') == 200 for h in http),
+          ([(h['method'], h['host'], h['uri'], h['time'], h.get('response_code')) for h in http], truth['http']))
+    upload_ = next((h for h in http if h['method'] == 'POST'), {})
+    sent = [f for f in upload_.get('files') or [] if f['direction'] == 'request' and f['part']]
+    got = [f for h in http if h['method'] == 'GET' for f in h.get('files') or [] if f['direction'] == 'response']
+    check('the upload: payroll-export.csv sent in the form post, with the SHA-256 of the file on the laptop; the logo received',
+          [(f['name'], f['sha256']) for f in sent] == [('payroll-export.csv', want['payroll_sha256'])] and [f['sha256'] for f in got] == [want['png_sha256']],
+          (upload_.get('files'), got))
+    tls = net('TLS_HANDSHAKE')['data']
+    check('TLS: the server name the client asked for (pastebin.com), as dpkt reads it',
+          [(h['server_name'], h['server'], h['server_port']) for h in tls] == [(x['server_name'], x['ip'], x['port']) for x in want['sni']]
+          and [h['server_name'] for h in tls] == truth['sni'], (tls, truth['sni']))
+    convs = net('NET_CONVERSATION')['data']
+    names = {c['server']: c.get('server_names') for c in convs}
+    check('conversations: the same ends and packets as dpkt, the laptop as the client, servers named from DNS, TLS and HTTP',
+          {_conv_key(c): c['packets'] for c in convs} == truth['convs']
+          and {(c['protocol'], c['client'], c['server']) for c in convs} == {(x['proto'], x['a'], x['b']) for x in want['conversations']}
+          and names.get('203.0.113.80') == ['filetransfer.example.net'] and names.get('203.0.113.81') == ['pastebin.com'], (convs, truth['convs']))
+    files = get(f'/api/forensics/network/files?case_id={case}', inv).json['data']
+    pay = next((f for f in files if f['name'] == 'payroll-export.csv'), None)
+    raw = _member_bytes(pay['_id'], inv) if pay else None
+    check('the files HTTP carried are members of the capture: the uploaded file opens with its own bytes, typed as text',
+          pay is not None and raw is not None and hashlib.sha256(raw).hexdigest() == want['payroll_sha256']
+          and pay['sha256'] == want['payroll_sha256'] and (pay.get('mime') or '').startswith('text/') and pay['container']['note'] == 'uploaded file',
+          (pay, raw is not None))
+    tl = get(f'/api/forensics/timeline?case_id={case}&type=HTTP_REQUEST,DNS_QUERY,TLS_HANDSHAKE&limit=100', inv).json['data']
+    check('the timeline has the lookups, the requests (the upload named) and the TLS connection',
+          Counter(e['type'] for e in tl) == {'DNS_QUERY': len(dns), 'HTTP_REQUEST': len(http), 'TLS_HANDSHAKE': len(tls)}
+          and any('POST' in e['description'] and 'payroll-export.csv' in e['description'] for e in tl), [e['description'] for e in tl])
+    check('disk-only views refuse a capture (409)', get(f'/api/forensics/evidence/{ev}/partitions', inv).status == 409)
+    o = get(f'/api/cases/{case}/overview', inv).json['counts']
+    exp = {'captures': 1, 'http_requests': len(http), 'dns_queries': len(dns), 'tls_handshakes': len(tls), 'net_conversations': len(convs),
+           'capture_files': get(f'/api/forensics/network/files?case_id={case}&limit=1', inv).json['total'], 'http_uploads': net('HTTP_REQUEST', '&uploads=true')['total']}
+    check('the overview counts equal the lists (one upload)', {k: o.get(k) for k in exp} == exp and exp['http_uploads'] == 1, ({k: o.get(k) for k in exp}, exp))
+    s_ = get(f'/api/forensics/search?case_id={case}&q=filetransfer', inv).json
+    check('keyword search finds the lookups and requests', s_['totals'].get('network', 0) >= len(dns) and s_['totals'].get('network', 0) >= 3, s_['totals'])
+    check('another investigator sees none of it (404); the files list checks the evidence belongs to the case',
+          get(f'/api/forensics/network?case_id={case}&type=HTTP_REQUEST', C['INV2']).status == 404
+          and get(f'/api/forensics/network/files?case_id={case}', C['INV2']).status == 404
+          and get(f'/api/forensics/network/files?case_id={case}&evidence_id={C["E"]}', inv).json['total'] == 0)
+    check('a viewer cannot look a host up with threat intelligence (403); an investigator can',
+          post(f'/api/threat-intel/domain/filetransfer.example.net?case_id={case}', C['VIEWER']).status == 403
+          and post(f'/api/threat-intel/domain/filetransfer.example.net?case_id={case}', inv).status == 200)
+    t = post('/api/tags', inv, {'case_id': case, 'item_type': 'NETWORK', 'item_id': upload_['_id'], 'label': 'EVIDENCE'})
+    j = _analyse(inv, ev, {'modules': ['network']})
+    after = get(f'/api/tags?case_id={case}', inv).json['data']
+    check('a tagged request survives a re-analysis (re-linked by its natural key)',
+          t.status == 200 and t.json['snapshot']['title'].startswith('POST http://filetransfer.example.net/upload') and j['status'] == 'COMPLETED'
+          and len(after) == 1 and after[0]['resolved'] and after[0]['item_id'] != upload_['_id'], (t, after))
+    rep = post(f'/api/reports?case_id={case}', inv)
+    pdf = OUT / 'report-network.pdf'
+    if rep.status == 200:
+        pdf.write_bytes(get(f"/api/reports/{rep.json['report_id']}/download", inv).body)
+    text = ' '.join(sh('pdftotext', '-layout', str(pdf), '-').stdout.decode(errors='replace').split()) if pdf.exists() else ''
+    check("the report's Network captures section lists the capture, the upload with the file it sent, the lookups and the TLS server",
+          rep.status == 200 and all(x in text for x in ('POST http://filetransfer.example.net/upload', 'sent payroll-export.csv', 'pastebin.com', '203.0.113.81',
+                                                         f'{want["packets"]}')), (rep.status, text[text.find('Network captures'):][:600]))
+
+    # A real capture: Plaso's test.pcap, checked against dpkt.
+    pcap = sample('plaso', 'test.pcap')
+    if not pcap:
+        note("Plaso's test.pcap", 'sample unavailable (fetch-samples.sh); skipped')
+        return
+    t2 = _pcap_truth(pcap)
+    ev2 = upload(inv, case, pcap.read_bytes(), 'test.pcap').json['evidence_id']
+    j = _analyse(inv, ev2, {'profile': 'quick'})
+    q = lambda t: list(db.forensic_artifacts.find({'evidence_id': ev2, 'type': t}))
+    ci = (q('CAPTURE_INFO') or [{}])[0]
+    check("Plaso's test.pcap (a real capture): the quick profile runs only the network module; packets, first and last packet as dpkt reads them",
+          j['status'] == 'COMPLETED' and j['result']['summary']['plan'] == ['network'] and ci.get('packets') == t2['packets']
+          and abs(_dt(ci['first']).timestamp() - t2['first']) < 0.001 and abs(_dt(ci['last']).timestamp() - t2['last']) < 0.001,
+          (j.get('error'), ci.get('packets'), t2['packets']))
+    check("test.pcap: every DNS question dpkt reads, as often; the same HTTP request lines; the same TLS server names",
+          Counter(d['name'] for d in q('DNS_QUERY')) == t2['dns'] and sorted((h['method'], h['host'], h['uri']) for h in q('HTTP_REQUEST')) == sorted(t2['http'])
+          and sorted(h['server_name'] for h in q('TLS_HANDSHAKE') if h['server_name']) == sorted(t2['sni']),
+          (len(t2['dns']), len(t2['http']), t2['sni']))
+    convs2 = q('NET_CONVERSATION')
+    check('test.pcap: the same conversations as dpkt, with the same packets each', {_conv_key(c): c['packets'] for c in convs2} == t2['convs'],
+          (len(convs2), len(t2['convs'])))
+    bodies = list(db.fs_entries.find({'evidence_id': ev2, 'container.kind': 'capture'}))
+    served = [_member_bytes(str(b['_id']), inv) for b in bodies]
+    check('test.pcap: the bodies HTTP carried are kept, each served with the bytes its SHA-256 was taken of',
+          len(bodies) > 0 and all(x is not None and hashlib.sha256(x).hexdigest() == b['sha256'] for x, b in zip(served, bodies)),
+          [(b['path'], x is not None) for x, b in zip(served, bodies)][:5])
+
+
+@section('12z2 Phones (an Android and an iPhone full file system extraction vs the generator)')
+def t_phones():
+    inv = C['INVESTIGATOR']
+    db = mongo()
+    if not (ANDROID_ZIP.exists() and IPHONE_ZIP.exists() and PHONES_EXPECTED.exists()):
+        note('Phones', 'make-test-image.sh has not made them; skipped')
+        return
+    want = json.loads(PHONES_EXPECTED.read_text())
+    A_, I_ = want['android'], want['iphone']
+    case = C['PHONE_CASE'] = post('/api/cases', inv, {'name': 'Phones', 'priority': 'LOW'}).json['case_id']
+    ea = upload(inv, case, ANDROID_ZIP.read_bytes(), ANDROID_ZIP.name).json['evidence_id']
+    j = _analyse(inv, ea, {'profile': 'standard'})
+    docs = lambda t, eid=ea: list(db.forensic_artifacts.find({'evidence_id': eid, 'type': t}))
+    when = lambda x: _dt(x['time']).isoformat()
+    pkg = db.evidence.find_one({'evidence_id': ea}).get('package') or {}
+    dev = (docs('PHONE_DEVICE') or [{}])[0]
+    tz = (db.analysis_facts.find_one({'evidence_id': ea}) or {}).get('tz_probe') or {}
+    D = A_['device']
+    check('Android: the root found as a phone; maker, model and version (build.prop), name (settings in Android binary XML), time zone (persistent properties)',
+          j['status'] == 'COMPLETED' and [r['os'] for r in pkg.get('roots', [])] == ['android']
+          and (dev.get('manufacturer'), dev.get('model'), dev.get('os_version'), dev.get('name'), dev.get('time_zone')) == (D['manufacturer'], D['model'], D['os_version'], D['name'], D['zone'])
+          and (tz.get('zone'), tz.get('source')) == (D['zone'], 'system'), (j.get('error'), pkg.get('roots'), dev, tz))
+    msgs = sorted(docs('PHONE_MESSAGE'), key=lambda m: _dt(m['time']))
+    sms = [m for m in msgs if m['app'] == 'SMS']
+    check('SMS: each message with its time, number, direction and text; the other side named from the contacts',
+          [{'time': when(m), 'party': m['party'], 'direction': m['direction'], 'text': m['text']} for m in sms] == A_['sms']
+          and {m['party']: m['party_name'] for m in sms} == {'+12125550147': 'Mom', '+442079460958': 'Dmitri K'}, sms)
+    mms = [m for m in msgs if m['app'] == 'MMS']
+    att = ((mms[0].get('attachments') if mms else None) or [{}])[0]
+    pic = db.fs_entries.find_one({'evidence_id': ea, 'path': A_['mms']['attachment_path']}) or {}
+    M_ = A_['mms']
+    check('MMS: the text and the picture, linked to the file in the extraction (with the SHA-256 it was generated with)',
+          len(mms) == 1 and (when(mms[0]), mms[0]['party'], mms[0]['direction'], mms[0]['text']) == (M_['time'], M_['party'], M_['direction'], M_['text'])
+          and att.get('name') == M_['attachment'] and (att.get('file') or {}).get('path') == M_['attachment_path'] and pic.get('sha256') == M_['attachment_sha256'],
+          (mms, pic.get('sha256')))
+    f = att.get('file') or {}
+    pv = get(f"/api/forensics/evidence/{ea}/preview?inode={urllib.parse.quote(f.get('inode') or '', safe='')}&offset=0&volume_id={f.get('volume_id')}", inv)
+    lst = get(f'/api/forensics/evidence/{ea}/files?volume_id=pkg&limit=1', inv)
+    check('the picture opens in the file viewer by its package path and volume (pkg); the file list takes the volume too',
+          pv.status == 200 and pv.json.get('kind') == 'image' and lst.status == 200 and lst.json['total'] > 0
+          and get(f"/api/forensics/evidence/{ea}/preview?inode={urllib.parse.quote(f.get('inode') or '', safe='')}&volume_id=pkg-z", inv).status == 404,
+          (pv, lst.status))
+    wa = [m for m in msgs if m['app'] == 'WhatsApp']
+    check('WhatsApp (msgstore.db): the download link sent to dmitri and his answer, named from the contacts',
+          [{'time': when(m), 'direction': m['direction'], 'text': m['text'], 'party': m['party']} for m in wa] == A_['whatsapp']
+          and all(m['party_name'] == 'Dmitri K' for m in wa), wa)
+    calls = sorted(docs('PHONE_CALL'), key=lambda c: _dt(c['time']))
+    check('calls: the outgoing call to dmitri (127 s) and the missed call from Bob',
+          [{'time': when(c), 'party': c['party'], 'direction': c['direction'], 'duration': c['duration']} for c in calls] == A_['calls']
+          and [c['party_name'] for c in calls] == ['Dmitri K', 'Bob Builder'], calls)
+    contacts = {c['name']: c['numbers'] + c['emails'] for c in docs('PHONE_CONTACT') if c['source'] == 'Contacts'}
+    apps = docs('PHONE_APP')
+    check('contacts with numbers and addresses; the apps the user installed (packages.xml in binary XML) with their install times, '
+          'Signal and Proton Mail flagged, the system app left out',
+          contacts == A_['contacts'] and {a['app_id']: _dt(a['installed']).isoformat() for a in apps} == A_['apps']
+          and sorted(a['app_id'] for a in apps if a['notable']) == ['ch.protonmail.android', 'org.thoughtcrime.securesms'] and dev.get('system_apps') == 1,
+          (contacts, [(a['app_id'], a['installed'], a['notable']) for a in apps]))
+    everything = json.dumps(list(db.forensic_artifacts.find({'evidence_id': ea}, {'_id': 0})), default=str)
+    check("saved Wi-Fi networks (the competitor's guest network), never their passwords",
+          sorted(w['ssid'] for w in docs('PHONE_WIFI')) == sorted(A_['wifi']) and 'not-a-real-key' not in everything, docs('PHONE_WIFI'))
+    chrome = [b for b in docs('BROWSER_HISTORY') if b.get('browser') == 'Chrome']
+    check('Chrome on Android: the visit to the download link', [b['url'] for b in chrome] == [A_['chrome']], chrome)
+
+    # iPhone.
+    ei = upload(inv, case, IPHONE_ZIP.read_bytes(), IPHONE_ZIP.name).json['evidence_id']
+    j = _analyse(inv, ei, {'profile': 'standard'})
+    pkg = db.evidence.find_one({'evidence_id': ei}).get('package') or {}
+    dev = (docs('PHONE_DEVICE', ei) or [{}])[0]
+    tz = (db.analysis_facts.find_one({'evidence_id': ei}) or {}).get('tz_probe') or {}
+    D = I_['device']
+    check('iPhone: the root found as an iPhone, not a Mac; name, version and time zone from its own records',
+          j['status'] == 'COMPLETED' and [r['os'] for r in pkg.get('roots', [])] == ['ios']
+          and (dev.get('name'), dev.get('os_version'), dev.get('time_zone')) == (D['name'], D['os_version'], D['zone']) and tz.get('zone') == D['zone']
+          and not docs('COMPUTER_INFO', ei) and not docs('SHELL_COMMAND', ei), (j.get('error'), pkg.get('roots'), dev, tz))
+    msgs = sorted(docs('PHONE_MESSAGE', ei), key=lambda m: _dt(m['time']))
+    im = [m for m in msgs if m['app'] != 'WhatsApp']
+    pic = next((a for m in im for a in m.get('attachments') or []), {})
+    check("Messages (sms.db, nanosecond times): the SMS from Mom and the iMessages with dmitri's address, named from the contacts; "
+          'the picture he sent linked to the file in the extraction',
+          [{'time': when(m), 'party': m['party'], 'app': m['app'], 'direction': m['direction'], 'text': m['text']} for m in im] == I_['messages']
+          and [m['party_name'] for m in im] == ['Mom', 'Dmitri K', 'Dmitri K'] and pic.get('name') == I_['attachment']
+          and (pic.get('file') or {}).get('path') == I_['attachment_path'], im)
+    wa = [m for m in msgs if m['app'] == 'WhatsApp']
+    check('WhatsApp (ChatStorage.sqlite): the two messages about deleting the chats',
+          [{'time': when(m), 'direction': m['direction'], 'text': m['text']} for m in wa] == I_['whatsapp'] and all(m['party_name'] == 'Dmitri K' for m in wa), wa)
+    calls = docs('PHONE_CALL', ei)
+    C_ = I_['call']
+    check('CallHistory: the outgoing FaceTime audio call with dmitri, five minutes',
+          [(when(c), c['party'], c['kind'], c['direction'], c['duration'], c['party_name']) for c in calls]
+          == [(C_['time'], C_['party'], C_['kind'], C_['direction'], C_['duration'], 'Dmitri K')], calls)
+    apps = docs('PHONE_APP', ei)
+    safari = [b['url'] for b in docs('BROWSER_HISTORY', ei) if b.get('browser') == 'Safari']
+    wifi = [(w['ssid'], _dt(w['last_joined']).isoformat()) for w in docs('PHONE_WIFI', ei)]
+    check('contacts (AddressBook); apps with their versions (Info.plist), Signal and Proton Mail flagged; Safari history; Wi-Fi joined',
+          {c['name']: c['numbers'] + c['emails'] for c in docs('PHONE_CONTACT', ei)} == I_['contacts']
+          and {a['app_id']: a['version'] for a in apps} == I_['apps']
+          and sorted(a['app_id'] for a in apps if a['notable']) == ['ch.protonmail.protonmail', 'org.whispersystems.signal']
+          and safari == [I_['safari']] and wifi == [(I_['wifi']['ssid'], I_['wifi']['last_joined'])], (apps, safari, wifi))
+
+    # The API, counts, search, timeline, tags and access.
+    ph = lambda t, extra='': get(f'/api/forensics/phones?case_id={case}&type={t}&limit=1{extra}', inv).json
+    res = get(f'/api/forensics/phones?case_id={case}&type=PHONE_MESSAGE&whatsapp=false', inv).json
+    n_wa = db.forensic_artifacts.count_documents({'case_id': case, 'type': 'PHONE_MESSAGE', 'app': 'WhatsApp'})
+    check('the API lists both phones\' messages (WhatsApp apart), oldest first, with the conversations for the filter',
+          res['total'] == len(sms) + len(mms) + len(im) and [m['time'] for m in res['data']] == sorted(m['time'] for m in res['data'])
+          and any(c['name'] == 'Dmitri K' for c in res['conversations']) and ph('PHONE_MESSAGE', '&whatsapp=true')['total'] == n_wa == 4,
+          (res['total'], res.get('conversations')))
+    o = get(f'/api/cases/{case}/overview', inv).json['counts']
+    exp = {'phones': 2, 'phone_messages': res['total'], 'whatsapp_messages': n_wa, 'phone_calls': ph('PHONE_CALL')['total'],
+           'phone_contacts': ph('PHONE_CONTACT')['total'], 'phone_apps': ph('PHONE_APP')['total'], 'phone_apps_notable': ph('PHONE_APP', '&notable=true')['total'],
+           'phone_wifi': ph('PHONE_WIFI')['total']}
+    check('the overview counts equal the lists', {k: o.get(k) for k in exp} == exp and exp['phone_apps_notable'] == 4, ({k: o.get(k) for k in exp}, exp))
+    tl = get(f'/api/forensics/timeline?case_id={case}&type=PHONE_MESSAGE,PHONE_CALL&limit=100', inv).json['data']
+    check('the timeline has every message and call, the WhatsApp link among them',
+          len(tl) == res['total'] + n_wa + exp['phone_calls'] and any('WhatsApp to Dmitri K' in e['description'] and 'filetransfer' in e['description'] for e in tl),
+          [e['description'] for e in tl][:10])
+    s_ = get(f'/api/forensics/search?case_id={case}&q=dmitri', inv).json
+    check('keyword search finds the messages, calls and contacts', s_['totals'].get('phone', 0) >= 8, s_['totals'])
+    first = res['data'][0]
+    t = post('/api/tags', inv, {'case_id': case, 'item_type': 'PHONE', 'item_id': first['_id'], 'label': 'NOTABLE'})
+    check('a message can be tagged, with its text as the title', t.status == 200 and t.json['snapshot']['title'] == first['text'], t)
+    check('a viewer cannot tag (403); another investigator sees none of it (404)',
+          post('/api/tags', C['VIEWER'], {'case_id': case, 'item_type': 'PHONE', 'item_id': first['_id']}).status == 403
+          and get(f'/api/forensics/phones?case_id={case}&type=PHONE_MESSAGE', C['INV2']).status == 404)
+    rep = post(f'/api/reports?case_id={case}', inv)
+    pdf = OUT / 'report-phones.pdf'
+    if rep.status == 200:
+        pdf.write_bytes(get(f"/api/reports/{rep.json['report_id']}/download", inv).body)
+    text = ' '.join(sh('pdftotext', '-layout', str(pdf), '-').stdout.decode(errors='replace').split()) if pdf.exists() else ''
+    check("the report's Phones section lists both phones, the messages and calls with dmitri, the flagged apps and the Wi-Fi network",
+          rep.status == 200 and all(x in text for x in ('Pixel 8', 'iOS 17.6.1', 'Perfect. Delete everything.', 'Dmitri K', 'FaceTime audio',
+                                                         'org.thoughtcrime.securesms', 'encrypted messaging', 'Rival-Guest'))
+          and 'not-a-real-key' not in text, (rep.status, text[text.find('Phones'):][:600]))
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -4481,7 +4817,8 @@ def t_overview():
 
 ACTIVITY_EVENT_TYPES = ('BROWSER_VISIT,BROWSER_DOWNLOAD,USB_ACTIVITY,PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN,'
                         'PROGRAM_RUN_USERASSIST,PROGRAM_RUN_BAM,FOLDER_BROWSED,EXPLORER_SEARCH,TYPED_PATH,RECENT_DOC_OPENED,RUN_DIALOG,RDP_CONNECTION,'
-                        'LOGON,LOGOFF,JUMPLIST_OPENED,TIMELINE_ACTIVITY,FILE_DOWNLOADED,BROWSER_SEARCH,EMAIL_SENT,CHAT_CALL,CHAT_FILE_TRANSFER')
+                        'LOGON,LOGOFF,JUMPLIST_OPENED,TIMELINE_ACTIVITY,FILE_DOWNLOADED,BROWSER_SEARCH,EMAIL_SENT,CHAT_CALL,CHAT_FILE_TRANSFER,'
+                        'PHONE_MESSAGE,PHONE_CALL,HTTP_REQUEST')
 
 
 @section('28b Activity dashboard')
@@ -4776,7 +5113,7 @@ PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
              t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_email, t_chat_cloud, t_browser_depth,
-             t_comms_samples, t_media, t_malware, t_disk_formats, t_encrypted_volumes, t_shadow_copies, t_packages, t_unix, t_more_filesystems, t_plaso,
+             t_comms_samples, t_media, t_malware, t_disk_formats, t_encrypted_volumes, t_shadow_copies, t_packages, t_unix, t_more_filesystems, t_plaso, t_network, t_phones,
              t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],

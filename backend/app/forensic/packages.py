@@ -245,6 +245,15 @@ def _children(p: Path) -> dict[str, Path]:
 
 def _os_of(p: Path) -> str | None:
     kids = _children(p)
+    # Phones (full file system extractions): Android's /data/data next to /data/system or /system, iOS's /private/var/mobile.
+    if 'data' in kids:
+        data = _children(kids['data'])
+        if 'data' in data and ({'system', 'app', 'misc'} & set(data) or 'system' in kids):
+            return 'android'
+    if 'private' in kids:
+        var = _children(kids['private']).get('var')
+        if var is not None and 'mobile' in _children(var):
+            return 'ios'
     if 'users' in kids and ({'library', 'applications', 'private', 'system'} & set(kids)):
         return 'macos'
     if 'windows' in kids or ('users' in kids and ({'programdata', 'program files', '$recycle.bin', 'program files (x86)'} & set(kids))):

@@ -76,7 +76,7 @@ export function MediaPage() {
             {(cams.data?.data || []).map((x) => <option key={x.camera} value={x.camera}>{x.camera} ({x.items})</option>)}
           </select>
           <select className="select sm" style={{ width: 170 }} value={origin} onChange={(e) => setOrigin(e.target.value)} aria-label="Found">
-            <option value="">Found anywhere</option><option value="disk">On the disk</option><option value="archive">In archives</option>
+            <option value="">Found anywhere</option><option value="disk">On the disk</option><option value="archive">In archives</option><option value="capture">In network captures</option>
             <option value="email">In emails</option>
           </select>
           <label className="check"><input type="checkbox" checked={deleted} onChange={(e) => setDeleted(e.target.checked)} /> Deleted only</label>

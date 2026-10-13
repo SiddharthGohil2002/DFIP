@@ -143,7 +143,7 @@ export interface ModuleStatus {
 
 /** GET /jobs/analysis/modules: what an analysis job can run. */
 export interface AnalysisCatalog {
-  modules: { name: string; label: string; description: string; requires: string[]; version: string }[];
+  modules: { name: string; label: string; description: string; requires: string[]; version: string; kinds?: string[] }[];
   profiles: { name: string; label: string; modules: string[] }[];
   default_profile: string;
 }
@@ -207,6 +207,21 @@ export interface CaseCounts {
   recent_documents?: number;
   quarantine_events?: number;
   wifi_networks?: number;
+  captures?: number;
+  net_conversations?: number;
+  dns_queries?: number;
+  http_requests?: number;
+  http_uploads?: number;
+  tls_handshakes?: number;
+  capture_files?: number;
+  phones?: number;
+  phone_messages?: number;
+  whatsapp_messages?: number;
+  phone_calls?: number;
+  phone_contacts?: number;
+  phone_apps?: number;
+  phone_apps_notable?: number;
+  phone_wifi?: number;
   timeline_imports?: number;
   plaso_events?: number;
   browser_searches?: number;

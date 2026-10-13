@@ -572,6 +572,84 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
               for x in art.find(q).sort([('type', 1), ('time', 1)]).limit(MAX_ROWS)],
              [1.4, 1.1, 4.9], 'None were found.', total=art.count_documents(q), heading=H3)
 
+    # Network captures (module network).
+    nc_title = T('Network captures')
+    story.append(Paragraph(escape(nc_title), H2))
+    story.append(Paragraph('Captures read with tshark. A conversation starts at the side that sent its first packet; host names come '
+                           'from the capture\'s own DNS answers, TLS server names and HTTP Host headers. Files HTTP carried are indexed as '
+                           'members of the capture, so hash sets, YARA, ClamAV and content search cover them. Encrypted (TLS) traffic shows '
+                           'only the server name.', NOTE))
+    n = nc_title.split('.')[0]
+    q = {'case_id': cid, 'type': 'CAPTURE_INFO'}
+    _section(story, f'{n}.1 Captures', ['Evidence', 'Format', 'Packets', 'Bytes', 'First packet', 'Last packet', 'Conversations'],
+             [[x.get('evidence_id'), x.get('file_type'), x.get('packets'), x.get('bytes'), x.get('first'), x.get('last'), x.get('conversations')]
+              for x in art.find(q).sort('first', 1)],
+             [1.0, 1.3, 0.7, 0.9, 1.3, 1.3, 0.9], 'No network capture was analysed.', heading=H3)
+    q = {'case_id': cid, 'type': 'HTTP_REQUEST'}
+    files_of = lambda x: '; '.join(f'{"sent" if f.get("direction") == "request" else "received"} {f.get("name")} ({(f.get("sha256") or "")[:16]}…)'
+                                   for f in x.get('files') or [] if f.get('part') or f.get('direction') == 'response')
+    _section(story, f'{n}.2 HTTP requests and the files they carried', ['Time', 'Client', 'Request', 'Response', 'Files'],
+             [[x.get('time'), x.get('client'), f'{x.get("method")} {x.get("url") or x.get("uri")}',
+               ' '.join(str(v) for v in (x.get('response_code'), x.get('response_type')) if v), files_of(x)]
+              for x in art.find(q).sort('time', 1).limit(MAX_ROWS)],
+             [1.2, 0.9, 2.6, 1.0, 1.7], 'No HTTP requests.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'DNS_QUERY'}
+    _section(story, f'{n}.3 DNS lookups', ['Time', 'Client', 'Name', 'Type', 'Answers'],
+             [[x.get('time'), x.get('client'), x.get('name'), x.get('query_type'), ', '.join(x.get('answers') or []) or ('no answer' if not x.get('answered') else '')]
+              for x in art.find(q).sort('time', 1).limit(MAX_ROWS)],
+             [1.2, 0.9, 2.4, 0.5, 2.4], 'No DNS lookups.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'TLS_HANDSHAKE'}
+    _section(story, f'{n}.4 TLS connections (server names)', ['Time', 'Client', 'Server name', 'Server'],
+             [[x.get('time'), x.get('client'), x.get('server_name'), f'{x.get("server")}:{x.get("server_port")}']
+              for x in art.find(q).sort('time', 1).limit(MAX_ROWS)],
+             [1.3, 1.1, 3.0, 2.0], 'No TLS connections.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'NET_CONVERSATION'}
+    _section(story, f'{n}.5 Largest conversations', ['Protocol', 'Client', 'Server', 'Packets', 'Bytes', 'First', 'Last'],
+             [[x.get('protocol'), f'{x.get("client")}:{x.get("client_port") or ""}',
+               f'{x.get("server")}:{x.get("server_port") or ""}' + (f' ({", ".join(x["server_names"][:2])})' if x.get('server_names') else ''),
+               x.get('packets'), x.get('bytes'), x.get('first'), x.get('last')]
+              for x in art.find(q).sort('bytes', -1).limit(25)],
+             [0.6, 1.3, 2.2, 0.6, 0.8, 1.2, 1.2], 'No conversations.', total=art.count_documents(q), heading=H3)
+
+    # Phones (module phone).
+    ph_title = T('Phones')
+    story.append(Paragraph(escape(ph_title), H2))
+    story.append(Paragraph('Android and iOS full file system extractions. Messages and calls are read from the phone\'s own databases '
+                           '(including WhatsApp); the other party is named from the phone\'s contacts when a number or address matches. '
+                           'Times are UTC as the apps store them. Wi-Fi passwords are never read into DFIP.', NOTE))
+    n = ph_title.split('.')[0]
+    q = {'case_id': cid, 'type': 'PHONE_DEVICE'}
+    _section(story, f'{n}.1 Phones', ['Evidence', 'Phone', 'Name', 'System', 'Time zone', 'Messages', 'Calls', 'Contacts', 'Apps'],
+             [[x.get('evidence_id'), ' '.join(v for v in (x.get('manufacturer'), x.get('model')) if v) or x.get('platform'), x.get('name'),
+               f'{x.get("platform")} {x.get("os_version") or ""}'.strip(), x.get('time_zone'),
+               (x.get('messages') or 0) + (x.get('whatsapp_messages') or 0), x.get('calls'), x.get('contacts'), x.get('apps')]
+              for x in art.find(q).sort('evidence_id', 1)],
+             [0.9, 1.1, 1.1, 0.9, 1.2, 0.7, 0.5, 0.6, 0.5], 'No phone extraction was analysed.', heading=H3)
+    q = {'case_id': cid, 'type': 'PHONE_MESSAGE'}
+    att = lambda x: ', '.join(a.get('name') or '' for a in x.get('attachments') or [])
+    _section(story, f'{n}.2 Messages', ['Time', 'App', 'Direction', 'With', 'Text'],
+             [[x.get('time'), x.get('app'), x.get('direction'),
+               (x.get('chat_name') or x.get('party_name') or '') + (f' ({x["party"]})' if x.get('party') else ''),
+               (x.get('text') or '') + (f' [attached: {att(x)}]' if att(x) else '')]
+              for x in art.find(q).sort('time', 1).limit(MAX_ROWS)],
+             [1.2, 0.7, 0.7, 1.8, 3.1], 'No messages.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'PHONE_CALL'}
+    _section(story, f'{n}.3 Calls', ['Time', 'Kind', 'Direction', 'With', 'Duration (s)'],
+             [[x.get('time'), x.get('kind'), x.get('direction'), (x.get('party_name') or '') + (f' ({x["party"]})' if x.get('party') else ''),
+               x.get('duration')] for x in art.find(q).sort('time', 1).limit(MAX_ROWS)],
+             [1.3, 1.1, 1.0, 3.0, 1.0], 'No calls.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'PHONE_APP', 'notable': True}
+    _section(story, f'{n}.4 Apps that matter to an investigation', ['App', 'Identifier', 'Kind', 'Installed', 'Phone'],
+             [[x.get('name'), x.get('app_id'), x.get('category'), x.get('installed'), x.get('platform')]
+              for x in art.find(q).sort([('installed', 1), ('app_id', 1)]).limit(MAX_ROWS)],
+             [1.2, 2.4, 1.4, 1.4, 0.8], 'No encrypted messaging, VPN, anonymity, cleaning or file transfer apps were found.',
+             total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'PHONE_WIFI'}
+    _section(story, f'{n}.5 Saved Wi-Fi networks', ['Network', 'Security', 'Last joined', 'Router (MAC)', 'Phone'],
+             [[x.get('ssid'), x.get('security'), x.get('last_joined'), x.get('router_mac'), x.get('platform')]
+              for x in art.find(q).sort([('platform', 1), ('ssid', 1)]).limit(MAX_ROWS)],
+             [2.0, 1.4, 1.4, 1.4, 0.8], 'No saved Wi-Fi networks.', total=art.count_documents(q), heading=H3)
+
     # Malware indicators (modules yara, clamav, executables, reputation).
     mw_title = T('Malware indicators')
     story.append(Paragraph(escape(mw_title), H2))
@@ -642,6 +720,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
                  'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file', 'ENTITY': 'Found data',
                  'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity', 'USN': 'USN journal record', 'SHADOW_FILE': 'Shadow copy file', 'UNIX': 'Linux or macOS record',
+                 'NETWORK': 'Network capture record', 'PHONE': 'Phone record',
                  'EMAIL': 'Email', 'CHAT_CLOUD': 'Chat or cloud storage record', 'PROGRAM': 'Program'}
     _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
              [[(t.get('label') or '').replace('_', ' ').capitalize(),

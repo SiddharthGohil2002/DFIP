@@ -209,7 +209,8 @@ def _unpack(evidence: dict, db=None, actor: str = 'system') -> Path:
     evidence['package'] = package
     if db is not None:
         db['evidence'].update_one({'evidence_id': evidence['evidence_id']}, {'$set': {'package': package}})
-        where = ', '.join(f'{r["volume_id"]} = {r["path"] or "(top)"} ({r["os"] or "unknown system"})' for r in roots)
+        names = {'windows': 'Windows', 'linux': 'Linux', 'macos': 'macOS', 'android': 'Android phone', 'ios': 'iPhone or iPad'}
+        where = ', '.join(f'{r["volume_id"]} = {r["path"] or "(top)"} ({names.get(r["os"], "unknown system")})' for r in roots)
         db['chain_of_custody'].insert_one({
             'evidence_id': evidence['evidence_id'], 'case_id': evidence['case_id'], 'timestamp': package['unpacked_at'],
             'user_id': 'system', 'user_name': actor, 'action': 'PACKAGE_UNPACKED', 'sha256': info['manifest_sha256'], 'status': 'VERIFIED',

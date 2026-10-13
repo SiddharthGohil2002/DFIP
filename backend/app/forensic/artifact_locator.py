@@ -23,6 +23,9 @@ TARGETS = [
                                     r'/[^/]+/History$', re.I)),
     ('CHROMIUM_HISTORY', re.compile(r'^/Users/[^/]+/Library/Application Support/(?P<browser>Google/Chrome|Microsoft Edge|BraveSoftware/Brave-Browser|Chromium|Vivaldi)'
                                     r'/[^/]+/History$', re.I)),
+    # Android: the app's own data folder.
+    ('CHROMIUM_HISTORY', re.compile(r'^/data/(?:data|user/\d+)/(?P<browser>com\.android\.chrome|com\.chrome\.beta|com\.brave\.browser|com\.microsoft\.emmx'
+                                    r'|com\.sec\.android\.app\.sbrowser)/app_(?:chrome|sbrowser)/[^/]+/History$')),
     ('FIREFOX_PLACES', re.compile(r'^/(?:home/[^/]+|root)/\.mozilla/firefox/[^/]+/places\.sqlite$', re.I)),
     ('FIREFOX_PLACES', re.compile(r'^/Users/[^/]+/Library/Application Support/Firefox/Profiles/[^/]+/places\.sqlite$', re.I)),
     ('SYSTEM_HIVE', re.compile(r'^/Windows/System32/config/SYSTEM$', re.I)),
@@ -38,6 +41,8 @@ SQLITE_SIDECARS = ('-journal', '-wal')
 BROWSER_NAMES = {
     'google/chrome': 'Chrome', 'microsoft/edge': 'Edge', 'google-chrome': 'Chrome', 'microsoft-edge': 'Edge', 'microsoft edge': 'Edge',
     'bravesoftware/brave-browser': 'Brave', 'chromium': 'Chromium', 'vivaldi': 'Vivaldi',
+    'com.android.chrome': 'Chrome', 'com.chrome.beta': 'Chrome Beta', 'com.brave.browser': 'Brave', 'com.microsoft.emmx': 'Edge',
+    'com.sec.android.app.sbrowser': 'Samsung Internet',
 }
 
 

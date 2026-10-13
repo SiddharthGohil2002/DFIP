@@ -20,8 +20,8 @@ FIELDS = {'path': 1, 'name': 1, 'size': 1, 'deleted': 1, 'inode': 1, 'volume_id'
           'case_id': 1, 'sha256': 1, 'mime': 1, 'hash_status': 1, 'container.kind': 1, 'container.parent': 1, 'media': 1,
           'ocr.chars': 1, 'ocr.pages': 1}
 THUMB = re.compile(r'^[0-9a-f]{64}(-(scene|at)-\d{2})?\.jpg$')
-SOURCES = {'disk': {'container': {'$exists': False}}, 'archive': {'container': {'$exists': True}, 'container.kind': {'$ne': 'email'}},
-           'email': {'container.kind': 'email'}}
+SOURCES = {'disk': {'container': {'$exists': False}}, 'archive': {'container': {'$exists': True}, 'container.kind': {'$nin': ['email', 'capture']}},
+           'email': {'container.kind': 'email'}, 'capture': {'container.kind': 'capture'}}
 
 
 def _plain(doc):

@@ -29,6 +29,8 @@ import { EventLogsPage } from '../pages/EventLogs';
 import { NtfsPage } from '../pages/Ntfs';
 import { ShadowCopiesPage } from '../pages/ShadowCopies';
 import { UnixPage } from '../pages/Unix';
+import { NetworkPage } from '../pages/Network';
+import { PhonePage } from '../pages/Phone';
 import { EmailPage } from '../pages/Email';
 import { ChatCloudPage } from '../pages/ChatCloud';
 import { MediaPage } from '../pages/Media';
@@ -141,6 +143,8 @@ function Workspace() {
         <Route path="ntfs" element={c(<NtfsPage />)} />
         <Route path="shadow-copies" element={c(<ShadowCopiesPage />)} />
         <Route path="unix" element={c(<UnixPage />)} />
+        <Route path="network" element={c(<NetworkPage />)} />
+        <Route path="phones" element={c(<PhonePage />)} />
         <Route path="email" element={c(<EmailPage />)} />
         <Route path="chat-cloud" element={c(<ChatCloudPage />)} />
         <Route path="media" element={c(<MediaPage />)} />

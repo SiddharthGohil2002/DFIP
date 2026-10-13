@@ -22,7 +22,8 @@ class ContentModule(Module):
     description = ('Text of documents, PDFs, text files and the readable strings of other files, in a full-text index for '
                    'content search (deleted files included).')
     requires = ('fileproc',)
-    follows = ('containers', 'email', 'ocr')  # archive members, email attachments, and text read from pictures and scans
+    follows = ('containers', 'email', 'network', 'ocr')  # archive members, email attachments, and text read from pictures and scans
+    kinds = ('disk', 'logical', 'capture')  # files carried in a capture too
     weight = 30
     collections = ()
 

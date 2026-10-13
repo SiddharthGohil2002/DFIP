@@ -41,6 +41,8 @@ class UnixModule(Module):
         systems = []
         for fs in ctx.fact('fs_index', 'filesystems', []) or []:
             vid = fs['volume_id']
+            if fs.get('os') in ('android', 'ios'):
+                continue  # phones: module `phone`
             kind = fs.get('os') if fs.get('os') in ('linux', 'macos') else self._detect(vid)
             if kind:
                 self.vid, self.kind, self.docs, self.events = vid, kind, [], []
@@ -56,6 +58,8 @@ class UnixModule(Module):
     def _detect(self, vid):
         if self.src.find(vid, '/etc/passwd') or self.src.find(vid, '/etc/os-release'):
             return 'linux'
+        if self.src.find(vid, '/private/var/mobile/Library') or self.src.find(vid, '/private/var/mobile/Library/SMS/sms.db'):
+            return None  # an iPhone or iPad: module `phone`
         if self.src.find(vid, '/System/Library/CoreServices/SystemVersion.plist') or \
                 self.src.find(vid, '/Library/Preferences/SystemConfiguration/preferences.plist'):
             return 'macos'

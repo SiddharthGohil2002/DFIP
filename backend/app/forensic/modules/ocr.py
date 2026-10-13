@@ -21,7 +21,8 @@ class OcrModule(Module):
     description = ('Text read by OCR (tesseract, English) from pictures and from PDFs that are scans, for content search and found '
                    'data.')
     requires = ('fileproc',)
-    follows = ('containers', 'email', 'media')  # members; picture sizes (too small to hold text)
+    follows = ('containers', 'email', 'network', 'media')  # members; picture sizes (too small to hold text)
+    kinds = ('disk', 'logical', 'capture')  # files carried in a capture too
     weight = 25
     collections = ()
     fields = {'fs_entries': ('ocr',)}

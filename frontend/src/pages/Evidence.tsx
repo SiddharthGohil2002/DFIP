@@ -9,7 +9,7 @@ import type { Evidence } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, Hash, PageHeader, ProgressBar, StatusBadge, useToast } from '../ui';
 import { DeleteEvidenceModal } from './DeleteEvidence';
 
-const SUPPORTED = ['E01', 'EX01', 'RAW', 'DD', 'IMG', 'AFF', 'AFF4', 'VHD', 'VHDX', 'VMDK', 'QCOW2', 'QCOW'];
+const SUPPORTED = ['E01', 'EX01', 'RAW', 'DD', 'IMG', 'AFF', 'AFF4', 'VHD', 'VHDX', 'VMDK', 'QCOW2', 'QCOW', 'PCAP', 'PCAPNG', 'CAP'];
 /** A disk image file name: a known extension, an EnCase segment (.E02, .EAA, .Ex02) or a numbered part (.001). */
 const supportedName = (name: string) => {
   const ext = name.split('.').pop()?.toUpperCase() || '';
@@ -166,7 +166,7 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
   }
 
   return (
-    <Card title="Add a disk image" subtitle="E01 (with all its segments), raw/dd (also split into numbered parts .001, .002 ...), VHD, VHDX, VMDK, QCOW2 (with their parent disks), AFF, and collections of files as ZIP or TAR (KAPE, Velociraptor, CyLR, UAC). Choose every file of one image together; large images upload directly to the server's evidence store.">
+    <Card title="Add a disk image" subtitle="E01 (with all its segments), raw/dd (also split into numbered parts .001, .002 ...), VHD, VHDX, VMDK, QCOW2 (with their parent disks), AFF, collections of files as ZIP or TAR (KAPE, Velociraptor, CyLR, UAC, and Android and iOS full file system extractions), and network captures (pcap, pcapng). Choose every file of one image together; large images upload directly to the server's evidence store.">
       <div className="stack" style={{ gap: 12 }}>
         <div
           className={`dropzone ${over ? 'over' : ''}`}

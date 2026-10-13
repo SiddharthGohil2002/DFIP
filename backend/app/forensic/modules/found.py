@@ -19,6 +19,7 @@ class FoundDataModule(Module):
     description = ('Email addresses, web and IP addresses, phone numbers, card numbers (Luhn), IBANs (mod-97), Bitcoin and '
                    'Ethereum addresses (checksums) and Aadhaar numbers (Verhoeff) in the file contents.')
     requires = ('content',)
+    kinds = ('disk', 'logical', 'capture')  # files carried in a capture too
     follows = ('unallocated',)  # unallocated space is scanned too when it was read
     weight = 8
     collections = ('entities',)

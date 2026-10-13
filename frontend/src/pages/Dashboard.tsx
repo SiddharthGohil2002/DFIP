@@ -16,7 +16,7 @@ interface Dashboard {
   usb_spans: UsbSpan[];
 }
 
-const GROUP_NAMES: Record<string, string> = { web: 'web', usb: 'USB', windows: 'Windows activity', logon: 'logon and logoff', comms: 'email and chat', files: 'filesystem', other: 'other' };
+const GROUP_NAMES: Record<string, string> = { web: 'web', usb: 'USB', windows: 'Windows activity', logon: 'logon and logoff', comms: 'email, chat and phone', files: 'filesystem', other: 'other' };
 const MAX_DAYS = 14;
 
 export function DashboardPage() {

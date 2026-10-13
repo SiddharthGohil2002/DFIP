@@ -29,7 +29,8 @@ class ExecutablesModule(Module):
                    'Authenticode signature; packed, renamed and masquerading programs and suspicious imports flagged; capa '
                    'capabilities (with ATT&CK techniques) for those that stand out.')
     requires = ('fileproc',)
-    follows = ('containers', 'email')  # programs inside archives and attached to emails
+    follows = ('containers', 'email', 'network')  # programs inside archives and attached to emails
+    kinds = ('disk', 'logical', 'capture')  # files carried in a capture too
     weight = 10
     collections = ('forensic_artifacts',)
 

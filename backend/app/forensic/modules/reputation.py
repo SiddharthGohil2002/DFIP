@@ -15,6 +15,7 @@ class ReputationModule(Module):
     description = ("Looks up each program's SHA-256 on VirusTotal when automatic lookups are on for the case (off unless an "
                    'investigator turns them on) and a key is configured; only hashes are sent.')
     requires = ('executables',)
+    kinds = ('disk', 'logical', 'capture')  # files carried in a capture too
     weight = 3
     collections = ()
     fields = {'forensic_artifacts': ('vt',)}

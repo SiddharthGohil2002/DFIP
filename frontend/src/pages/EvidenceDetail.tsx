@@ -223,6 +223,9 @@ export function EvidenceDetailPage() {
 function AnalysisDetails({ summary }: { summary: any }) {
   const partitions: any[] = summary.partitions || [];
   const filesystems: any[] = summary.filesystems || [];
+  if ((summary.not_applicable || []).includes('fs_index')) {
+    return <p className="small muted">A network capture: it has no partitions or file systems. Its conversations, DNS lookups, HTTP requests and the files they carried are on the Network page.</p>;
+  }
   return (
     <div className="grid cols-2">
       <div>

@@ -12,6 +12,12 @@ const PROFILE_HINTS: Record<string, string> = {
   full: 'Everything, including the slower content modules.',
 };
 
+/** The kind of evidence, as the modules see it: a network capture, a logical package or a disk image. */
+function evidenceKind(evidence: Evidence): string {
+  const fmt = String(evidence.format || '').toUpperCase();
+  return fmt === 'PCAP' ? 'capture' : fmt === 'LOGICAL' ? 'logical' : 'disk';
+}
+
 /** Starts an analysis with a chosen profile, or a custom set of modules. */
 export function AnalysisOptionsModal({ evidence, open, onClose, onQueued }: {
   evidence: Evidence;
@@ -27,6 +33,7 @@ export function AnalysisOptionsModal({ evidence, open, onClose, onQueued }: {
   const [error, setError] = useState('');
   const c = catalog.data;
   const labelOf = (name: string) => c?.modules.find((m) => m.name === name)?.label ?? name;
+  const applies = (name: string) => { const k = c?.modules.find((m) => m.name === name)?.kinds; return !k || k.includes(evidenceKind(evidence)); };
 
   async function start() {
     setBusy(true);
@@ -61,7 +68,7 @@ export function AnalysisOptionsModal({ evidence, open, onClose, onQueued }: {
             <input type="radio" name="profile" checked={choice === p.name} onChange={() => setChoice(p.name)} />
             <span>
               <span className="strong">{p.label}</span>{p.name === c.default_profile && <span className="muted"> (default)</span>}
-              <div className="small muted">{PROFILE_HINTS[p.name]} Runs: {p.modules.map(labelOf).join(', ')}.</div>
+              <div className="small muted">{PROFILE_HINTS[p.name]} Runs: {p.modules.filter(applies).map(labelOf).join(', ')}.</div>
             </span>
           </label>
         ))}
@@ -76,7 +83,7 @@ export function AnalysisOptionsModal({ evidence, open, onClose, onQueued }: {
         )}
         {c && choice === 'custom' && (
           <div className="stack" style={{ gap: 6, paddingLeft: 24 }}>
-            {c.modules.map((m) => (
+            {c.modules.filter((m) => applies(m.name)).map((m) => (
               <label key={m.name} className="check" style={{ alignItems: 'flex-start' }}>
                 <input type="checkbox" checked={custom.includes(m.name)}
                   onChange={(ev) => setCustom(ev.target.checked ? [...custom, m.name] : custom.filter((x) => x !== m.name))} />
@@ -139,6 +146,11 @@ const COUNT_LABELS: [string, string, string][] = [
   ['timestomp_possible', 'file whose times may be altered', 'files whose times may be altered'],
   ['alternate_streams', 'alternate data stream', 'alternate data streams'], ['downloaded_files', 'downloaded file', 'downloaded files'],
   ['usn_records', 'USN journal record', 'USN journal records'], ['usb_devices_from_event_logs', 'USB device seen only in the event logs', 'USB devices seen only in the event logs'],
+  ['packets', 'packet', 'packets'], ['conversations', 'conversation', 'conversations'], ['dns_queries', 'DNS lookup', 'DNS lookups'],
+  ['http_requests', 'HTTP request', 'HTTP requests'], ['tls_server_names', 'TLS server name', 'TLS server names'],
+  ['capture_files', 'file carried', 'files carried'], ['phones', 'phone', 'phones'], ['phone_messages', 'message', 'messages'],
+  ['whatsapp_messages', 'WhatsApp message', 'WhatsApp messages'], ['phone_calls', 'call', 'calls'], ['phone_contacts', 'contact', 'contacts'],
+  ['phone_apps', 'app installed', 'apps installed'], ['phone_wifi', 'Wi-Fi network', 'Wi-Fi networks'],
   ['timeline_events', 'timeline event', 'timeline events'],
 ];
 
@@ -165,7 +177,9 @@ export function AnalysisModulesCard({ evidence, running, canRun, onQueued }: {
   const time = useTime();
   const [busy, setBusy] = useState('');
   const modules = evidence.modules || {};
-  const list = catalog.data?.modules || [];
+  // Only the modules that apply to this kind of evidence (a network capture has no file system).
+  const kind = evidenceKind(evidence);
+  const list = (catalog.data?.modules || []).filter((m) => !m.kinds || m.kinds.includes(kind));
   if (!list.length || !Object.keys(modules).length) return null;
 
   async function rerun(name: string) {

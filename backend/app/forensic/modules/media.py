@@ -53,7 +53,8 @@ class MediaModule(Module):
     description = ('A thumbnail of every picture, camera and GPS metadata (EXIF), when each picture was taken, and the length, '
                    'format and keyframes of every video (deleted files, archive members and email attachments included).')
     requires = ('fileproc',)
-    follows = ('containers', 'email')  # pictures inside archives and attached to emails
+    follows = ('containers', 'email', 'network')  # pictures inside archives and attached to emails
+    kinds = ('disk', 'logical', 'capture')  # files carried in a capture too
     weight = 15
     collections = ('timeline_events',)
     fields = {'fs_entries': ('media',)}

@@ -25,7 +25,8 @@ class ClamavModule(Module):
     description = ('Scans programs, scripts, documents, archives, email and unknown files (deleted ones, archive members and email '
                    'attachments included) with ClamAV and the signature databases imported in Administration.')
     requires = ('fileproc',)
-    follows = ('containers', 'email')
+    follows = ('containers', 'email', 'network')
+    kinds = ('disk', 'logical', 'capture')  # files carried in a capture too
     weight = 10
     collections = ('forensic_artifacts',)
 

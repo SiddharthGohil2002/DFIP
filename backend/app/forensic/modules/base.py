@@ -34,6 +34,8 @@ class Module:
     # Earlier modules this one also reads when they ran (without needing them): re-running one refreshes this one.
     follows: tuple[str, ...] = ()
     fields: dict[str, tuple[str, ...]] = {}  # fields this module sets on other modules' documents
+    # The kinds of evidence the module applies to: a disk image, a logical package (collected files), a network capture.
+    kinds: tuple[str, ...] = ('disk', 'logical')
 
     def clear(self, db, evidence_id: str):
         """Removes this module's previous output for one evidence item: its documents, and its fields on others'."""
@@ -75,6 +77,11 @@ class ModuleContext:
         self._source = None
 
     # -- evidence content -----------------------------------------------------------
+    @property
+    def kind(self) -> str:
+        from ..source import evidence_kind
+        return evidence_kind(self.evidence)
+
     @property
     def logical(self) -> bool:
         """A package of collected files (no partitions, no unallocated space, no deleted entries)."""

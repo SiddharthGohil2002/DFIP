@@ -1,6 +1,7 @@
 import {
   Activity, BarChart3, Monitor, Bookmark, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, Mail,
-  MessagesSquare, NotebookPen, Images, Bug, History, ScanSearch, SquareTerminal, ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
+  MessagesSquare, NotebookPen, Images, Bug, History, Network, ScanSearch, Smartphone, SquareTerminal, ScrollText, Search, ShieldAlert, Usb, Users, Wrench,
+  type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
 
@@ -79,6 +80,20 @@ export const NAV: NavGroup[] = [
         description: 'Skype messages, calls and file transfers, encrypted chat apps found, and files synced by OneDrive, Google Drive and Dropbox.',
         count: (c) => (c.chat_messages ?? 0) + (c.cloud_files ?? 0),
         countLabel: (c) => `${n(c.chat_messages ?? 0)} messages · ${n(c.chat_apps ?? 0)} apps · ${n(c.cloud_files ?? 0)} cloud files`,
+      },
+      {
+        to: '/app/phones', label: 'Phones', icon: Smartphone, tone: 'teal',
+        description: 'Android and iOS extractions: SMS, MMS, iMessage and WhatsApp messages, calls, contacts, installed apps and Wi-Fi networks.',
+        count: (c) => (c.phone_messages ?? 0) + (c.whatsapp_messages ?? 0) + (c.phone_calls ?? 0),
+        alert: (c) => (c.phone_apps_notable ?? 0) > 0,
+        countLabel: (c) => `${n((c.phone_messages ?? 0) + (c.whatsapp_messages ?? 0))} messages · ${n(c.phone_calls ?? 0)} calls · ${n(c.phone_apps_notable ?? 0)} apps stand out`,
+      },
+      {
+        to: '/app/network', label: 'Network', icon: Network, tone: 'teal',
+        description: 'Network captures (pcap, pcapng): HTTP requests and the files they carried, DNS lookups, TLS server names and conversations.',
+        count: (c) => (c.http_requests ?? 0) + (c.dns_queries ?? 0) + (c.tls_handshakes ?? 0),
+        alert: (c) => (c.http_uploads ?? 0) > 0,
+        countLabel: (c) => `${n(c.http_requests ?? 0)} HTTP · ${n(c.dns_queries ?? 0)} DNS · ${n(c.http_uploads ?? 0)} uploads`,
       },
       {
         to: '/app/media', label: 'Pictures and videos', icon: Images, tone: 'teal',

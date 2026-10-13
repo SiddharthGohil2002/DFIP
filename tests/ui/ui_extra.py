@@ -95,6 +95,27 @@ def unix_case():
 UNIX_CASE, (LINUX_EV, MAC_EV, KAPE_EV) = unix_case()
 
 
+def phone_net_case():
+    """The laptop's network capture and alice's Android and iPhone extractions, analysed (standard)."""
+    token = api('POST', '/auth/login', body={'email': 'investigator@dfip.local', 'password': PW})['access_token']
+    case_id = api('POST', '/cases', token, {'name': f'UI extra — network and phones {uuid.uuid4().hex[:4]}', 'priority': 'LOW'})['case_id']
+    for path in ('/img/dfip-test-capture.pcap', '/img/dfip-test-android.zip', '/img/dfip-test-iphone.zip'):
+        b = uuid.uuid4().hex
+        data = (f'--{b}\r\nContent-Disposition: form-data; name="case_id"\r\n\r\n{case_id}\r\n'
+                f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{path.rsplit("/", 1)[-1]}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() \
+            + open(path, 'rb').read() + f'\r\n--{b}--\r\n'.encode()
+        eid = api('POST', '/evidence/upload', token, raw=data, ctype=f'multipart/form-data; boundary={b}')['evidence_id']
+        job = api('POST', f'/jobs/analysis/{eid}', token, {'profile': 'standard'})['job_id']
+        for _ in range(300):
+            if api('GET', f'/jobs/{job}', token)['status'] in ('COMPLETED', 'FAILED'):
+                break
+            time.sleep(1)
+    return case_id
+
+
+NET_PHONE_CASE = phone_net_case()
+
+
 def check(name, cond, detail=''):
     results.append(bool(cond))
     print(('  PASS ' if cond else '  FAIL ') + name + ('' if cond else f'  ::  {detail}'), flush=True)
@@ -341,6 +362,43 @@ with sync_playwright() as p:
     page.keyboard.press('Escape')
     page.keyboard.press('Escape')
 
+    print('== Network captures and phones')
+    page.get_by_label('Active case').select_option(NET_PHONE_CASE)
+    page.get_by_role('link', name=re.compile(r'^Network\b')).first.click()  # the name ends with its count once counts load
+    upload_row = page.locator('tr', has_text='filetransfer.example.net/upload')
+    expect(upload_row.get_by_text('payroll-export.csv')).to_be_visible()
+    page.get_by_label('Only uploads').check()
+    expect(page.locator('tbody tr')).to_have_count(1)
+    check('Network: the HTTP upload with the file it carried; "only uploads" leaves just that request', True)
+    page.screenshot(path=f'{OUT}/x18-network-http.png', full_page=True)
+    page.get_by_role('tab', name=re.compile(r'^DNS lookups')).click()
+    expect(page.locator('tr', has_text='pastebin.com').filter(has_text='203.0.113.81')).to_be_visible()
+    page.get_by_role('tab', name=re.compile(r'^TLS connections')).click()
+    expect(page.locator('tr', has_text='pastebin.com').get_by_role('button', name='Look up')).to_be_visible()
+    check('DNS lookups with their answers; TLS connections with the server name and a threat-intelligence look-up', True)
+    page.get_by_role('tab', name=re.compile(r'^Files carried')).click()
+    page.locator('tr', has_text='payroll-export.csv').get_by_role('button', name='View').click()
+    expect(page.get_by_role('dialog').get_by_text('DE89370400440532013000').first).to_be_visible()
+    check('a file carried in the capture opens in the viewer with its own content', True)
+    page.keyboard.press('Escape')
+    page.get_by_role('link', name=re.compile(r'^Phones\b')).first.click()
+    expect(page.get_by_role('heading', name=re.compile('Google Pixel 8'))).to_be_visible()
+    expect(page.get_by_role('heading', name=re.compile('iPhone'))).to_be_visible()
+    expect(page.locator('tr', has_text='Uploaded. Link in WhatsApp.').get_by_text('Dmitri K')).to_be_visible()
+    page.locator('tr', has_text='This one?').get_by_role('button', name='View').click()
+    expect(page.get_by_role('dialog').locator('img')).to_be_visible()
+    page.keyboard.press('Escape')
+    check('Phones: both devices; SMS named from the contacts; the MMS picture opens from the extraction', True)
+    page.screenshot(path=f'{OUT}/x19-phone-messages.png', full_page=True)
+    page.get_by_role('tab', name=re.compile(r'^WhatsApp')).click()
+    expect(page.locator('tr', has_text='filetransfer.example.net/d/7Hq2xK')).to_be_visible()
+    page.get_by_role('tab', name=re.compile(r'^Calls')).click()
+    expect(page.locator('tr', has_text='FaceTime audio')).to_be_visible()
+    page.get_by_role('tab', name=re.compile(r'^Apps')).click()
+    page.get_by_label('Only what stands out').check()
+    expect(page.locator('tbody tr')).to_have_count(4)
+    check('WhatsApp messages, calls (FaceTime) and the four apps that stand out (Signal and Proton Mail on each phone)', True)
+
     print('== Linux and macOS, collections, Plaso timelines')
     page.get_by_label('Active case').select_option(UNIX_CASE)
     page.get_by_role('link', name='Linux and macOS').first.click()
@@ -499,7 +557,7 @@ with sync_playwright() as p:
         sign_in(page, 'investigator@dfip.local')
         expect(page.get_by_text('Investigation functions')).to_be_visible()
         bad = []
-        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/shadow-copies', '/app/unix', '/app/usb', '/app/reports', '/app/custody'):
+        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/shadow-copies', '/app/unix', '/app/network', '/app/phones', '/app/usb', '/app/reports', '/app/custody'):
             page.goto(BASE + path)
             page.wait_for_load_state('networkidle')
             sw = page.evaluate('document.documentElement.scrollWidth')

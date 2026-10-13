@@ -459,7 +459,7 @@ def _delete_one(db, x: dict, u, reason: str) -> dict:
             _remove(folder, storage, removed, problems)
     for p in (analysis / 'working').glob(f'{eid}.*'):
         _remove(p, storage, removed, problems)
-    for area in ('recovered', 'carved', 'pipeline', 'members', 'members/mail', 'thumbs', 'media', 'derived', 'package'):
+    for area in ('recovered', 'carved', 'pipeline', 'members', 'members/mail', 'members/capture', 'thumbs', 'media', 'derived', 'package'):
         _remove(analysis / area / eid, storage, removed, problems)
     for p in (analysis / 'package').glob(f'{eid}.*'):  # the package's manifest (and an unfinished unpack)
         _remove(p, storage, removed, problems)

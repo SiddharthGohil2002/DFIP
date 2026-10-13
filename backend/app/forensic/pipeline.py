@@ -90,6 +90,13 @@ class AnalysisPipeline:
             requested = list(dict.fromkeys(requested + PROFILES['standard']))
             status = {}
         run_plan = plan(requested, status)
+        # Modules that do not apply to this kind of evidence (a network capture has no file system) are left out.
+        from .source import evidence_kind
+        kind = evidence_kind(self.e)
+        skipped = [n for n in run_plan if kind not in REGISTRY[n].kinds]
+        run_plan = [n for n in run_plan if kind in REGISTRY[n].kinds]
+        if skipped:
+            self.summary['not_applicable'] = skipped
         if self.resume:  # a redelivered job continues after the modules it already completed
             run_plan = [n for n in run_plan if not ((status.get(n) or {}).get('job_id') == self.job_id
                                                     and (status.get(n) or {}).get('status') == 'COMPLETED')]

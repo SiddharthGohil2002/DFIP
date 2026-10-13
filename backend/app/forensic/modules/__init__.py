@@ -1,7 +1,7 @@
 """The analysis modules, the processing profiles built from them, and how a job's run plan is worked out.
 
 Profiles:
-  quick     the file system index and the well-known artifacts, for a fast first look
+  quick     the file system index, the well-known artifacts, phones and network captures, for a fast first look
   standard  everything that is cheap enough to run on every disk (the default): also event logs, Jump Lists, the
             Windows Timeline, thumbnails, SRUM and the search index, NTFS timestomping, alternate data streams and the USN
             journal, Volume Shadow Copies (what changed since each), browser searches, cookies, bookmarks, logins and deleted history, email, chat and cloud storage, file
@@ -33,8 +33,10 @@ from .fs_index import FsIndexModule
 from .hash_match import HashMatchModule
 from .media import MediaModule
 from .members import MembersModule
+from .network import NetworkModule
 from .ntfs import NtfsModule
 from .ocr import OcrModule
+from .phone import PhoneModule
 from .registry import RegistryModule
 from .reputation import ReputationModule
 from .shadow_copies import ShadowCopiesModule
@@ -44,19 +46,20 @@ from .unallocated import UnallocatedModule
 from .user_activity import UserActivityModule
 from .yara_scan import YaraModule
 
-MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), RegistryModule(), UnixModule(), EventLogsModule(),
+MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), RegistryModule(), UnixModule(), PhoneModule(),
+                         EventLogsModule(),
                          UserActivityModule(), NtfsModule(), ShadowCopiesModule(), BrowserDepthModule(), FileProcModule(), MembersModule(), EmailModule(),
-                         ChatCloudModule(), MediaModule(), OcrModule(), ExecutablesModule(), ReputationModule(), ClamavModule(),
+                         ChatCloudModule(), NetworkModule(), MediaModule(), OcrModule(), ExecutablesModule(), ReputationModule(), ClamavModule(),
                          HashMatchModule(), YaraModule(), ContentModule(), UnallocatedModule(), FoundDataModule()]
 REGISTRY: dict[str, Module] = {m.name: m for m in MODULES}
 ORDER = [m.name for m in MODULES]
 
 PROFILES = {
-    'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix'],
-    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies',
-                 'browser_depth', 'fileproc', 'email', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara'],
-    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth',
-             'fileproc', 'containers', 'email', 'chat_cloud', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content',
+    'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'phone', 'network'],
+    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'phone', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies',
+                 'browser_depth', 'fileproc', 'email', 'chat_cloud', 'network', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara'],
+    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'phone', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth',
+             'fileproc', 'containers', 'email', 'chat_cloud', 'network', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content',
              'unallocated', 'found_data'],
 }
 DEFAULT_PROFILE = 'standard'
@@ -119,7 +122,7 @@ def describe() -> dict:
     """Modules and profiles, for the API and the Analyze dialog."""
     return {
         'modules': [{'name': m.name, 'label': m.label, 'description': m.description, 'requires': list(m.requires),
-                     'version': m.version} for m in MODULES],
+                     'version': m.version, 'kinds': list(m.kinds)} for m in MODULES],
         'profiles': [{'name': p, 'label': PROFILE_LABELS[p], 'modules': PROFILES[p]} for p in PROFILES],
         'default_profile': DEFAULT_PROFILE,
     }

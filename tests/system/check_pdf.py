@@ -21,7 +21,7 @@ titles = ['Evidence register', 'Chain of custody', 'Analysis summary', 'Computer
           'Chat and cloud storage', 'Windows activity', 'Execution evidence', 'Folders browsed',
           'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives',
           'Jump lists, Timeline, thumbnails, SRUM and search index', 'NTFS: timestomping, alternate data streams and USN journal', 'Volume Shadow Copies',
-          'Event logs', 'Linux and macOS', 'Malware indicators',
+          'Event logs', 'Linux and macOS', 'Network captures', 'Phones', 'Malware indicators',
           'Hash set matches', 'Renamed and encrypted files', 'Found data',
           'Investigator findings', 'Tagged evidence', 'Imported timelines', 'Timeline of notable events', 'Audit trail integrity']
 found = [(int(m.group(1)), m.group(2)) for m in re.finditer(r'^\s*(\d+)\. (' + '|'.join(map(re.escape, titles)) + r')', a, re.M)]
@@ -66,6 +66,11 @@ check('browser visits and downloads listed', all(x in flat for x in ('filetransf
 check('YARA hit on cleanup.ps1 listed', 'cleanup.ps1' in flat)
 subs = [m.group(1) for m in re.finditer(r'^\s*\d+\.\d+ (Signature matches|Programs that stand out)', a, re.M)]
 check('Malware indicators has its two subsections', subs == ['Signature matches', 'Programs that stand out'])
+net_subs = ['Captures', 'HTTP requests and the files they carried', 'DNS lookups', 'TLS connections (server names)', 'Largest conversations']
+phone_subs = ['Phones', 'Messages', 'Calls', 'Apps that matter to an investigation', 'Saved Wi-Fi networks']
+subs = [m.group(1) for m in re.finditer(r'^\s*\d+\.\d+ (' + '|'.join(map(re.escape, net_subs + phone_subs)) + r')\s*$', a, re.M)]
+check('Network captures and Phones have their subsections, empty for a case with neither',
+      subs == net_subs + phone_subs and 'No network capture was analysed.' in flat and 'No phone extraction was analysed.' in flat)
 check('programs listed: the packed svchost.exe built as SecureDelete.exe, the ClamAV signature, capa capabilities',
       all(x in flat for x in ('Packed (UPX)', 'Temp/svchost.exe', 'DFIP.Test.SecureDelete', 'ClamAV', 'delete file', 'untrusted')))
 check('hash set matches listed: the payroll copies as notable', 'Payroll exports' in flat and 'holiday.jpg' in flat)
