@@ -1,11 +1,11 @@
-import { useState } from 'react';
-import { CheckCircle2, MessageSquare, NotebookPen, Pencil, Plus, RotateCcw, Send, Trash2, Undo2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { CheckCircle2, ImagePlus, MessageSquare, NotebookPen, Pencil, Plus, RotateCcw, Send, Trash2, Undo2, X } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
-import { del, patch, post } from '../lib/api';
+import { api, del, fetchBlob, patch, post } from '../lib/api';
 import { useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
-import type { Finding, FindingEvent, FindingStatus } from '../lib/types';
+import type { Finding, FindingAttachment, FindingEvent, FindingStatus } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, Field, Loading, Modal, PageHeader, StatusBadge, Tabs, type Tone, useToast } from '../ui';
 import { Comments, usePeople } from '../ui/Comments';
 
@@ -111,6 +111,7 @@ export function FindingsPage() {
                 <div className="row"><StatusBadge status={f.severity} /><Badge tone={STATUS[f.status].tone}>{STATUS[f.status].label}</Badge><h3 style={{ fontSize: 15.5 }}>{f.title}</h3></div>
                 <p style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{f.description}</p>
                 {!!f.evidence_ids?.length && <div className="row" style={{ marginTop: 10 }}>{f.evidence_ids.map((e) => <Badge key={e} tone="accent">{e}</Badge>)}</div>}
+                <FindingPictures f={f} editable={can('FINDING_CREATE') && mine(f) && ['DRAFT', 'CHANGES_REQUESTED'].includes(f.status)} reload={list.reload} />
                 <div className="tiny muted" style={{ marginTop: 8 }}>
                   By {f.created_by_name ?? 'unknown'}{f.status === 'APPROVED' && f.reviewed_by_name ? ` · approved by ${f.reviewed_by_name} ${time(f.reviewed_at)}` : ''}
                   {f.status === 'IN_REVIEW' && f.reviewer_id ? ` · waiting for ${people.find((p) => p.user_id === f.reviewer_id)?.name ?? 'a reviewer'}` : ''}
@@ -212,6 +213,82 @@ export function FindingsPage() {
           </Field>
         )}
         {error && <Banner tone="danger">{error}</Banner>}
+      </Modal>
+    </div>
+  );
+}
+
+/** A picture attached to a finding, fetched with the user's credentials. */
+function Picture({ fid, a, onOpen }: { fid: string; a: FindingAttachment; onOpen: (url: string) => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let u: string | null = null;
+    fetchBlob(`/findings/${encodeURIComponent(fid)}/attachments/${a.attachment_id}`).then((b) => { u = URL.createObjectURL(b); setUrl(u); }).catch(() => setUrl(null));
+    return () => { if (u) URL.revokeObjectURL(u); };
+  }, [fid, a.attachment_id]);
+  return url ? <button type="button" className="link-button" onClick={() => onOpen(url)} aria-label={`Enlarge ${a.caption || a.name}`}><img src={url} alt={a.caption || a.name} /></button>
+    : <div className="media-box" style={{ width: 180, height: 120 }}>…</div>;
+}
+
+/** Screenshots of what a finding rests on: PNG or JPEG, added while the finding can be edited; reports can show them. */
+function FindingPictures({ f, editable, reload }: { f: Finding; editable: boolean; reload: () => void }) {
+  const toast = useToast();
+  const [big, setBig] = useState<{ url: string; alt: string } | null>(null);
+  const [caption, setCaption] = useState('');
+  const [busy, setBusy] = useState(false);
+  const pics = f.attachments ?? [];
+  if (!pics.length && !editable) return null;
+  const base = `/findings/${encodeURIComponent(f._id)}/attachments`;
+
+  async function change(fn: () => Promise<unknown>, done: string) {
+    setBusy(true);
+    try {
+      await fn();
+      toast(done, 'ok');
+      reload();
+    } catch (e: any) {
+      toast(e.message, 'danger');
+    } finally {
+      setBusy(false);
+    }
+  }
+  const add = (file: File) => change(() => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('caption', caption.trim());
+    setCaption('');
+    return api(base, { method: 'POST', body: form });
+  }, 'Picture attached');
+
+  return (
+    <div>
+      {!!pics.length && (
+        <div className="attach-strip">
+          {pics.map((a) => (
+            <figure key={a.attachment_id}>
+              <Picture fid={f._id} a={a} onOpen={(url) => setBig({ url, alt: a.caption || a.name })} />
+              <figcaption className="tiny muted"><span style={{ flex: 1 }} className="break">{a.caption || a.name}</span>
+                {editable && <button type="button" className="btn ghost icon-btn" style={{ width: 22, height: 22 }} disabled={busy}
+                  onClick={() => change(() => del(`${base}/${a.attachment_id}`), 'Picture removed')} aria-label={`Remove picture ${a.caption || a.name}`}><X size={12} /></button>}
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
+      {editable && (
+        <div className="row" style={{ marginTop: 10 }}>
+          <input className="input sm" style={{ maxWidth: 240 }} placeholder="Caption (optional)" value={caption} maxLength={300}
+            onChange={(e) => setCaption(e.target.value)} aria-label={`Caption for a picture of ${f.title}`} />
+          <label className={`btn sm${busy ? ' disabled' : ''}`} style={{ cursor: busy ? 'progress' : 'pointer' }}>
+            {busy ? <span className="spinner" /> : <ImagePlus size={13} />} Add picture
+            <input type="file" accept="image/png,image/jpeg" hidden disabled={busy} aria-label={`Add a picture to ${f.title}`}
+              onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) add(file); }} />
+          </label>
+          <span className="tiny muted">PNG or JPEG, up to 10 MB</span>
+        </div>
+      )}
+      <Modal open={!!big} title={big?.alt || ''} wide onClose={() => setBig(null)}>
+        {big && <img src={big.url} alt={big.alt} style={{ maxWidth: '100%', display: 'block', margin: '0 auto' }} />}
       </Modal>
     </div>
   );

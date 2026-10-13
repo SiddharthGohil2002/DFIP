@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added — Reports, exports and court readiness
+- **Signed reports**: every report PDF is signed (PAdES) with the organisation's certificate (`REPORT_SIGNING_P12`) or, without one, a self-signed certificate DFIP makes and marks as untrusted; with `REPORT_TSA_URL` it carries an RFC 3161 timestamp (PAdES-B-T). **Check** a stored report or any PDF someone was given: whether anything was changed or added after signing, who signed, whether the certificate and timestamp are trusted, and whether it is byte for byte a report DFIP made.
+- **HTML reports**: each report is also one self-contained HTML file with the same content (pictures inline, no scripts, nothing fetched).
+- **Report templates**: choose and reorder the sections (the list now comes from the server, so it is never out of date), fill in the cover (title, organisation, reference, who it is for, classification on every page, scope), include only approved findings, and show pictures attached to findings. Templates are saved for reuse.
+- **Pictures in findings**: screenshots (PNG or JPEG) attached to a finding while it is a draft, shown on the Findings page and in reports.
+- **Exports**: every table exports as CSV or XLSX: all rows its filters select, not only the page shown, with spreadsheet formulas defused and each export audited with its SHA-256. The case exports as CASE/UCO JSON-LD (checked with `case_validate`), and its indicators of compromise (malware matches, known-bad and VirusTotal-flagged files, programs that stand out, upload destinations) as STIX 2.1 or a MISP event with a TLP marking. New permission use: `REPORT_EXPORT` (administrators and investigators).
+- The desktop app can read the SHA-256 headers of downloads (exposed through CORS).
+- The backend image gains pyHanko, openpyxl, stix2 and case-utils (with `pyhanko-cli` for the tests' independent check).
+
 ### Added — Review, teamwork and evidence management
 - **Peer review of findings**: findings are drafts until someone else who may review findings (new permission `FINDING_REVIEW`: administrators and investigators) approves them or asks for changes. The author sends a finding to a chosen reviewer, edits and resubmits it, reopens an approved one; every step is kept in the finding's history and the audit log, and reports show each finding's status and reviewer.
 - **Case members and comments**: cases can be shared with other users (Team in the case dialog). Findings, tags, files and evidence take comments; typing @ offers the case's people, and a mention notifies only someone who can already see the case.

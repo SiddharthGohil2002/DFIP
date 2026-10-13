@@ -8,6 +8,7 @@ import { useApi } from '../lib/useApi';
 import type { Artifact } from '../lib/types';
 import { TagButton } from '../lib/tags';
 import { ViewButton } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 import { Badge, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, Tabs, useToast } from '../ui';
 import { REGISTRY_COUNT, RegistryActivity, type RegistryTab } from './RegistryActivity';
 import { USER_COUNT, USER_TABS, UserActivity, type UserTab } from './UserActivity';
@@ -35,7 +36,8 @@ export function ActivityPage() {
 
   const params = new URLSearchParams({ case_id: caseId, kind, limit: String(LIMIT), skip: String(skip) });
   if (search) params.set('search', search);
-  const res = useApi<{ data: Artifact[]; total: number }>(isRegistry || isUser ? null : `/forensics/activity?${params}`);
+  const path = isRegistry || isUser ? null : `/forensics/activity?${params}`;
+  const res = useApi<{ data: Artifact[]; total: number }>(path);
   const { error, loading } = res;
   // Until the new tab's rows arrive, the previous tab's are still loaded: never draw them under this tab's columns.
   const data = res.dataPath && new URLSearchParams(res.dataPath.split('?')[1]).get('kind') === kind ? res.data : null;
@@ -76,6 +78,8 @@ export function ActivityPage() {
           <Button size="sm" icon={<Search size={13} />} onClick={() => setSearch(q.trim())}>Search</Button>
           {search && <Button size="sm" variant="ghost" onClick={() => { setQ(''); setSearch(''); }}>Clear</Button>}
           <span className="small muted">{data ? `${data.total.toLocaleString()} ${data.total === 1 ? 'record' : 'records'}` : ''}</span>
+          <span style={{ flex: 1 }} />
+          {!!data?.data.length && <ExportButton path={path} />}
         </div>
         <ErrorBanner error={error} />
         {loading && !data ? (

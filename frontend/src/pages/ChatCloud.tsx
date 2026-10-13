@@ -5,6 +5,7 @@ import { formatBytes, shortHash, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import { Badge, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, Tabs } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 type Kind = 'CHAT_MESSAGE' | 'CHAT_CALL' | 'CHAT_FILE_TRANSFER' | 'CHAT_CONTACT' | 'CHAT_APP' | 'CLOUD_ACCOUNT' | 'CLOUD_FILE';
 const LIMIT = 200;
@@ -58,12 +59,20 @@ function Records({ caseId, kind, title }: { caseId: string; kind: Kind | 'CHAT_A
   if (search) qs.set('search', search);
   if (conversation) qs.set('conversation', conversation);
   if (kind === 'CLOUD_FILE' && filesOnly) qs.set('files_only', 'true');
-  const { data, error, loading } = useApi<{ data: any[]; total: number }>(`/forensics/chat-cloud?${qs}`);
+  const path = `/forensics/chat-cloud?${qs}`;
+  const { data, error, loading } = useApi<{ data: any[]; total: number }>(path);
   const convs = useApi<{ data: any[] }>(kind === 'CHAT_MESSAGE' ? `/forensics/chat-cloud/conversations?case_id=${encodeURIComponent(caseId)}` : null);
   const cols = COLUMNS[kind];
+  const exportButton = !!data?.data.length && <ExportButton path={path} />;
   return (
     <>
-      {title ? <h4 style={{ margin: 0, padding: '14px 14px 0' }}>{title}</h4> : (
+      {title ? (
+        <div className="row" style={{ padding: '14px 14px 0' }}>
+          <h4 style={{ margin: 0 }}>{title}</h4>
+          <span style={{ flex: 1 }} />
+          {exportButton}
+        </div>
+      ) : (
         <div className="row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
           <input className="input sm" style={{ maxWidth: 300 }} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setSearch(q.trim())}
             placeholder="Search" aria-label="Search records" />
@@ -76,6 +85,8 @@ function Records({ caseId, kind, title }: { caseId: string; kind: Kind | 'CHAT_A
           )}
           {kind === 'CLOUD_FILE' && <label className="check"><input type="checkbox" checked={filesOnly} onChange={(e) => setFilesOnly(e.target.checked)} /> Files only (hide folders)</label>}
           <span className="small muted">{data ? `${data.total.toLocaleString()} records` : ''}</span>
+          <span style={{ flex: 1 }} />
+          {exportButton}
         </div>
       )}
       <ErrorBanner error={error} />

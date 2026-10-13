@@ -7,6 +7,7 @@ import { formatBytes, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import type { Evidence } from '../lib/types';
 import { Badge, Banner, Button, Card, ErrorBanner, Field, Hash, Modal, ProgressBar, StatusBadge, useToast } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 const METHOD_LABEL: Record<string, string> = { password: 'password', recovery_password: 'recovery password' };
 const METHODS: Record<string, string[]> = { BitLocker: ['password', 'recovery_password'], LUKS: ['password'] };
@@ -73,7 +74,8 @@ export function VolumesCard({ evidence: e, onChanged }: { evidence: Evidence; on
   const toast = useToast();
   const time = useTime();
   const [polling, setPolling] = useState(false);
-  const res = useApi<{ data: any[] }>(`/evidence/${encodeURIComponent(e.evidence_id)}/volumes`, { pollMs: polling ? 2000 : undefined });
+  const path = `/evidence/${encodeURIComponent(e.evidence_id)}/volumes`;
+  const res = useApi<{ data: any[] }>(path, { pollMs: polling ? 2000 : undefined });
   const [unlocking, setUnlocking] = useState<any>(null);
   const vols = res.data?.data || [];
   const decrypting = vols.some((v) => v.job);
@@ -94,7 +96,8 @@ export function VolumesCard({ evidence: e, onChanged }: { evidence: Evidence; on
   }
 
   return (
-    <Card title="Volumes" subtitle="The file systems the analysis found. Encrypted volumes are unlocked with their password or recovery key; the decrypted volume becomes evidence of its own." flush>
+    <Card title="Volumes" subtitle="The file systems the analysis found. Encrypted volumes are unlocked with their password or recovery key; the decrypted volume becomes evidence of its own." flush
+      actions={<ExportButton path={path} what="list of volumes" />}>
       <ErrorBanner error={res.error} />
       <div className="table-wrap">
         <table className="table">

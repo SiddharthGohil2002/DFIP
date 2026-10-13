@@ -2,9 +2,10 @@
 back with changes requested by someone else who may review findings (FINDING_REVIEW). Edits, reviews, reopening and
 deletion are kept in the finding's history and the audit log."""
 from datetime import datetime, timezone
+from pathlib import Path
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
 from ..database import get_db
@@ -250,8 +251,73 @@ def delete(fid: str, x: Reason, u=Depends(require_write('FINDING_CREATE'))):
     db = get_db()
     db['findings'].delete_one({'_id': f['_id']})
     removed = db['comments'].delete_many({'target_type': 'FINDING', 'target_id': fid}).deleted_count
+    import shutil
+    from ..services.finding_files import root
+    shutil.rmtree(root() / fid, ignore_errors=True)
     log(u, 'FINDING_DELETED', 'finding', f['_id'], {'case_id': f['case_id'], 'reason': x.reason, 'comments_removed': removed,
                                                     'finding': _plain({k: f.get(k) for k in ('title', 'description', 'severity', 'status', 'evidence_ids',
                                                                                              'created_by', 'created_at', 'version')})})
     manager.emit_sync('FINDING_DELETED', {'_id': fid, 'case_id': f['case_id']})
     return {'deleted': True, '_id': fid, 'comments_removed': removed}
+
+
+@r.post('/{fid}/attachments')
+async def add_attachment(fid: str, file: UploadFile = File(...), caption: str = Form(''), u=Depends(require_write('FINDING_CREATE'))):
+    """A screenshot for the finding (PNG or JPEG by content, up to 10 MB), kept under its SHA-256. Only while the finding
+    can be edited (a draft, or with changes requested)."""
+    import hashlib
+    from ..services.finding_files import MAX_BYTES, root, sniff
+    f, _ = _finding(fid, u)
+    _own(f, u)
+    if (f.get('status') or 'DRAFT') not in EDITABLE:
+        raise HTTPException(409, 'Pictures can be added while the finding is a draft or has changes requested')
+    data = await file.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        raise HTTPException(413, 'A picture may be at most 10 MB')
+    kind = sniff(data)
+    if not kind:
+        raise HTTPException(415, 'Only PNG and JPEG pictures are accepted')
+    sha = hashlib.sha256(data).hexdigest()
+    if any(a['sha256'] == sha for a in f.get('attachments') or []):
+        raise HTTPException(409, 'This picture is already attached')
+    folder = root() / fid
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / f'{sha}.{kind[1]}'
+    dest.write_bytes(data)
+    dest.chmod(0o440)
+    a = {'attachment_id': sha[:16], 'sha256': sha, 'size': len(data), 'mime': kind[0], 'file': dest.name, 'name': Path(file.filename or 'picture').name[:200],
+         'caption': caption.strip()[:300]}
+    fresh = _update(f, u, 'EDITED', {'attachments': (f.get('attachments') or []) + [a]}, 'FINDING_ATTACHMENT_ADDED', changes={'attachments': ['', a['name']]})
+    return _out(fresh)
+
+
+@r.get('/{fid}/attachments/{aid}')
+def get_attachment(fid: str, aid: str, u=Depends(current_user)):
+    from fastapi.responses import Response
+    from ..services.finding_files import attachment_path
+    f, _ = _finding(fid, u)
+    a = next((a for a in f.get('attachments') or [] if a['attachment_id'] == aid), None)
+    p = attachment_path(fid, a) if a else None
+    if not p or not p.is_file():
+        raise HTTPException(404, 'Picture not found')
+    return Response(content=p.read_bytes(), media_type=a['mime'], headers={'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'attachment',
+                                                                           'Content-Security-Policy': "sandbox; default-src 'none'", 'Cache-Control': 'no-store'})
+
+
+@r.delete('/{fid}/attachments/{aid}')
+def delete_attachment(fid: str, aid: str, u=Depends(require_write('FINDING_CREATE'))):
+    from ..services.finding_files import attachment_path
+    f, _ = _finding(fid, u)
+    _own(f, u)
+    if (f.get('status') or 'DRAFT') not in EDITABLE:
+        raise HTTPException(409, 'Pictures can be removed while the finding is a draft or has changes requested')
+    a = next((a for a in f.get('attachments') or [] if a['attachment_id'] == aid), None)
+    if not a:
+        raise HTTPException(404, 'Picture not found')
+    fresh = _update(f, u, 'EDITED', {'attachments': [x for x in f['attachments'] if x['attachment_id'] != aid]}, 'FINDING_ATTACHMENT_REMOVED',
+                    changes={'attachments': [a['name'], '']})
+    p = attachment_path(fid, a)
+    if p.is_file():
+        p.chmod(0o640)
+        p.unlink()
+    return _out(fresh)

@@ -6,6 +6,7 @@ import { useApi } from '../lib/useApi';
 import type { Artifact } from '../lib/types';
 import { TagButton } from '../lib/tags';
 import { Badge, Button, Empty, ErrorBanner, Hash, Loading } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 /** Tabs of the Windows activity page that come from the registry (module registry). */
 export type RegistryTab = 'EXECUTION' | 'SHELLBAG' | 'SEARCHES' | 'PERSISTENCE' | 'INSTALLED' | 'REMOTE';
@@ -22,11 +23,17 @@ const NOTES: Record<RegistryTab, string> = {
   REMOTE: 'Remote desktop connections the user made (Terminal Server Client) and mapped network drives.',
 };
 
-function useRows(caseId: string, type: string, search: string, extra = '') {
+function rowsPath(caseId: string, type: string, search: string, extra = '') {
   const qs = new URLSearchParams({ case_id: caseId, type, limit: '1000' });
   if (search) qs.set('search', search);
-  return useApi<{ data: Artifact[]; total: number }>(`/forensics/registry?${qs}${extra}`);
+  return `/forensics/registry?${qs}${extra}`;
 }
+
+function useRows(caseId: string, type: string, search: string, extra = '') {
+  return useApi<{ data: Artifact[]; total: number }>(rowsPath(caseId, type, search, extra));
+}
+
+const executionPath = (caseId: string, search: string) => `/forensics/execution?case_id=${encodeURIComponent(caseId)}${search ? `&search=${encodeURIComponent(search)}` : ''}`;
 
 export function RegistryActivity({ tab }: { tab: RegistryTab }) {
   const { caseId } = useCase();
@@ -34,6 +41,10 @@ export function RegistryActivity({ tab }: { tab: RegistryTab }) {
   const [search, setSearch] = useState('');
   const [flagged, setFlagged] = useState(false);
   useEffect(() => { setQ(''); setSearch(''); }, [tab]);
+  // What the tab's table loads. Searches exports each of its lists; Remote merges two lists, so it has no export.
+  const exportPath = tab === 'EXECUTION' ? executionPath(caseId, search) : tab === 'SHELLBAG' ? rowsPath(caseId, 'SHELLBAG', search)
+    : tab === 'PERSISTENCE' ? rowsPath(caseId, 'PERSISTENCE', search, flagged ? '&flagged=true' : '')
+    : tab === 'INSTALLED' ? rowsPath(caseId, 'INSTALLED_PROGRAM', search) : null;
   return (
     <>
       <div className="row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
@@ -44,6 +55,8 @@ export function RegistryActivity({ tab }: { tab: RegistryTab }) {
         {tab === 'PERSISTENCE' && (
           <label className="check"><input type="checkbox" checked={flagged} onChange={(e) => setFlagged(e.target.checked)} /> Only entries that stand out</label>
         )}
+        <span style={{ flex: 1 }} />
+        <ExportButton path={exportPath} />
       </div>
       <p className="small muted" style={{ margin: 0, padding: '10px 14px 0' }}>{NOTES[tab]}</p>
       {tab === 'EXECUTION' && <Execution caseId={caseId} search={search} />}
@@ -61,7 +74,7 @@ const SOURCE_LABEL: Record<string, string> = { prefetch: 'Prefetch', userassist:
 function Execution({ caseId, search }: { caseId: string; search: string }) {
   const time = useTime();
   const [open, setOpen] = useState<string | null>(null);
-  const { data, error, loading } = useApi<{ data: any[]; total: number }>(`/forensics/execution?case_id=${encodeURIComponent(caseId)}${search ? `&search=${encodeURIComponent(search)}` : ''}`);
+  const { data, error, loading } = useApi<{ data: any[]; total: number }>(executionPath(caseId, search));
   if (loading && !data) return <Loading />;
   if (!data?.data.length) return <><ErrorBanner error={error} /><Empty title="No execution traces" text="No Prefetch, UserAssist, BAM, Amcache or ShimCache records were found." /></>;
   return (
@@ -143,7 +156,11 @@ function Searches({ caseId, search }: { caseId: string; search: string }) {
         if (!rows.length) return null;
         return (
           <div key={t}>
-            <h4 style={{ margin: '4px 0 6px' }}>{label}</h4>
+            <div className="row" style={{ margin: '4px 0 6px' }}>
+              <h4 style={{ margin: 0 }}>{label}</h4>
+              <span style={{ flex: 1 }} />
+              <ExportButton path={rowsPath(caseId, t, search)} what="list" />
+            </div>
             <table className="table">
               <thead><tr><th>#</th><th>{t === 'RUN_MRU' ? 'Command' : t === 'RECENT_DOC' ? 'File' : 'Value'}</th><th>User</th><th>List last changed</th><th /></tr></thead>
               <tbody>

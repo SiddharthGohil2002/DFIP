@@ -5,6 +5,7 @@ import { useTime } from '../lib/format';
 import { TagButton } from '../lib/tags';
 import { useApi } from '../lib/useApi';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, Tabs, type Tone } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 type Tab = 'SHELL_COMMAND' | 'UNIX_EVENT' | 'SCHEDULED_JOB' | 'RECENT_DOCUMENT' | 'QUARANTINE_EVENT' | 'WIFI_NETWORK';
 const LIMIT = 200;
@@ -59,7 +60,8 @@ function Records({ caseId, type }: { caseId: string; type: Tab }) {
   if (search) qs.set('search', search);
   if (flagged) qs.set('flagged', 'true');
   if (kind) qs.set('kind', kind);
-  const res = useApi<{ data: any[]; total: number; kinds: Record<string, number> }>(`/forensics/unix?${qs}`);
+  const path = `/forensics/unix?${qs}`;
+  const res = useApi<{ data: any[]; total: number; kinds: Record<string, number> }>(path);
   const rows = res.data?.data || [];
   const canFlag = type === 'SHELL_COMMAND' || type === 'UNIX_EVENT' || type === 'SCHEDULED_JOB';
   return (
@@ -76,6 +78,8 @@ function Records({ caseId, type }: { caseId: string; type: Tab }) {
         )}
         {canFlag && <label className="check"><input type="checkbox" checked={flagged} onChange={(e) => { setFlagged(e.target.checked); setSkip(0); }} /> Only what stands out</label>}
         <span className="small muted">{res.data ? `${res.data.total.toLocaleString()} records` : ''}</span>
+        <span style={{ flex: 1 }} />
+        {rows.length > 0 && <ExportButton path={path} />}
       </div>
       <ErrorBanner error={res.error} />
       {!res.data ? <Loading /> : !rows.length ? <Empty title="Nothing here" text="No record of this kind was found." /> : (

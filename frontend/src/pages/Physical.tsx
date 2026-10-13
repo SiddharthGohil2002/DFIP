@@ -6,6 +6,7 @@ import { useCase } from '../lib/caseContext';
 import { useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { Badge, Banner, Button, Card, Empty, Field, Loading, Modal, PageHeader, type Tone, useToast } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 const KINDS = ['Laptop', 'Desktop computer', 'Phone', 'Tablet', 'USB drive', 'Hard disk', 'SSD', 'Memory card', 'Optical disc', 'Paper documents', 'Other'];
 const STATUS: Record<string, { label: string; tone: Tone }> = {
@@ -29,7 +30,8 @@ export function PhysicalPage() {
   const { caseId, overview } = useCase();
   const { can } = useAuth();
   const toast = useToast();
-  const list = useApi<{ data: Item[] }>(`/physical?case_id=${encodeURIComponent(caseId)}`);
+  const path = `/physical?case_id=${encodeURIComponent(caseId)}`;
+  const list = useApi<{ data: Item[] }>(path);
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const items = list.data?.data ?? [];
@@ -42,7 +44,7 @@ export function PhysicalPage() {
       {list.loading && !list.data ? <Loading /> : !items.length ? (
         <Card><Empty icon={<Archive size={20} />} title="No physical evidence recorded" text="Record each item as it is booked in: what it is, its bag and seal numbers and where it is stored." /></Card>
       ) : (
-        <Card flush>
+        <Card flush actions={can('REPORT_EXPORT') && <ExportButton path={path} what="list of items" />}>
           <div className="table-wrap">
             <table className="table">
               <thead><tr><th>Item</th><th>Description</th><th>Bag / seal</th><th>Status</th><th>Kept at / held by</th><th>Images made</th><th /></tr></thead>

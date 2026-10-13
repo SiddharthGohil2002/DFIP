@@ -22,6 +22,8 @@ storage/hashsets/**
 storage/clamav/**
 storage/yara/**
 storage/physical/**
+storage/findings/**
+storage/signing/**
 !storage/**/
 !storage/**/.gitkeep
 

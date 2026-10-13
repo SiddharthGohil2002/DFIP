@@ -7,6 +7,7 @@ import { formatBytes, useTime } from '../lib/format';
 import { TagButton } from '../lib/tags';
 import { useApi } from '../lib/useApi';
 import { ViewButton } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Loading, Modal, PageHeader, Pager, Tabs, type Tone, useToast } from '../ui';
 
 type Change = 'DELETED_SINCE' | 'CHANGED_SINCE' | 'ADDED_SINCE';
@@ -40,7 +41,8 @@ function useRecover() {
 export function ShadowCopiesPage() {
   const { caseId, overview } = useCase();
   const time = useTime();
-  const stores = useApi<{ data: any[] }>(`/forensics/shadow-copies/stores?case_id=${encodeURIComponent(caseId)}`);
+  const storesPath = `/forensics/shadow-copies/stores?case_id=${encodeURIComponent(caseId)}`;
+  const stores = useApi<{ data: any[] }>(storesPath);
   const [browsing, setBrowsing] = useState<any>(null);
   const list = stores.data?.data || [];
   return (
@@ -52,7 +54,7 @@ export function ShadowCopiesPage() {
         <Banner tone="info">No shadow copies were found in this case. NTFS volumes are checked for them by the Standard and Full analysis profiles (module "Volume Shadow Copies").</Banner>
       ) : (
         <>
-          <Card title="Snapshots" flush>
+          <Card title="Snapshots" flush actions={<ExportButton path={storesPath} what="list of snapshots" />}>
             <div className="table-wrap">
               <table className="table">
                 <thead><tr><th>Evidence</th><th>Volume</th><th>Copy</th><th>Made</th><th>Identifier</th>
@@ -95,7 +97,8 @@ function Differences({ caseId, stores, counts }: { caseId: string; stores: any[]
   const qs = new URLSearchParams({ case_id: caseId, change, limit: String(LIMIT), skip: String(skip) });
   if (volume) qs.set('volume_id', volume.split('|')[1]), qs.set('evidence_id', volume.split('|')[0]);
   if (search) qs.set('search', search);
-  const res = useApi<{ data: any[]; total: number; counts: Record<string, number> }>(`/forensics/shadow-copies?${qs}`);
+  const path = `/forensics/shadow-copies?${qs}`;
+  const res = useApi<{ data: any[]; total: number; counts: Record<string, number> }>(path);
   const n = res.data?.counts || {};
   return (
     <Card flush>
@@ -111,6 +114,8 @@ function Differences({ caseId, stores, counts }: { caseId: string; stores: any[]
           placeholder="Part of the path" aria-label="Search paths" />
         <Button size="sm" icon={<Search size={13} />} onClick={() => { setSearch(q.trim()); setSkip(0); }}>Search</Button>
         <span className="small muted">{res.data ? `${res.data.total.toLocaleString()} entries` : ''}</span>
+        <span style={{ flex: 1 }} />
+        {!!res.data?.data.length && <ExportButton path={path} what="file list" />}
       </div>
       <ErrorBanner error={res.error} />
       {!res.data ? <Loading /> : !res.data.data.length ? <Empty title={`No file ${CHANGE_LABEL[change].toLowerCase()} a shadow copy`} /> : (
@@ -153,7 +158,8 @@ function BrowseModal({ store, onClose }: { store: any; onClose: () => void }) {
   const { can } = useAuth();
   const { recover, busy } = useRecover();
   const [path, setPath] = useState('/');
-  const res = useApi<{ data: any[] }>(`/forensics/shadow-copies/browse?evidence_id=${encodeURIComponent(store.evidence_id)}&volume_id=${encodeURIComponent(store.volume_id)}&path=${encodeURIComponent(path)}`);
+  const listPath = `/forensics/shadow-copies/browse?evidence_id=${encodeURIComponent(store.evidence_id)}&volume_id=${encodeURIComponent(store.volume_id)}&path=${encodeURIComponent(path)}`;
+  const res = useApi<{ data: any[] }>(listPath);
   const parts = path.split('/').filter(Boolean);
   return (
     <Modal open wide title={`Shadow copy ${store.store} of ${store.evidence_id} ${store.parent_volume_id}, as on ${time(store.created)}`} onClose={onClose}>
@@ -164,6 +170,8 @@ function BrowseModal({ store, onClose }: { store: any; onClose: () => void }) {
             <span key={i} className="row" style={{ gap: 2 }}><ChevronRight size={12} />
               <button className="link-button mono" onClick={() => setPath('/' + parts.slice(0, i + 1).join('/'))}>{p}</button></span>
           ))}
+          <span style={{ flex: 1 }} />
+          {!!res.data?.data.length && <ExportButton path={listPath} what="folder listing" />}
         </div>
         <ErrorBanner error={res.error} />
         {!res.data ? <Loading /> : !res.data.data.length ? <Empty title="Empty folder" /> : (

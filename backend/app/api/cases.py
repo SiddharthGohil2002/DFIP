@@ -389,16 +389,20 @@ def delete_case(case_id: str, body: DeleteCase, u=Depends(require_write('CASE_DE
     from pathlib import Path
     from ..core.config import settings
     counts = {'evidence': len(done)}
+    import shutil
+    from ..services.finding_files import root as finding_root
+    for f in db['findings'].find({'case_id': case_id}, {'_id': 1}):
+        shutil.rmtree(finding_root() / str(f['_id']), ignore_errors=True)
     for name, q in (('findings', {'case_id': case_id}), ('comments', {'case_id': case_id}), ('tags', {'case_id': case_id}),
                     ('timeline_events', {'case_id': case_id}), ('forensic_artifacts', {'case_id': case_id}), ('patterns', {'case_id': case_id}),
                     ('anomalies', {'case_id': case_id}), ('ai_requests', {'case_id': case_id})):
         counts[name] = db[name].delete_many(q).deleted_count
     storage = Path(settings.storage_path).resolve()
-    for rep in db['reports'].find({'case_id': case_id}, {'path': 1}):
-        p = Path(rep.get('path') or '')
-        if p.is_file() and storage in p.resolve().parents:
-            p.unlink()
-            removed += 1
+    for rep in db['reports'].find({'case_id': case_id}, {'path': 1, 'html_path': 1}):
+        for p in (Path(rep.get('path') or ''), Path(rep.get('html_path') or '')):
+            if p.is_file() and storage in p.resolve().parents:
+                p.unlink()
+                removed += 1
     counts['reports'] = db['reports'].delete_many({'case_id': case_id}).deleted_count
     from .timeline_imports import remove_import
     counts['timeline_imports'] = 0

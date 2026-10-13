@@ -59,3 +59,11 @@ cryptography==50.0.1
 dpkt==1.9.8
 # The case assistant's optional Claude mode (Anthropic SDK)
 anthropic==1.9.0
+# Reports: signed PDFs (PAdES, RFC 3161 timestamps), XLSX exports, STIX 2.1 indicators, CASE/UCO JSON-LD; the tests check
+# signed reports with `pyhanko sign validate` (pyhanko-cli) and CASE output with case_validate (case-utils)
+pyhanko==0.37.0
+pyhanko-certvalidator==0.32.1
+openpyxl==3.1.5
+stix2==3.0.2
+case-utils==0.18.0
+pyhanko-cli==0.5.0

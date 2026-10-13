@@ -25,6 +25,13 @@ x-env: &env
   # The case assistant's Claude mode talks to a stand-in the test script runs in the backend container (_start_claude_mock)
   ANTHROPIC_API_KEY: test-anthropic-key
   ANTHROPIC_BASE_URL: http://backend:18081
+  # Reports are signed with a test organisation certificate and timestamped by an `openssl ts` authority the test script
+  # runs in the backend container (_start_tsa); both are issued by a test root it makes in the storage volume.
+  REPORT_SIGNING_P12: /app/storage/test-pki/org.p12
+  REPORT_SIGNING_P12_PASSWORD: org-test-pass
+  REPORT_TSA_URL: http://127.0.0.1:18082/tsa
+  REPORT_TRUST_ROOTS: /app/storage/test-pki/ca.crt
+  REPORT_TSA_TRUST_ROOTS: /app/storage/test-pki/ca.crt
 services:
   mongodb:
     image: mongo:8

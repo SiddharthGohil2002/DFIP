@@ -5,6 +5,7 @@ import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import type { TimelineEvent, UsbDevice } from '../lib/types';
 import { Badge, Banner, Card, Empty, ErrorBanner, Loading, PageHeader } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 const TIMES: { key: keyof UsbDevice; label: string }[] = [
   { key: 'first_install', label: 'First installed (registry)' },
@@ -23,7 +24,8 @@ const SOURCE: Record<string, [string, 'accent' | 'warn']> = {
 export function UsbPage() {
   const { caseId } = useCase();
   const time = useTime();
-  const devices = useApi<{ data: UsbDevice[] }>(`/forensics/usb?case_id=${encodeURIComponent(caseId)}`);
+  const path = `/forensics/usb?case_id=${encodeURIComponent(caseId)}`;
+  const devices = useApi<{ data: UsbDevice[] }>(path);
   const events = useApi<{ data: TimelineEvent[] }>(`/forensics/timeline?case_id=${encodeURIComponent(caseId)}&type=USB_ACTIVITY&order=asc&limit=500`);
 
   return (
@@ -31,6 +33,7 @@ export function UsbPage() {
       <PageHeader
         title="USB devices"
         subtitle="Removable storage devices recorded by Windows in the SYSTEM registry hive (USBSTOR, USB, MountedDevices and device-property timestamps), in setupapi.dev.log and in the event logs (Partition/Diagnostic, Kernel-PnP, DriverFrameworks)."
+        actions={!!devices.data?.data.length && <ExportButton path={path} what="list of devices" />}
       />
       <Banner tone="info">
         An empty time means the evidence does not record it (for example, Windows 7 does not store last-connected or last-removed times). DFIP never estimates a missing value. setupapi.dev.log times are converted to UTC using the time zone stored in the SYSTEM hive.

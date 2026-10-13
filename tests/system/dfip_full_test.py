@@ -29,6 +29,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
+from html import escape as html_escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -4762,8 +4763,30 @@ def t_reports():
     check('download is a PDF', pdf.status == 200 and pdf.body[:5] == b'%PDF-', pdf.body[:10])
     check('PDF SHA-256 equals the recorded value and the header', hashlib.sha256(pdf.body).hexdigest() == r1.json['sha256']
           == (pdf.headers.get('X-DFIP-Report-SHA256') or pdf.headers.get('x-dfip-report-sha256')), r1.json['sha256'])
+    sig = r1.json.get('signature') or {}
+    check("the report is signed with the organisation's certificate and timestamped by the authority (PAdES-B-T)",
+          sig.get('signed') is True and sig.get('self_signed') is False and sig.get('level') == 'PAdES-B-T' and sig.get('timestamped') is True
+          and 'DFIP Test Lab report signing' in (sig.get('signer') or '') and C['TSA'].requests > 0, sig)
     (OUT / 'report-A.pdf').write_bytes(pdf.body)
     C['REPORT_A'] = r1.json['report_id']
+    html = get(f"/api/reports/{r1.json['report_id']}/download?format=html", inv)
+    h = {k.lower(): v for k, v in html.headers.items()}
+    check('the HTML version is a download with the recorded SHA-256, that a browser may not sniff or run',
+          html.status == 200 and r1.json.get('has_html') is True and hashlib.sha256(html.body).hexdigest() == r1.json['html_sha256'] == h.get('x-dfip-report-sha256')
+          and h.get('content-disposition', '').startswith('attachment') and h.get('x-content-type-options') == 'nosniff'
+          and h.get('content-security-policy', '').startswith('sandbox'), h)
+    (OUT / 'report-A.html').write_bytes(html.body)
+    text = subprocess.run(['pdftotext', '-layout', str(OUT / 'report-A.pdf'), '-'], capture_output=True, text=True).stdout
+    titles = [s['title'] for s in get('/api/reports/sections', inv).json['data']]
+    rx = r'^\s*(\d+)\. (' + '|'.join(map(re.escape, titles)) + r')\s*$'
+    in_pdf = re.findall(rx, text, re.M)
+    in_html = re.findall(r'<h2>(\d+)\. (' + '|'.join(re.escape(html_escape(t)) for t in titles) + r')</h2>', html.body.decode())
+    check('the default report has every section of the registry, numbered in order, in the PDF and the HTML alike',
+          in_pdf == [(str(i), t) for i, t in enumerate(titles, 1)] and in_html == [(n, html_escape(t)) for n, t in in_pdf], (in_pdf[:3], in_html[:3]))
+    page = html.body.decode()
+    check('...and the HTML holds the same evidence hash and findings, with nothing that runs or fetches anything',
+          C['IMG_SHA256'] in page and 'Payroll export copied to the SanDisk drive' in page and '<script' not in page.lower()
+          and not re.search(r'''(src|href)\s*=\s*["']?(https?:|//)''', page) and "default-src 'none'" in page, len(page))
     r2 = post(f'/api/reports?case_id={A}', inv)
     check('a second report gets version 2 and a new ID', r2.json['version'] == 2 and r2.json['report_id'] != r1.json['report_id'], r2)
     check('report list filtered by case', {x['report_id'] for x in get(f'/api/reports?case_id={A}', inv).json['data']} >= {r1.json['report_id'], r2.json['report_id']})
@@ -4776,6 +4799,271 @@ def t_reports():
         (OUT / 'report-markup.pdf').write_bytes(get(f"/api/reports/{xr.json['report_id']}/download", inv).body)
     pf = Path(get(f"/api/reports?case_id={A}", C['ADMIN']).json['data'][0]['path'])
     check('report file is stored under storage/reports', '/reports/' in str(pf) and pf.exists(), pf)
+
+
+PKI = Path('/app/storage/test-pki')
+
+
+def _start_tsa():
+    """The test root, the organisation's signing certificate and an RFC 3161 timestamp authority (`openssl ts`) on port 18082
+    (REPORT_SIGNING_P12, REPORT_TSA_URL and the trust roots in compose.yml)."""
+    sys.path.insert(0, '/app/tests/fixtures')
+    from pki import TsaServer, make_pki
+    if not (PKI / 'org.p12').exists():
+        make_pki(PKI)
+    C['TSA'] = TsaServer(PKI, port=18082).start()
+
+
+def _pdf_text(data: bytes) -> str:
+    with tempfile.NamedTemporaryFile(suffix='.pdf') as f:
+        f.write(data)
+        f.flush()
+        return subprocess.run(['pdftotext', '-layout', f.name, '-'], capture_output=True, text=True).stdout
+
+
+@section('18b Report templates, pictures in findings, and signed reports checked')
+def t_report_templates():
+    from PIL import Image
+    inv, adm, A, E = C['INVESTIGATOR'], C['ADMIN'], C['A'], C['E']
+    secs = get('/api/reports/sections', inv).json['data']
+    titles = {s['id']: s['title'] for s in secs}
+    check('the section registry lists every report section once with its group, evidence first and the audit check last',
+          len(titles) == len(secs) > 30 and secs[0]['id'] == 'evidence' and secs[-1]['id'] == 'audit' and all(s['group'] for s in secs), [s['id'] for s in secs])
+    body = {'name': 'Court brief', 'description': 'For the hearing', 'sections': ['findings', 'evidence', 'custody'],
+            'cover': {'title': 'Expert witness report', 'organisation': 'DFIP Test Lab', 'reference': 'LAB-2026-0141', 'prepared_for': 'Crown Court',
+                      'classification': 'OFFICIAL-SENSITIVE', 'scope': 'Whether payroll data left the laptop.'},
+            'approved_findings_only': True, 'include_screenshots': True}
+    t = post('/api/reports/templates', inv, body)
+    tid = (t.json or {}).get('template_id')
+    check('an investigator saves a report template: sections in their order, the cover and the options', t.status == 200
+          and re.fullmatch(r'TPL-\d{3}', tid or '') and t.json['sections'] == body['sections'] and t.json['cover'] == body['cover'], t)
+    check('a viewer may not save one (403); an unknown or repeated section is refused (422)',
+          post('/api/reports/templates', C['VIEWER'], body).status == 403
+          and post('/api/reports/templates', inv, dict(body, sections=['evidence', 'nope'])).status == 422
+          and post('/api/reports/templates', inv, dict(body, sections=['evidence', 'evidence'])).status == 422)
+    u = req('PUT', f'/api/reports/templates/{tid}', inv, dict(body, name='Court brief (hearing)'))
+    check('a template is updated and listed', u.status == 200 and any(x['template_id'] == tid and x['name'] == 'Court brief (hearing)'
+                                                                      for x in get('/api/reports/templates', inv).json['data']), u)
+
+    # A picture attached to a finding, which the template's report shows.
+    buf = io.BytesIO()
+    Image.new('RGB', (320, 200), (200, 40, 40)).save(buf, 'PNG')
+    png = buf.getvalue()
+    f = post('/api/findings', inv, {'case_id': A, 'title': 'SecureDelete.exe downloaded before the wipe', 'severity': 'MEDIUM',
+                                    'description': 'The Downloads folder shows SecureDelete.exe.', 'evidence_ids': [E]}).json
+    fid = f['_id']
+    a = form('POST', f'/api/findings/{fid}/attachments', inv, {'caption': 'Downloads folder'}, 'downloads.png', png)
+    att = ((a.json or {}).get('attachments') or [{}])[0]
+    check('a picture is attached to a draft finding, kept under its SHA-256 with its caption', a.status == 200
+          and att.get('sha256') == hashlib.sha256(png).hexdigest() and att.get('caption') == 'Downloads folder' and att.get('mime') == 'image/png', a)
+    g = get(f"/api/findings/{fid}/attachments/{att.get('attachment_id')}", inv)
+    h = {k.lower(): v for k, v in g.headers.items()}
+    check('it is served back byte for byte, as a picture a browser may not sniff', g.status == 200 and g.body == png and h.get('content-type') == 'image/png'
+          and h.get('x-content-type-options') == 'nosniff', h)
+    check('only PNG or JPEG by content (415), the same picture once (409); another team cannot see it (404)',
+          form('POST', f'/api/findings/{fid}/attachments', inv, {}, 'x.png', b'<svg onload="alert(1)"/>').status == 415
+          and form('POST', f'/api/findings/{fid}/attachments', inv, {}, 'again.png', png).status == 409
+          and get(f"/api/findings/{fid}/attachments/{att.get('attachment_id')}", C['INV2']).status == 404)
+    post(f'/api/findings/{fid}/submit', inv, {'reviewer_id': None, 'note': ''})
+    rv = post(f'/api/findings/{fid}/review', adm, {'decision': 'APPROVED', 'note': 'Matches the file listing.'})
+    check('once approved, pictures can no longer be added or removed (409)', rv.status == 200
+          and form('POST', f'/api/findings/{fid}/attachments', inv, {}, 'late.jpg', b'\xff\xd8\xff' + b'0' * 64).status == 409
+          and req('DELETE', f"/api/findings/{fid}/attachments/{att.get('attachment_id')}", inv).status == 409, rv)
+    draft = post('/api/findings', inv, {'case_id': A, 'title': 'Unreviewed hunch about the printer', 'severity': 'LOW', 'description': 'Not checked yet.'}).json
+
+    # The report made from the template.
+    r = post(f'/api/reports?case_id={A}', inv, {'template_id': tid})
+    rid = (r.json or {}).get('report_id')
+    check('a report is generated from the template, which it records', r.status == 200 and r.json['template']['template_id'] == tid
+          and r.json['template']['sections'] == body['sections'], r)
+    pdf = get(f'/api/reports/{rid}/download', inv).body
+    (OUT / 'report-template.pdf').write_bytes(pdf)
+    text = _pdf_text(pdf)
+    flat = ' '.join(text.split())
+    rx = r'^\s*(\d+)\. (' + '|'.join(map(re.escape, titles.values())) + r')\s*$'
+    check("only the template's sections, in its order, numbered 1 to 3", re.findall(rx, text, re.M) == [('1', titles['findings']), ('2', titles['evidence']),
+                                                                                                     ('3', titles['custody'])], re.findall(rx, text, re.M))
+    pages = int(re.search(r'Pages:\s+(\d+)', subprocess.run(['pdfinfo', str(OUT / 'report-template.pdf')], capture_output=True, text=True).stdout).group(1))
+    check('the cover: title, organisation, reference, who it is for, the scope; the classification at the top and bottom of every page',
+          all(x in flat for x in ('Expert witness report', 'DFIP Test Lab', 'LAB-2026-0141', 'Crown Court', 'Whether payroll data left the laptop.'))
+          and 'Digital Forensics Investigation Report' not in flat and flat.count('OFFICIAL-SENSITIVE') >= 2 * pages, (pages, flat.count('OFFICIAL-SENSITIVE')))
+    check('only approved findings: the reviewed ones are in, drafts are not, and the report says so',
+          'Payroll export copied to the SanDisk drive' in flat and 'SecureDelete.exe downloaded before the wipe' in flat
+          and 'Unreviewed hunch about the printer' not in flat and 'Analyst note' not in flat and 'Only findings approved in peer review are included.' in flat)
+    imgs = subprocess.run(['pdfimages', '-list', str(OUT / 'report-template.pdf')], capture_output=True, text=True).stdout
+    check("the finding's picture is in the PDF at its size, with its caption", re.search(r'\bimage\s+320\s+200\b', imgs) is not None
+          and 'Downloads folder' in flat, imgs[-400:])
+    html = get(f'/api/reports/{rid}/download?format=html', inv)
+    page = html.body.decode()
+    check('the HTML version: the same three sections in order, the cover, the classification banner and the picture inline',
+          re.findall(r'<h2>(\d+)\. ([^<]+)</h2>', page) == [('1', html_escape(titles['findings'])), ('2', html_escape(titles['evidence'])),
+                                                            ('3', html_escape(titles['custody']))]
+          and 'LAB-2026-0141' in page and page.count('<div class="classification">OFFICIAL-SENSITIVE</div>') == 2
+          and 'data:image/png;base64,' + base64.b64encode(png).decode() in page and 'Unreviewed hunch' not in page, len(page))
+    r2 = post(f'/api/reports?case_id={A}', inv, {'template': {'name': 'Audit only', 'sections': ['audit'], 'cover': {}}})
+    check('a template given inline: only the audit check; an unknown template is 404',
+          r2.status == 200 and re.findall(rx, _pdf_text(get(f"/api/reports/{r2.json['report_id']}/download", inv).body), re.M) == [('1', titles['audit'])]
+          and post(f'/api/reports?case_id={A}', inv, {'template_id': 'TPL-999'}).status == 404, r2)
+
+    # Signatures checked: by DFIP, by poppler and by pyHanko's own command line, and a changed copy fails.
+    v = get(f'/api/reports/{rid}/verify', inv).json
+    s = (v.get('signatures') or [{}])[0]
+    check('the stored report checks out: SHA-256 as recorded, signature intact over the whole file, the signer and the timestamp trusted',
+          v.get('valid') and v.get('sha256_matches') and s.get('intact') and s.get('covers_whole_file') and s.get('trusted') and not s.get('self_signed')
+          and (s.get('timestamp') or {}).get('trusted') and 'DFIP Test Lab report signing' in s.get('signer', ''), v)
+    sig = subprocess.run(['pdfsig', str(OUT / 'report-template.pdf')], capture_output=True, text=True).stdout
+    check('poppler (pdfsig): the signature is valid, by the test lab, over the whole document', 'Signature is Valid.' in sig
+          and 'Total document signed' in sig and 'DFIP Test Lab report signing' in sig, sig)
+    ph = subprocess.run(['pyhanko', 'sign', 'validate', '--trust', str(PKI / 'ca.crt'), '--trust-replace', '--executive-summary',
+                         str(OUT / 'report-template.pdf')], capture_output=True, text=True)
+    check("pyHanko's validator: VALID with the test root as the only trust anchor", ph.returncode == 0 and ph.stdout.strip().endswith(':VALID'), ph.stdout + ph.stderr[-300:])
+    up = form('POST', '/api/reports/verify', inv, {}, 'copy.pdf', pdf)
+    check('an uploaded copy is recognised as that report, byte for byte, and its signature checks out',
+          up.status == 200 and up.json['matches_report'] == rid and up.json['valid'], up)
+    bad = bytearray(pdf)
+    bad[pdf.index(b'stream', pdf.index(b'/FlateDecode')) + 20] ^= 1
+    (OUT / 'report-tampered.pdf').write_bytes(bytes(bad))
+    t1 = form('POST', '/api/reports/verify', inv, {}, 'changed.pdf', bytes(bad)).json
+    ph = subprocess.run(['pyhanko', 'sign', 'validate', '--trust', str(PKI / 'ca.crt'), '--trust-replace', '--executive-summary',
+                         str(OUT / 'report-tampered.pdf')], capture_output=True, text=True)
+    check('one byte changed: DFIP, pdfsig and pyHanko all reject it, and it is not taken for the report',
+          t1['valid'] is False and not t1['signatures'][0]['intact'] and t1['matches_report'] is None
+          and 'Digest Mismatch' in subprocess.run(['pdfsig', str(OUT / 'report-tampered.pdf')], capture_output=True, text=True).stdout
+          and ph.returncode != 0 and ph.stdout.strip().endswith(':INVALID'), (t1, ph.stdout))
+    from pyhanko.pdf_utils import generic
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+    w = IncrementalPdfFileWriter(io.BytesIO(pdf))
+    w.trailer['/Info'] = w.add_object(generic.DictionaryObject({generic.NameObject('/Title'): generic.TextStringObject('Edited')}))
+    out = io.BytesIO()
+    w.write(out)
+    t2 = form('POST', '/api/reports/verify', inv, {}, 'resaved.pdf', out.getvalue()).json
+    check('saved again with a change after signing: the signature is intact but no longer covers the file, so it fails',
+          t2['valid'] is False and t2['signatures'][0]['intact'] and not t2['signatures'][0]['covers_whole_file']
+          and t2['error'] == 'The file was changed after it was signed', t2)
+    check('an unsigned PDF is reported as not signed', form('POST', '/api/reports/verify', inv, {}, 'plain.pdf', b'%PDF-1.4\n%%EOF\n').json['valid'] is False)
+    check("another team cannot check or download the report (404), and their upload of it is not matched to the case",
+          get(f'/api/reports/{rid}/verify', C['INV2']).status == 404 and get(f'/api/reports/{rid}/download?format=html', C['INV2']).status == 404
+          and form('POST', '/api/reports/verify', C['INV2'], {}, 'copy.pdf', pdf).json['matches_report'] is None)
+    d = req('DELETE', f'/api/reports/templates/{tid}', inv)
+    check('a template is deleted; a report can no longer name it (404)', d.status == 200 and post(f'/api/reports?case_id={A}', inv, {'template_id': tid}).status == 404, d)
+    acts = {x['action'] for x in mongo().audit_logs.find({'action': {'$in': ['REPORT_TEMPLATE_CREATED', 'REPORT_TEMPLATE_UPDATED', 'REPORT_TEMPLATE_DELETED',
+                                                                              'REPORT_VERIFIED', 'REPORT_DOWNLOADED', 'FINDING_ATTACHMENT_ADDED']}})}
+    check('templates, downloads, checks and pictures are audited', len(acts) == 6, acts)
+    req('DELETE', f"/api/findings/{draft['_id']}", inv, {'reason': 'test clean-up'})
+
+
+@section('18c Exports: tables as CSV and XLSX, the case as CASE/UCO, indicators as STIX 2.1 and MISP')
+def t_exports():
+    import csv
+    import openpyxl
+    import stix2
+    from stix2patterns.validator import run_validator
+    inv, A, E = C['INVESTIGATOR'], C['A'], C['E']
+    db = mongo()
+
+    def export(resource, fmt='csv', token=inv):
+        return get('/api/exports/table?' + urllib.parse.urlencode({'resource': resource, 'format': fmt}), token)
+
+    def every(path):  # the API's own pages
+        rows, skip = [], 0
+        while True:
+            page = get(f'{path}&skip={skip}&limit=1000', inv).json
+            rows += page['data']
+            skip += len(page['data'])
+            if not page['data'] or skip >= page['total']:
+                return rows
+
+    def hdr(r):
+        return {k.lower(): v for k, v in r.headers.items()}
+    for name, path in (('file listing', f'/api/forensics/evidence/{E}/files?q='), ('timeline', f'/api/forensics/timeline?case_id={A}&order=asc')):
+        want = every(path)
+        x = export(path)
+        got = list(csv.DictReader(io.StringIO(x.body.decode('utf-8-sig'))))
+        h = hdr(x)
+        check(f'the {name} as CSV holds every row the API lists over all its pages ({len(want):,}), the same records',
+              x.status == 200 and len(got) == len(want) == int(h.get('x-dfip-export-rows', -1)) and sorted(g['_id'] for g in got) == sorted(w['_id'] for w in want)
+              and h.get('x-dfip-export-sha256') == hashlib.sha256(x.body).hexdigest() and h.get('content-disposition', '').startswith('attachment'),
+              (x.status, len(got), len(want), h.get('x-dfip-export-rows')))
+    fs = {g['path']: g for g in csv.DictReader(io.StringIO(export(f'/api/forensics/evidence/{E}/files?q=payroll').body.decode('utf-8-sig')))}
+    api_fs = {w['path']: w for w in every(f'/api/forensics/evidence/{E}/files?q=payroll')}
+    check('a filter carries over to the export, and each value matches the API (hashes, sizes, deleted)', fs and set(fs) == set(api_fs)
+          and all(fs[p]['sha256'] == (api_fs[p].get('sha256') or '') and fs[p]['size'] == str(api_fs[p].get('size')) and fs[p]['deleted'] == str(api_fs[p].get('deleted'))
+                  for p in fs), list(fs)[:3])
+    x = export(f'/api/forensics/executables?case_id={A}', 'xlsx')
+    ws = openpyxl.load_workbook(io.BytesIO(x.body)).active
+    head = [c.value for c in ws[1]]
+    progs = every(f'/api/forensics/executables?case_id={A}')
+    col = head.index('sha256') + 1 if 'sha256' in head else None
+    check('programs as an Excel workbook: a header row, one row per program, the same hashes',
+          x.status == 200 and ws.max_row - 1 == len(progs) and col and sorted(ws.cell(r, col).value or '' for r in range(2, ws.max_row + 1))
+          == sorted(p.get('sha256') or '' for p in progs) and 'pe.version_info.OriginalFilename' in head, (x.status, head[:8]))
+    evil = post('/api/findings', inv, {'case_id': A, 'title': '=HYPERLINK("http://evil.example/x","open")', 'severity': 'LOW',
+                                       'description': '@SUM(1+1)*cmd|" /C calc"!A0', 'evidence_ids': [E]}).json
+    rows = {r['_id']: r for r in csv.DictReader(io.StringIO(export(f'/api/findings?case_id={A}').body.decode('utf-8-sig')))}
+    ws = openpyxl.load_workbook(io.BytesIO(export(f'/api/findings?case_id={A}', 'xlsx').body)).active
+    cells = [c for row in ws.iter_rows() for c in row]
+    tcol = [c.value for c in ws[1]].index('title') + 1
+    titles = [ws.cell(r, tcol) for r in range(2, ws.max_row + 1) if 'HYPERLINK' in str(ws.cell(r, tcol).value)]
+    check('text that a spreadsheet would run as a formula is defused: an apostrophe first in CSV, plain text in XLSX',
+          rows[evil['_id']]['title'] == "'" + evil['title'] and rows[evil['_id']]['description'] == "'" + evil['description']
+          and titles and all(c.data_type == 's' and c.value.startswith("'=") for c in titles) and not any(c.data_type == 'f' for c in cells),
+          (rows[evil['_id']]['title'], [(c.value, c.data_type) for c in titles]))
+    req('DELETE', f"/api/findings/{evil['_id']}", inv, {'reason': 'test clean-up'})
+    check('a viewer and an analyst may not export (403); another team gets nothing of the case (404); only table views of this API (400)',
+          export(f'/api/findings?case_id={A}', token=C['VIEWER']).status == 403 and export(f'/api/findings?case_id={A}', token=C['ANALYST']).status == 403
+          and export(f'/api/forensics/timeline?case_id={A}', token=C['INV2']).status == 404 and export('https://evil.example/api/cases').status == 400
+          and export('/api/exports/table?resource=/api/cases').status == 400 and export(f'/api/cases/{A}/overview').status == 400
+          and export('/api/findings', 'pdf').status == 400)
+    last = db.audit_logs.find_one({'action': 'EXPORT_DOWNLOADED'}, sort=[('sequence', -1)]) or {}
+    check('exports are audited with the view, the format, the rows and the SHA-256', last.get('metadata', {}).get('format') in ('csv', 'xlsx')
+          and len(last.get('metadata', {}).get('sha256', '')) == 64 and 'rows' in last.get('metadata', {}), last.get('metadata'))
+
+    cu = get(f'/api/exports/cases/{A}/case-uco', inv)
+    (OUT / 'case-A.jsonld').write_bytes(cu.body)
+    val = subprocess.run(['case_validate', str(OUT / 'case-A.jsonld')], capture_output=True, text=True)
+    check('the case as CASE/UCO JSON-LD conforms to the CASE 1.4 ontology (case_validate, no warnings)', cu.status == 200 and val.returncode == 0
+          and 'Conforms: True' in val.stdout, val.stdout[-1500:])
+    graph = (cu.json or {}).get('@graph') or []
+    hashes = {hv['uco-types:hashValue']['@value'] for n in graph for f in n.get('uco-core:hasFacet', []) for hv in f.get('uco-observable:hash', [])}
+    names = {n.get('uco-core:name') for n in graph}
+    n_rec = db.forensic_artifacts.count_documents({'case_id': A, 'type': 'RECOVERED_FILE'})
+    check('...with the image and its SHA-256, its exhibit number, the custody actions, every recovered file and the approved findings',
+          C['IMG_SHA256'].upper() in hashes and any(n.get('case-investigation:exhibitNumber') == E for n in graph)
+          and {'Registered the evidence and computed its hashes', 'Recovered a file from the evidence'} <= names
+          and sum(1 for n in graph if n.get('uco-action:result')) == n_rec > 0
+          and 'Payroll export copied to the SanDisk drive' in names and 'Analyst note' not in names, (n_rec, len(graph)))
+
+    iocs = get(f'/api/exports/cases/{A}/iocs', inv).json['data']
+    by = {(x['kind'], x['value']): x for x in iocs}
+    ps1 = db.fs_entries.find_one({'evidence_id': E, 'path': {'$regex': 'cleanup\\.ps1$'}}, {'sha256': 1})
+    svc = db.forensic_artifacts.find_one({'case_id': A, 'type': 'EXECUTABLE', 'path': {'$regex': 'Temp/svchost\\.exe$'}}, {'sha256': 1})
+    check('indicators: the script YARA matched as malicious, the packed svchost.exe as a program that stands out',
+          by.get(('file', ps1['sha256']), {}).get('verdict') == 'malicious-activity' and ('file', svc['sha256']) in by, [(k, v['verdict']) for k, v in list(by.items())[:6]])
+    st = get(f'/api/exports/cases/{A}/stix?tlp=green', inv)
+    bundle = stix2.parse(st.body.decode(), allow_custom=False)
+    ind = [o for o in bundle.objects if o.type == 'indicator']
+    rep = [o for o in bundle.objects if o.type == 'report']
+    check('STIX 2.1: the bundle parses strictly, one indicator each with a valid pattern, marked TLP:GREEN, listed by a report',
+          st.status == 200 and len(ind) == len(iocs) and all(not run_validator(o.pattern) for o in ind)
+          and all(o.object_marking_refs == [stix2.TLP_GREEN.id] for o in ind) and len(rep) == 1 and set(rep[0].object_refs) == {o.id for o in ind}
+          and any(ps1['sha256'] in o.pattern for o in ind), (st.status, len(ind), len(iocs)))
+    ev = get(f'/api/exports/cases/{A}/misp?tlp=amber', inv).json['Event']
+    pairs = {'sha256': 'Payload delivery', 'sha1': 'Payload delivery', 'md5': 'Payload delivery', 'filename|sha256': 'Payload delivery',
+             'url': 'Network activity', 'domain': 'Network activity', 'ip-dst': 'Network activity'}
+    check('MISP event: attribute types with their MISP categories, malicious ones marked for IDS, TLP:AMBER',
+          ev['Attribute'] and all(pairs.get(a['type']) == a['category'] for a in ev['Attribute']) and {'name': 'tlp:amber'} in ev['Tag']
+          and any(a['to_ids'] and a['value'].endswith(ps1['sha256']) for a in ev['Attribute']), [(a['type'], a['category']) for a in ev['Attribute'][:5]])
+    if C.get('NET_CASE'):
+        net = C['NET_CASE']
+        ups = {(r.get('host') or '').split(':')[0] for r in get(f'/api/forensics/network?case_id={net}&type=HTTP_REQUEST&uploads=true&limit=1000', inv).json['data']}
+        doms = {o.pattern for o in stix2.parse(get(f'/api/exports/cases/{net}/stix', inv).body.decode(), allow_custom=False).objects if o.type == 'indicator'}
+        check('the upload destination in the network capture becomes a domain and a URL indicator',
+              'filetransfer.example.net' in ups and all(f"[domain-name:value = '{u}']" in doms for u in ups) and any(p.startswith('[url:') for p in doms), (ups, doms))
+    check('a viewer may not export the case (403), another team gets 404, an unknown TLP is 400',
+          get(f'/api/exports/cases/{A}/case-uco', C['VIEWER']).status == 403 and get(f'/api/exports/cases/{A}/stix', C['INV2']).status == 404
+          and get(f'/api/exports/cases/{A}/misp?tlp=pink', inv).status == 400)
+    acts = {(x['action'], x['metadata'].get('format')) for x in db.audit_logs.find({'action': {'$in': ['CASE_EXPORTED', 'IOC_EXPORTED']}, 'resource_id': A})}
+    check('case and indicator exports are audited', {('CASE_EXPORTED', 'case-uco'), ('IOC_EXPORTED', 'stix-2.1'), ('IOC_EXPORTED', 'misp')} <= acts, acts)
 
 
 @section('19 Chain of custody and audit log')
@@ -5484,7 +5772,7 @@ PHASES = {
              t_recovery, t_viewer, t_timeline,
              t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_email, t_chat_cloud, t_browser_depth,
              t_comms_samples, t_media, t_malware, t_disk_formats, t_encrypted_volumes, t_shadow_copies, t_packages, t_unix, t_more_filesystems, t_plaso, t_network, t_phones,
-             t_indicators, t_carving, t_search, t_findings, t_tags, t_review, t_physical, t_graph_summary, t_claude, t_analyst, t_reports, t_audit, t_notifications,
+             t_indicators, t_carving, t_search, t_findings, t_tags, t_review, t_physical, t_graph_summary, t_claude, t_analyst, t_reports, t_report_templates, t_exports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold, t_retention],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],
@@ -5495,6 +5783,7 @@ if __name__ == '__main__':
     t0 = time.time()
     _start_vt_mock()
     _start_claude_mock()
+    _start_tsa()
     selected = PHASES[PHASE]
     # DFIP_SECTIONS=07b,12b runs only those sections (by number prefix), after the sections every other one
     # builds on: sign-in (02), cases (04), the evidence upload (06) and its analysis (07). A section that needs

@@ -6,6 +6,7 @@ import { TagButton } from '../lib/tags';
 import { useApi } from '../lib/useApi';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, Stat, Tabs, type Tone } from '../ui';
 import { ViewButton } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 
 type Tab = 'MESSAGES' | 'WHATSAPP' | 'PHONE_CALL' | 'PHONE_CONTACT' | 'PHONE_APP' | 'PHONE_WIFI';
 const LIMIT = 200;
@@ -85,7 +86,8 @@ function Messages({ caseId, whatsapp }: { caseId: string; whatsapp: boolean }) {
   if (search) qs.set('search', search);
   if (party) qs.set('party', party);
   if (app) qs.set('app', app);
-  const res = useApi<{ data: any[]; total: number; apps: Record<string, number>; conversations: any[] }>(`/forensics/phones?${qs}`);
+  const path = `/forensics/phones?${qs}`;
+  const res = useApi<{ data: any[]; total: number; apps: Record<string, number>; conversations: any[] }>(path);
   const rows = res.data?.data || [];
   return (
     <>
@@ -106,6 +108,8 @@ function Messages({ caseId, whatsapp }: { caseId: string; whatsapp: boolean }) {
           </select>
         )}
         <span className="small muted">{res.data ? `${res.data.total.toLocaleString()} messages` : ''}</span>
+        <span style={{ flex: 1 }} />
+        {rows.length > 0 && <ExportButton path={path} what="list of messages" />}
       </div>
       <ErrorBanner error={res.error} />
       {!res.data ? <Loading /> : !rows.length ? <Empty title="No messages" text="No message of this kind was found." /> : (
@@ -144,7 +148,8 @@ function Records({ caseId, type }: { caseId: string; type: Exclude<Tab, 'MESSAGE
   const qs = new URLSearchParams({ case_id: caseId, type, limit: String(LIMIT), skip: String(skip) });
   if (search) qs.set('search', search);
   if (notable) qs.set('notable', 'true');
-  const res = useApi<{ data: any[]; total: number }>(`/forensics/phones?${qs}`);
+  const path = `/forensics/phones?${qs}`;
+  const res = useApi<{ data: any[]; total: number }>(path);
   const rows = res.data?.data || [];
   const t = (v: any) => (v ? time(v) : '—');
   const cols: Record<typeof type, string[]> = {
@@ -161,6 +166,8 @@ function Records({ caseId, type }: { caseId: string; type: Exclude<Tab, 'MESSAGE
         <Button size="sm" icon={<Search size={13} />} onClick={() => { setSearch(q.trim()); setSkip(0); }}>Search</Button>
         {type === 'PHONE_APP' && <label className="check"><input type="checkbox" checked={notable} onChange={(e) => { setNotable(e.target.checked); setSkip(0); }} /> Only what stands out</label>}
         <span className="small muted">{res.data ? `${res.data.total.toLocaleString()} records` : ''}</span>
+        <span style={{ flex: 1 }} />
+        {rows.length > 0 && <ExportButton path={path} />}
       </div>
       <ErrorBanner error={res.error} />
       {!res.data ? <Loading /> : !rows.length ? <Empty title="Nothing here" text="No record of this kind was found." /> : (

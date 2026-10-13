@@ -590,6 +590,17 @@ export interface Finding {
   reviewed_at?: string;
   history?: FindingEvent[];
   comment_count?: number;
+  attachments?: FindingAttachment[];
+}
+
+/** A picture (screenshot) attached to a finding; reports can show it. */
+export interface FindingAttachment {
+  attachment_id: string;
+  sha256: string;
+  size: number;
+  mime: string;
+  name: string;
+  caption?: string;
 }
 
 export interface Report {
@@ -598,6 +609,87 @@ export interface Report {
   case_id: string;
   version: number;
   sha256: string;
+  html_sha256?: string;
+  has_html?: boolean;
   created_at: string;
   created_by?: string;
+  created_by_name?: string;
+  template?: (ReportTemplateBody & { template_id?: string }) | null;
+  signature?: ReportSignature;
+}
+
+/** How a report PDF was signed when it was generated. */
+export interface ReportSignature {
+  signed: boolean;
+  self_signed?: boolean;
+  signer?: string;
+  level?: string;
+  timestamped?: boolean;
+  timestamp_error?: string | null;
+  signed_at?: string;
+  error?: string;
+}
+
+export interface ReportSection {
+  id: string;
+  title: string;
+  group: string;
+}
+
+export interface ReportCover {
+  title: string;
+  organisation: string;
+  reference: string;
+  prepared_for: string;
+  classification: string;
+  scope: string;
+}
+
+export interface ReportTemplateBody {
+  name: string;
+  description?: string;
+  sections: string[];
+  cover: ReportCover;
+  approved_findings_only: boolean;
+  include_screenshots: boolean;
+}
+
+export interface ReportTemplate extends ReportTemplateBody {
+  template_id: string;
+  created_by_name?: string;
+  updated_at?: string;
+}
+
+/** A PDF's signatures checked (a stored report or one uploaded). */
+export interface SignatureCheck {
+  valid: boolean;
+  error: string | null;
+  signatures: {
+    field: string;
+    intact: boolean;
+    cryptographically_valid?: boolean;
+    covers_whole_file?: boolean;
+    trusted?: boolean;
+    signer?: string;
+    self_signed?: boolean;
+    signing_time?: string | null;
+    timestamp?: { time: string; intact: boolean; valid: boolean; trusted: boolean } | null;
+    error?: string;
+  }[];
+  sha256: string;
+  report_id?: string;
+  recorded_sha256?: string;
+  sha256_matches?: boolean;
+  matches_report?: string | null;
+}
+
+/** An indicator the STIX and MISP exports hold. */
+export interface Indicator {
+  kind: 'file' | 'url' | 'domain' | 'ipv4' | 'ipv6';
+  value: string;
+  verdict: 'malicious-activity' | 'anomalous-activity';
+  reasons: string[];
+  name?: string;
+  path?: string;
+  first_seen?: string | null;
 }

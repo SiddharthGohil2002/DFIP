@@ -178,20 +178,33 @@ export async function fetchBlob(path: string): Promise<Blob> {
   return r.blob();
 }
 
-/** Downloads an authenticated file and saves it under `filename`. Returns the server-recorded SHA-256, if sent. */
-export async function downloadFile(path: string, filename: string): Promise<string | null> {
+/** Fetches an authenticated file and saves it under `filename` (or the name the server gives). Returns the response headers. */
+async function saveDownload(path: string, filename?: string): Promise<Headers> {
   const r = await authedFetch(path);
   if (!r.ok) throw await errorFrom(r);
-  const sha = r.headers.get('X-DFIP-SHA256') || r.headers.get('X-DFIP-Report-SHA256');
+  const given = /filename="?([^";]+)"?/.exec(r.headers.get('Content-Disposition') || '')?.[1];
   const url = URL.createObjectURL(await r.blob());
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename;
+  a.download = filename || given || 'download';
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
-  return sha;
+  return r.headers;
+}
+
+/** Downloads an authenticated file and saves it under `filename`. Returns the server-recorded SHA-256, if sent. */
+export async function downloadFile(path: string, filename?: string): Promise<string | null> {
+  const h = await saveDownload(path, filename);
+  return h.get('X-DFIP-SHA256') || h.get('X-DFIP-Report-SHA256') || h.get('X-DFIP-Export-SHA256');
+}
+
+/** Downloads an export (a table, the case as CASE/UCO, its indicators): its SHA-256, rows and whether it was cut short. */
+export async function downloadExport(path: string): Promise<{ sha256: string | null; rows: number | null; truncated: boolean }> {
+  const h = await saveDownload(path);
+  const rows = h.get('X-DFIP-Export-Rows');
+  return { sha256: h.get('X-DFIP-Export-SHA256'), rows: rows === null ? null : Number(rows), truncated: h.get('X-DFIP-Export-Truncated') === 'true' };
 }
 
 export interface Health {

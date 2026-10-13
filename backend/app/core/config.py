@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     anthropic_api_key:str=''
     anthropic_base_url:str=''
     anthropic_model:str='claude-opus-5-5'
+    # Report signing: the organisation's PKCS#12 (else a self-signed certificate DFIP makes), an RFC 3161 timestamp
+    # authority, and the roots verification trusts (PEM bundles) for signers and for timestamps
+    report_signing_p12:str=''
+    report_signing_p12_password:str=''
+    report_tsa_url:str=''
+    report_trust_roots:str=''
+    report_tsa_trust_roots:str=''
     urlhaus_api_key:str=''
     model_config=SettingsConfigDict(env_file='.env',extra='ignore',case_sensitive=False)
 

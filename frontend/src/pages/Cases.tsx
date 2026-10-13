@@ -7,6 +7,7 @@ import { api, patch, post } from '../lib/api';
 import { useTime } from '../lib/format';
 import type { CaseItem, User } from '../lib/types';
 import { Banner, Button, Card, Empty, Field, Modal, PageHeader, StatusBadge, useToast } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 const STATUSES = ['OPEN', 'IN_PROGRESS', 'ON_HOLD', 'COMPLETED', 'ARCHIVED'];
@@ -142,7 +143,7 @@ export function CasesPage() {
         subtitle="Cases you lead, created or are a member of. Open one to make it the active case for every workspace page."
         actions={can('CASE_CREATE') && <Button variant="primary" icon={<FolderPlus size={15} />} onClick={() => setCreating(true)}>New case</Button>}
       />
-      <Card flush>
+      <Card flush actions={can('REPORT_EXPORT') && cases.length > 0 && <ExportButton path="/cases" what="list of cases" />}>
         {!cases.length ? (
           <Empty title="No cases" text="Create a case to start an investigation." />
         ) : (

@@ -7,6 +7,7 @@ import { TagButton } from '../lib/tags';
 import type { TimelineEvent } from '../lib/types';
 import { Badge, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, type Tone } from '../ui';
 import { niceMax } from '../ui/charts';
+import { ExportButton } from '../ui/ExportButton';
 import { TimelineImportsCard } from './TimelineImports';
 
 const LIMIT = 100;
@@ -59,7 +60,8 @@ export function TimelinePage() {
   }, [caseId, filter, search, start, end, evidence]);
   useEffect(() => setSkip(0), [base, order]);
 
-  const events = useApi<{ data: TimelineEvent[]; total: number }>(`/forensics/timeline?${base}&order=${order}&limit=${LIMIT}&skip=${skip}`);
+  const path = `/forensics/timeline?${base}&order=${order}&limit=${LIMIT}&skip=${skip}`;
+  const events = useApi<{ data: TimelineEvent[]; total: number }>(path);
   const hist = useApi<Histogram>(`/forensics/timeline/histogram?${base}`);
   const filtered = filter !== 'all' || search || start || end || evidence;
 
@@ -96,6 +98,7 @@ export function TimelinePage() {
             <div className="spacer" style={{ flex: 1 }} />
             <Button size="sm" onClick={() => setOrder(order === 'asc' ? 'desc' : 'asc')}>{order === 'asc' ? 'Oldest first' : 'Newest first'}</Button>
             {filtered && <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} onClick={reset}>Reset</Button>}
+            {!!events.data?.data.length && <ExportButton path={path} what="event list" />}
           </div>
           <div className="row">
             <label className="small muted row" style={{ gap: 6 }}>

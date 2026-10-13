@@ -8,6 +8,7 @@ import { humanize, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import type { Artifact, FsEntry } from '../lib/types';
 import { Badge, Button, Card, Empty, Hash, Loading, PageHeader, StatusBadge, useToast } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 import { FileDetails, HASH_KIND } from './Files';
 import { ProgramsCard } from './Programs';
 
@@ -17,10 +18,16 @@ export function IndicatorsPage() {
   const toast = useToast();
   const time = useTime();
   const enc = encodeURIComponent(caseId);
-  const yara = useApi<{ data: Artifact[] }>(`/forensics/artifacts?case_id=${enc}&artifact_type=MALWARE_INDICATOR`);
-  const patterns = useApi<{ data: any[] }>(`/forensics/patterns?case_id=${enc}`);
-  const anomalies = useApi<{ data: any[] }>(`/forensics/anomalies?case_id=${enc}`);
-  const hashHits = useApi<{ data: Artifact[] }>(`/forensics/artifacts?case_id=${enc}&artifact_type=HASH_SET_MATCH&limit=500`);
+  const paths = {
+    yara: `/forensics/artifacts?case_id=${enc}&artifact_type=MALWARE_INDICATOR`,
+    patterns: `/forensics/patterns?case_id=${enc}`,
+    anomalies: `/forensics/anomalies?case_id=${enc}`,
+    hashHits: `/forensics/artifacts?case_id=${enc}&artifact_type=HASH_SET_MATCH&limit=500`,
+  };
+  const yara = useApi<{ data: Artifact[] }>(paths.yara);
+  const patterns = useApi<{ data: any[] }>(paths.patterns);
+  const anomalies = useApi<{ data: any[] }>(paths.anomalies);
+  const hashHits = useApi<{ data: Artifact[] }>(paths.hashHits);
   const renamed = useApi<{ data: FsEntry[]; total: number }>(`/forensics/flagged?case_id=${enc}&kind=renamed&limit=200`);
   const encrypted = useApi<{ data: FsEntry[]; total: number }>(`/forensics/flagged?case_id=${enc}&kind=encrypted&limit=200`);
   const [busy, setBusy] = useState('');
@@ -53,7 +60,8 @@ export function IndicatorsPage() {
         subtitle="Leads for the investigator to review, not conclusions: YARA and ClamAV signature matches, programs that stand out, files in known-bad or notable hash sets, files whose name hides what they are or whose content is encrypted, rule-based activity patterns, and statistically unusual events."
       />
 
-      <Card title="Hash set matches" subtitle="Files whose MD5, SHA-1 or SHA-256 is in a known-bad or notable hash set (Administration → Hash sets). Every copy is listed, deleted ones too." flush>
+      <Card title="Hash set matches" subtitle="Files whose MD5, SHA-1 or SHA-256 is in a known-bad or notable hash set (Administration → Hash sets). Every copy is listed, deleted ones too." flush
+        actions={hits.length > 0 && <ExportButton path={paths.hashHits} what="list of matches" />}>
         {hashHits.loading && !hashHits.data ? <Loading /> : !hits.length ? (
           <Empty title="No hash set matches" text="No file is in a known-bad or notable hash set, or no such set has been imported." />
         ) : (
@@ -109,7 +117,8 @@ export function IndicatorsPage() {
 
       <ProgramsCard />
 
-      <Card title="Malware signature matches (YARA and ClamAV)" subtitle="Programs, scripts, documents and archives anywhere on the disk, chosen by their real type, are scanned with DFIP's YARA rules, the rule sets and ClamAV databases added in Administration, during analysis." flush>
+      <Card title="Malware signature matches (YARA and ClamAV)" subtitle="Programs, scripts, documents and archives anywhere on the disk, chosen by their real type, are scanned with DFIP's YARA rules, the rule sets and ClamAV databases added in Administration, during analysis." flush
+        actions={!!yara.data?.data.length && <ExportButton path={paths.yara} what="list of matches" />}>
         {yara.loading && !yara.data ? <Loading /> : !yara.data?.data.length ? (
           <Empty title="No signature matches" text="No scanned file matched a YARA rule or a ClamAV signature." />
         ) : (
@@ -134,7 +143,10 @@ export function IndicatorsPage() {
         <Card
           title="Activity patterns"
           subtitle="Rule-based checks over the case timeline."
-          actions={can('ANALYSIS_RUN') && <Button size="sm" icon={<RefreshCw size={13} />} busy={busy === 'patterns'} onClick={() => recompute('patterns')}>Recompute</Button>}
+          actions={<>
+            {can('ANALYSIS_RUN') && <Button size="sm" icon={<RefreshCw size={13} />} busy={busy === 'patterns'} onClick={() => recompute('patterns')}>Recompute</Button>}
+            {!!patterns.data?.data.length && <ExportButton path={paths.patterns} what="list of patterns" />}
+          </>}
           flush
         >
           {patterns.loading && !patterns.data ? <Loading /> : !patterns.data?.data.length ? (
@@ -158,7 +170,10 @@ export function IndicatorsPage() {
         <Card
           title="Anomalies"
           subtitle={method === 'ISOLATION_FOREST' ? 'IsolationForest over event type, hour of day and gaps between events; only flagged events are listed.' : 'Rule-based score (too few events for the statistical model).'}
-          actions={can('ANALYSIS_RUN') && <Button size="sm" icon={<RefreshCw size={13} />} busy={busy === 'anomalies'} onClick={() => recompute('anomalies')}>Recompute</Button>}
+          actions={<>
+            {can('ANALYSIS_RUN') && <Button size="sm" icon={<RefreshCw size={13} />} busy={busy === 'anomalies'} onClick={() => recompute('anomalies')}>Recompute</Button>}
+            {anomalyRows.length > 0 && <ExportButton path={paths.anomalies} what="list of anomalies" />}
+          </>}
           flush
         >
           {anomalies.loading && !anomalies.data ? <Loading /> : !anomalyRows.length ? (

@@ -5,6 +5,7 @@ import { formatNumber, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import type { ComputerEntry } from '../lib/types';
 import { Badge, Card, Empty, ErrorBanner, Hash, Loading, PageHeader } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 import { describeTimeZone } from './TimeZone';
 
 export function ComputerPage() {
@@ -30,6 +31,7 @@ export function ComputerPage() {
 }
 
 function ComputerCard({ entry }: { entry: ComputerEntry }) {
+  const { caseId } = useCase();
   const time = useTime();
   const c = entry.computer;
   const os = c?.os || {};
@@ -82,7 +84,8 @@ function ComputerCard({ entry }: { entry: ComputerEntry }) {
           </div>
         </Card>
       )}
-      <Card title="User accounts" subtitle="Local accounts: on Windows the SAM hive joined with the user profiles in SOFTWARE by SID; on Linux /etc/passwd, /etc/group and /etc/shadow; on macOS the local directory." flush>
+      <Card title="User accounts" subtitle="Local accounts: on Windows the SAM hive joined with the user profiles in SOFTWARE by SID; on Linux /etc/passwd, /etc/group and /etc/shadow; on macOS the local directory." flush
+        actions={!!entry.accounts.length && <ExportButton path={`/forensics/artifacts?case_id=${encodeURIComponent(caseId)}&evidence_id=${encodeURIComponent(entry.evidence_id)}&artifact_type=USER_ACCOUNT`} what="list of accounts" />}>
         {!entry.accounts.length ? (
           <Empty title="No user accounts" />
         ) : (

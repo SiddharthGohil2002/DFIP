@@ -5,6 +5,7 @@ import { formatBytes, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import { ViewButton } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, Tabs, type Tone } from '../ui';
 
 type Tab = 'TIMESTOMP' | 'STREAMS' | 'USN';
@@ -21,7 +22,8 @@ export function NtfsPage() {
   const { caseId, overview } = useCase();
   const [tab, setTab] = useState<Tab>('TIMESTOMP');
   const c = overview?.counts;
-  const volumes = useApi<{ data: any[] }>(`/forensics/ntfs/volumes?case_id=${encodeURIComponent(caseId)}`);
+  const volumesPath = `/forensics/ntfs/volumes?case_id=${encodeURIComponent(caseId)}`;
+  const volumes = useApi<{ data: any[] }>(volumesPath);
   return (
     <div className="stack">
       <PageHeader
@@ -43,7 +45,7 @@ export function NtfsPage() {
         {tab === 'USN' && <Usn caseId={caseId} />}
       </Card>
       {!!volumes.data?.data.length && (
-        <Card title="NTFS volumes read">
+        <Card title="NTFS volumes read" actions={<ExportButton path={volumesPath} what="list of volumes" />}>
           <div className="table-wrap">
             <table className="table">
               <thead><tr><th>Evidence</th><th>Volume</th><th>Serial number</th><th className="right">MFT entries</th><th className="right">Journal records</th></tr></thead>
@@ -64,7 +66,9 @@ export function NtfsPage() {
   );
 }
 
-function SearchRow({ placeholder, onSearch, children }: { placeholder: string; onSearch: (s: string) => void; children?: React.ReactNode }) {
+function SearchRow({ placeholder, onSearch, exportPath, children }: {
+  placeholder: string; onSearch: (s: string) => void; exportPath: string | null; children?: React.ReactNode;
+}) {
   const [q, setQ] = useState('');
   return (
     <div className="row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
@@ -72,6 +76,8 @@ function SearchRow({ placeholder, onSearch, children }: { placeholder: string; o
         placeholder={placeholder} aria-label="Search" />
       <Button size="sm" icon={<Search size={13} />} onClick={() => onSearch(q.trim())}>Search</Button>
       {children}
+      <span style={{ flex: 1 }} />
+      <ExportButton path={exportPath} />
     </div>
   );
 }
@@ -85,10 +91,11 @@ function Timestomp({ caseId }: { caseId: string }) {
   const qs = new URLSearchParams({ case_id: caseId, limit: String(LIMIT), skip: String(skip) });
   if (search) qs.set('search', search);
   if (level) qs.set('level', level);
-  const { data, error, loading } = useApi<{ data: any[]; total: number }>(`/forensics/ntfs/timestomp?${qs}`);
+  const path = `/forensics/ntfs/timestomp?${qs}`;
+  const { data, error, loading } = useApi<{ data: any[]; total: number }>(path);
   return (
     <>
-      <SearchRow placeholder="Search paths" onSearch={setSearch}>
+      <SearchRow placeholder="Search paths" onSearch={setSearch} exportPath={data?.data.length ? path : null}>
         <select className="input sm" style={{ maxWidth: 180 }} value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Level">
           <option value="">Strong and possible</option><option value="strong">Strong</option><option value="possible">Possible</option>
         </select>
@@ -131,10 +138,11 @@ function Streams({ caseId }: { caseId: string }) {
   const qs = new URLSearchParams({ case_id: caseId, limit: String(LIMIT), skip: String(skip) });
   if (search) qs.set('search', search);
   if (downloaded) qs.set('downloaded', 'true');
-  const { data, error, loading } = useApi<{ data: any[]; total: number }>(`/forensics/ntfs/streams?${qs}`);
+  const path = `/forensics/ntfs/streams?${qs}`;
+  const { data, error, loading } = useApi<{ data: any[]; total: number }>(path);
   return (
     <>
-      <SearchRow placeholder="Search paths, addresses and content" onSearch={setSearch}>
+      <SearchRow placeholder="Search paths, addresses and content" onSearch={setSearch} exportPath={data?.data.length ? path : null}>
         <label className="check"><input type="checkbox" checked={downloaded} onChange={(e) => setDownloaded(e.target.checked)} /> Downloaded files only</label>
       </SearchRow>
       <ErrorBanner error={error} />
@@ -186,10 +194,11 @@ function Usn({ caseId }: { caseId: string }) {
   if (search) qs.set('search', search);
   if (reason) qs.set('reason', reason);
   if (closing) qs.set('closing', 'true');
-  const { data, error, loading } = useApi<{ data: any[]; total: number }>(`/forensics/ntfs/usn?${qs}`);
+  const path = `/forensics/ntfs/usn?${qs}`;
+  const { data, error, loading } = useApi<{ data: any[]; total: number }>(path);
   return (
     <>
-      <SearchRow placeholder="Search file names and paths" onSearch={setSearch}>
+      <SearchRow placeholder="Search file names and paths" onSearch={setSearch} exportPath={data?.data.length ? path : null}>
         <select className="input sm" style={{ maxWidth: 200 }} value={reason} onChange={(e) => setReason(e.target.value)} aria-label="Change">
           <option value="">Every change</option>
           {['FILE_CREATE', 'FILE_DELETE', 'RENAME_NEW_NAME', 'RENAME_OLD_NAME', 'DATA_OVERWRITE', 'BASIC_INFO_CHANGE', 'STREAM_CHANGE', 'SECURITY_CHANGE'].map((r) =>

@@ -6,6 +6,7 @@ import { useCase } from '../lib/caseContext';
 import { formatBytes, shortHash, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { Badge, Button, Card, Empty, ErrorBanner, Field, Modal, StatusBadge, useToast } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 /** Timelines made by Plaso, imported into the case: their events appear on the timeline as Plaso events. */
 export function TimelineImportsCard({ onChanged }: { onChanged: () => void }) {
@@ -13,7 +14,8 @@ export function TimelineImportsCard({ onChanged }: { onChanged: () => void }) {
   const { can } = useAuth();
   const toast = useToast();
   const time = useTime();
-  const res = useApi<{ data: any[] }>(`/cases/${encodeURIComponent(caseId)}/timeline-imports`, { pollMs: 4000 });
+  const path = `/cases/${encodeURIComponent(caseId)}/timeline-imports`;
+  const res = useApi<{ data: any[] }>(path, { pollMs: 4000 });
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [evidence, setEvidence] = useState('');
@@ -54,7 +56,10 @@ export function TimelineImportsCard({ onChanged }: { onChanged: () => void }) {
   return (
     <Card title="Imported timelines" flush
       subtitle="Timelines made by Plaso (psort -o json_line or -o l2tcsv), shown here as Plaso events next to DFIP's own. The file is kept read-only with its SHA-256."
-      actions={can('ANALYSIS_RUN') && <Button size="sm" icon={<Upload size={13} />} onClick={() => { setOpen(true); setFile(null); setError(''); }}>Import a Plaso timeline</Button>}>
+      actions={<>
+        {can('ANALYSIS_RUN') && <Button size="sm" icon={<Upload size={13} />} onClick={() => { setOpen(true); setFile(null); setError(''); }}>Import a Plaso timeline</Button>}
+        {rows.length > 0 && <ExportButton path={path} what="list of imports" />}
+      </>}>
       <ErrorBanner error={res.error} />
       {!rows.length ? <Empty title="No imported timelines" /> : (
         <div className="table-wrap">

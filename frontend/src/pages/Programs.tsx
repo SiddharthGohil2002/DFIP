@@ -7,6 +7,7 @@ import { formatBytes, shortHash, useTime } from '../lib/format';
 import { TagButton } from '../lib/tags';
 import { useApi } from '../lib/useApi';
 import { ViewButton, type ViewSource } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 import { Badge, Button, Card, Empty, ErrorBanner, Loading, Modal, Pager, type Tone, useToast } from '../ui';
 
 const LIMIT = 50;
@@ -36,7 +37,8 @@ export function ProgramsCard() {
   const qs = new URLSearchParams({ case_id: caseId, limit: String(LIMIT), skip: String(skip) });
   if (!all) qs.set('flagged', 'true');
   if (search) qs.set('search', search);
-  const { data, error, loading } = useApi<{ data: any[]; total: number }>(`/forensics/executables?${qs}`);
+  const path = `/forensics/executables?${qs}`;
+  const { data, error, loading } = useApi<{ data: any[]; total: number }>(path);
   const status = useApi<any>('/malware/status');
   const auto = !!(activeCase as any)?.threat_intel?.auto_lookup;
 
@@ -67,6 +69,7 @@ export function ProgramsCard() {
           <input type="checkbox" checked={auto} disabled={busy || !can('CASE_UPDATE')} onChange={toggle} aria-label="Automatic VirusTotal lookups" />
           Look up program hashes on VirusTotal for this case{status.data && !status.data.virustotal.configured ? ' (no key configured)' : ''}
         </label>
+        {!!data?.data.length && <ExportButton path={path} what="list of programs" />}
       </div>
       <ErrorBanner error={error} />
       {loading && !data ? <Loading /> : !data?.data.length ? (

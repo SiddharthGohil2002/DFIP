@@ -6,6 +6,7 @@ import { formatBytes, shortHash, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import { ViewButton } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Loading, Modal, PageHeader, Pager, Tabs } from '../ui';
 
 const LIMIT = 100;
@@ -16,7 +17,8 @@ const list = (xs?: Address[] | null) => (xs || []).map(who).filter(Boolean).join
 export function EmailPage() {
   const { caseId, overview } = useCase();
   const time = useTime();
-  const stores = useApi<{ data: any[] }>(`/forensics/email/stores?case_id=${encodeURIComponent(caseId)}`);
+  const storesPath = `/forensics/email/stores?case_id=${encodeURIComponent(caseId)}`;
+  const stores = useApi<{ data: any[] }>(storesPath);
   const [store, setStore] = useState('');
   const [folder, setFolder] = useState('');
   const [q, setQ] = useState('');
@@ -36,7 +38,8 @@ export function EmailPage() {
   if (attachments) params.set('attachments', 'true');
   if (deleted) params.set('deleted', 'true');
   if (direction) params.set('direction', direction);
-  const { data, error, loading } = useApi<{ data: any[]; total: number }>(`/forensics/email/messages?${params}`);
+  const path = `/forensics/email/messages?${params}`;
+  const { data, error, loading } = useApi<{ data: any[]; total: number }>(path);
   const folders = useMemo(() => {
     const s = (stores.data?.data || []).find((x) => x.path === store);
     return s ? (s.folders || []).map((f: any) => f.name) : [];
@@ -49,7 +52,8 @@ export function EmailPage() {
         title="Email"
         subtitle="Messages and attachments from Outlook PST/OST files, MBOX files, Thunderbird profiles and single EML/MSG files. Attachments are hashed and checked like other files (see Files → Archives and attachments)."
       />
-      <Card title="Mailboxes" subtitle={c ? `${(c.email_messages ?? 0).toLocaleString()} messages · ${(c.email_attachments ?? 0).toLocaleString()} attachments` : undefined}>
+      <Card title="Mailboxes" subtitle={c ? `${(c.email_messages ?? 0).toLocaleString()} messages · ${(c.email_attachments ?? 0).toLocaleString()} attachments` : undefined}
+        actions={!!stores.data?.data.length && <ExportButton path={storesPath} what="list of mailboxes" />}>
         <ErrorBanner error={stores.error} />
         {stores.loading && !stores.data ? <Loading /> : !stores.data?.data.length ? (
           <Empty title="No mailboxes" text="No Outlook, MBOX, Thunderbird or EML/MSG files were found in the analysed images. Email is read by the Standard and Full analysis profiles (module &quot;Email&quot;)." />
@@ -95,6 +99,8 @@ export function EmailPage() {
           <label className="check"><input type="checkbox" checked={attachments} onChange={(e) => setAttachments(e.target.checked)} /> With attachments</label>
           <label className="check"><input type="checkbox" checked={deleted} onChange={(e) => setDeleted(e.target.checked)} /> Deleted only</label>
           <span className="small muted">{data ? `${data.total.toLocaleString()} messages` : ''}</span>
+          <span style={{ flex: 1 }} />
+          {!!data?.data.length && <ExportButton path={path} what="list of messages" />}
         </div>
         <ErrorBanner error={error} />
         {loading && !data ? <Loading /> : !data?.data.length ? <Empty title="No messages" text={search || attachments || deleted || direction ? 'Nothing matches these filters.' : undefined} /> : (

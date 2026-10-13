@@ -9,6 +9,7 @@ import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import type { FoundKind, FoundValue } from '../lib/types';
 import { ViewButton, locate } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Tabs, useToast } from '../ui';
 
 const KINDS: { id: FoundKind; label: string; how: string }[] = [
@@ -47,7 +48,8 @@ export function FoundDataPage() {
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [queued, setQueued] = useState(false);
   const enc = encodeURIComponent(caseId);
-  const list = useApi<ListResult>(`/forensics/entities?case_id=${enc}&kind=${kind}&limit=500${search ? `&q=${encodeURIComponent(search)}` : ''}`);
+  const path = `/forensics/entities?case_id=${enc}&kind=${kind}&limit=500${search ? `&q=${encodeURIComponent(search)}` : ''}`;
+  const list = useApi<ListResult>(path);
   useEffect(() => setOpen(null), [kind, search]);
   const meta = KINDS.find((k) => k.id === kind)!;
   const counts = list.data?.kinds;
@@ -99,6 +101,8 @@ export function FoundDataPage() {
           <Button size="sm" icon={<Search size={13} />} onClick={() => setSearch(q.trim())}>Filter</Button>
           {search && <Button size="sm" variant="ghost" onClick={() => { setQ(''); setSearch(''); }}>Clear</Button>}
           <span className="small muted">{meta.how}</span>
+          <span style={{ flex: 1 }} />
+          {!!list.data?.data.length && <ExportButton path={path} what="list of values" />}
         </div>
         <ErrorBanner error={list.error} />
         {list.loading && !list.data ? <Loading /> : !list.data?.data.length ? (

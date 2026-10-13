@@ -6,6 +6,7 @@ import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import type { Artifact } from '../lib/types';
 import { Badge, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, Tabs } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 const LIMIT = 100;
 const BROWSERS = ['Chrome', 'Edge', 'Brave', 'Opera', 'Opera GX', 'Vivaldi', 'Chromium', 'Firefox'];
@@ -92,7 +93,8 @@ export function BrowserPage() {
   const params = new URLSearchParams({ case_id: caseId, kind, limit: String(LIMIT), skip: String(skip) });
   if (browser) params.set('browser', browser);
   if (search) params.set('search', search);
-  const res = useApi<{ data: Artifact[]; total: number }>(`/forensics/browser?${params}`);
+  const path = `/forensics/browser?${params}`;
+  const res = useApi<{ data: Artifact[]; total: number }>(path);
   const { error, loading } = res;
   // Until the new tab's rows arrive, the previous tab's are still loaded: never draw them under this tab's columns.
   const data = res.dataPath && new URLSearchParams(res.dataPath.split('?')[1]).get('kind') === kind ? res.data : null;
@@ -130,6 +132,8 @@ export function BrowserPage() {
           <Button size="sm" icon={<Search size={13} />} onClick={() => setSearch(q.trim())}>Search</Button>
           {search && <Button size="sm" variant="ghost" onClick={() => { setQ(''); setSearch(''); }}>Clear</Button>}
           <span className="small muted">{data ? `${data.total.toLocaleString()} records` : ''}</span>
+          <span style={{ flex: 1 }} />
+          {!!data?.data.length && <ExportButton path={path} />}
         </div>
         <ErrorBanner error={error} />
         {loading && !data ? (

@@ -6,6 +6,7 @@ import { formatBytes, formatNumber, useTime } from '../../lib/format';
 import { useApi } from '../../lib/useApi';
 import type { HashKind, HashSet } from '../../lib/types';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Field, Hash, Loading, Modal, PageHeader, StatusBadge, useToast } from '../../ui';
+import { ExportButton } from '../../ui/ExportButton';
 import { HASH_KIND } from '../Files';
 
 const KIND_NOTES: Record<HashKind, string> = {
@@ -22,8 +23,10 @@ export function HashSetsPage() {
   const time = useTime();
   const manage = can('HASHSET_MANAGE');
   const [poll, setPoll] = useState(false);
-  const list = useApi<{ data: HashSet[] }>('/hashsets', { pollMs: poll ? 2000 : undefined });
-  const incoming = useApi<{ data: { filename: string; size: number }[] }>(manage ? '/hashsets/incoming' : null);
+  const path = '/hashsets';
+  const incomingPath = manage ? '/hashsets/incoming' : null;
+  const list = useApi<{ data: HashSet[] }>(path, { pollMs: poll ? 2000 : undefined });
+  const incoming = useApi<{ data: { filename: string; size: number }[] }>(incomingPath);
   const [dialog, setDialog] = useState<null | { mode: 'upload' } | { mode: 'local'; filename: string }>(null);
   const [draft, setDraft] = useState<Draft>({ name: '', kind: 'KNOWN_BAD', description: '' });
   const [file, setFile] = useState<File | null>(null);
@@ -92,7 +95,7 @@ export function HashSetsPage() {
       />
       {!manage && <Banner tone="info">Only administrators can import or delete hash sets.</Banner>}
       <ErrorBanner error={list.error} />
-      <Card title="Imported sets" flush>
+      <Card title="Imported sets" flush actions={sets.length > 0 && <ExportButton path={path} what="list of hash sets" />}>
         {list.loading && !list.data ? <Loading /> : !sets.length ? (
           <Empty title="No hash sets" text="Import a plain list of MD5, SHA-1 or SHA-256 hashes (one per line, sha256sum output works), a CSV with md5/sha1/sha256 columns, or the NSRL RDS v3 SQLite database." />
         ) : (
@@ -131,7 +134,8 @@ export function HashSetsPage() {
         )}
       </Card>
       {manage && (
-        <Card title="Files on the server" subtitle="Large sets such as the NSRL are copied to storage/hashsets/incoming on the server instead of being uploaded." flush>
+        <Card title="Files on the server" subtitle="Large sets such as the NSRL are copied to storage/hashsets/incoming on the server instead of being uploaded." flush
+          actions={!!incoming.data?.data.length && <ExportButton path={incomingPath} what="list of files" />}>
           {incoming.loading && !incoming.data ? <Loading /> : !incoming.data?.data.length ? (
             <Empty title="The folder is empty" />
           ) : (

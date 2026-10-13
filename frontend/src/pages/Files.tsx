@@ -9,6 +9,7 @@ import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import { Comments } from '../ui/Comments';
 import { ViewButton } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 import type { Artifact, FsEntry, HashKind } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Hash, Loading, Modal, PageHeader, Pager, Tabs, useToast, type Tone } from '../ui';
 
@@ -135,7 +136,8 @@ function FileIndex({ caseId, evidenceId, deletedOnly, members, initialFlag, onRe
   else if (flag === 'encrypted') qs.set('encrypted', 'true');
   else if (flag) qs.set('hash_status', flag);
   if (hideKnown && flag !== 'KNOWN_GOOD') qs.set('hide_known', 'true');
-  const { data, error, loading } = useApi<{ data: FsEntry[]; total: number }>(`/forensics/evidence/${encodeURIComponent(evidenceId)}/files?${qs}`);
+  const path = `/forensics/evidence/${encodeURIComponent(evidenceId)}/files?${qs}`;
+  const { data, error, loading } = useApi<{ data: FsEntry[]; total: number }>(path);
   const filtered = Boolean(search || category || flag);
 
   async function recover(f: FsEntry) {
@@ -174,6 +176,8 @@ function FileIndex({ caseId, evidenceId, deletedOnly, members, initialFlag, onRe
         {filtered && <Button size="sm" variant="ghost" onClick={() => { setQ(''); setSearch(''); setCategory(''); setFlag(''); }}>Clear</Button>}
         <span className="small muted">{data ? (members ? `${formatNumber(data.total)} file${data.total === 1 ? '' : 's'} inside archives, documents and emails`
           : `${formatNumber(data.total)} ${deletedOnly ? 'deleted' : ''} ${data.total === 1 ? 'entry' : 'entries'}`.replace('  ', ' ')) : ''}</span>
+        <span style={{ flex: 1 }} />
+        {!!data?.data.length && <ExportButton path={path} what="file list" />}
       </div>
       <ErrorBanner error={error} />
       {loading && !data ? (
@@ -338,7 +342,8 @@ function RecoveredFiles({ caseId }: { caseId: string }) {
   const toast = useToast();
   const time = useTime();
   const { can } = useAuth();
-  const { data, error, loading } = useApi<{ data: Artifact[] }>(`/forensics/artifacts?case_id=${encodeURIComponent(caseId)}&artifact_type=RECOVERED_FILE`);
+  const path = `/forensics/artifacts?case_id=${encodeURIComponent(caseId)}&artifact_type=RECOVERED_FILE`;
+  const { data, error, loading } = useApi<{ data: Artifact[] }>(path);
   const [meta, setMeta] = useState<{ name: string; json: any } | null>(null);
   const [busy, setBusy] = useState('');
 
@@ -367,7 +372,12 @@ function RecoveredFiles({ caseId }: { caseId: string }) {
       <ErrorBanner error={error} />
       {!data?.data.length ? (
         <Empty icon={<RotateCcw size={20} />} title="Nothing recovered yet" text="Recover a file from the Deleted entries or All files tab. Each recovered copy is hashed and logged to the chain of custody." />
-      ) : (
+      ) : (<>
+        <div className="row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
+          <span className="small muted">{formatNumber(data.data.length)} recovered {data.data.length === 1 ? 'file' : 'files'}</span>
+          <span style={{ flex: 1 }} />
+          <ExportButton path={path} what="list of recovered files" />
+        </div>
         <div className="table-wrap">
           <table className="table">
             <thead><tr><th>File</th><th>Original path</th><th>Size</th><th>SHA-256</th><th>Recovered</th><th /></tr></thead>
@@ -392,7 +402,7 @@ function RecoveredFiles({ caseId }: { caseId: string }) {
             </tbody>
           </table>
         </div>
-      )}
+      </>)}
       <Modal open={!!meta} title={`Metadata — ${meta?.name}`} onClose={() => setMeta(null)} wide>
         <Banner tone="info">Extracted with ExifTool from the recovered copy.</Banner>
         {meta && typeof meta.json === 'object' ? (

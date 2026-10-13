@@ -56,7 +56,7 @@ with sync_playwright() as p:
     expect(page.get_by_text('Available in the installed DFIP desktop app.')).to_be_visible()
 
     step['v'] = 'pages'
-    for label, text in [('Timeline', 'Events over time'), ('USB devices', 'HP v100w USB Device'), ('Reports', 'What a report contains'), ('System & tools', 'This workstation')]:
+    for label, text in [('Timeline', 'Events over time'), ('USB devices', 'HP v100w USB Device'), ('Reports', 'What the report holds'), ('System & tools', 'This workstation')]:
         page.get_by_role('link', name=label).first.click()
         expect(page.get_by_text(text).first).to_be_visible()
     page.screenshot(path='/out/d3-timeline.png') if False else None

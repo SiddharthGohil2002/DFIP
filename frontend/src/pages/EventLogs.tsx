@@ -6,6 +6,7 @@ import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import type { EventDetection, EventLogInfo, EventRecord } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Hash, Loading, Modal, PageHeader, Pager, Tabs, type Tone } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 type Tab = 'NOTABLE' | 'ALL' | 'DETECTIONS' | 'LOGS';
 const PAGE = 200;
@@ -30,7 +31,8 @@ export function EventLogsPage() {
   const [tab, setTab] = useState<Tab>('NOTABLE');
   const [detection, setDetection] = useState<EventDetection | null>(null);
   const counts = overview?.counts;
-  const logs = useApi<{ data: EventLogInfo[] }>(`/forensics/eventlogs/logs?case_id=${encodeURIComponent(caseId)}`);
+  const logsPath = `/forensics/eventlogs/logs?case_id=${encodeURIComponent(caseId)}`;
+  const logs = useApi<{ data: EventLogInfo[] }>(logsPath);
   const withRecords = (logs.data?.data || []).filter((l) => l.records || l.recovered);
 
   function showDetection(d: EventDetection) {
@@ -57,7 +59,7 @@ export function EventLogsPage() {
         {tab === 'NOTABLE' && <Events key="notable" caseId={caseId} notable />}
         {tab === 'ALL' && <Events key={`all-${detection?.rule_id || ''}`} caseId={caseId} detection={detection} onClearDetection={() => setDetection(null)} />}
         {tab === 'DETECTIONS' && <Detections caseId={caseId} onShow={showDetection} />}
-        {tab === 'LOGS' && <Logs data={logs.data?.data} error={logs.error} loading={logs.loading} />}
+        {tab === 'LOGS' && <Logs path={logsPath} data={logs.data?.data} error={logs.error} loading={logs.loading} />}
       </Card>
     </div>
   );
@@ -87,7 +89,8 @@ function Events({ caseId, notable, detection, onClearDetection }: {
   if (level) qs.set('level', level);
   if (recovered) qs.set('recovered', 'true');
   if (detection) qs.set('detection', detection.rule_id);
-  const list = useApi<{ data: EventRecord[]; total: number }>(`/forensics/eventlogs/events?${qs}`);
+  const path = `/forensics/eventlogs/events?${qs}`;
+  const list = useApi<{ data: EventRecord[]; total: number }>(path);
   useEffect(() => setSkip(0), [search, category, channel, eventIds, level, recovered]);
   const validIds = /^\s*\d+(\s*,\s*\d+)*\s*$/.test(eventId) || eventId.trim() === '';
 
@@ -129,6 +132,8 @@ function Events({ caseId, notable, detection, onClearDetection }: {
         {(search || category || channel || eventIds || level || recovered) && (
           <Button size="sm" variant="ghost" onClick={() => { setQ(''); setSearch(''); setCategory(''); setChannel(''); setEventId(''); setEventIds(''); setLevel(''); setRecovered(false); }}>Clear</Button>
         )}
+        <span style={{ flex: 1 }} />
+        {!!list.data?.data.length && <ExportButton path={path} what="event list" />}
       </div>
       <ErrorBanner error={list.error} />
       {list.loading && !list.data ? <Loading /> : !list.data?.data.length ? (
@@ -221,13 +226,17 @@ function EventDetail({ caseId, id, onClose }: { caseId: string; id: string | nul
 
 function Detections({ caseId, onShow }: { caseId: string; onShow: (d: EventDetection) => void }) {
   const time = useTime();
-  const { data, error, loading } = useApi<{ data: EventDetection[] }>(`/forensics/eventlogs/detections?case_id=${encodeURIComponent(caseId)}`);
+  const path = `/forensics/eventlogs/detections?case_id=${encodeURIComponent(caseId)}`;
+  const { data, error, loading } = useApi<{ data: EventDetection[] }>(path);
   if (loading && !data) return <Loading />;
   return (
     <>
-      <p className="small muted" style={{ margin: 0, padding: '10px 14px 0' }}>
-        Leads from DFIP's curated Sigma rules (backend/rules/sigma), most severe first. A detection is a reason to look, not a conclusion: each rule lists its usual false positives.
-      </p>
+      <div className="row" style={{ padding: '10px 14px 0', alignItems: 'flex-start' }}>
+        <p className="small muted grow" style={{ margin: 0 }}>
+          Leads from DFIP's curated Sigma rules (backend/rules/sigma), most severe first. A detection is a reason to look, not a conclusion: each rule lists its usual false positives.
+        </p>
+        {!!data?.data.length && <ExportButton path={path} what="list of detections" />}
+      </div>
       <ErrorBanner error={error} />
       {!data?.data.length ? <Empty title="No detections" text="No rule matched the event records (or no event logs have been read)." /> : (
         <div className="table-wrap">
@@ -260,7 +269,7 @@ function Detections({ caseId, onShow }: { caseId: string; onShow: (d: EventDetec
   );
 }
 
-function Logs({ data, error, loading }: { data?: EventLogInfo[]; error?: string | null; loading: boolean }) {
+function Logs({ path, data, error, loading }: { path: string; data?: EventLogInfo[]; error?: string | null; loading: boolean }) {
   const time = useTime();
   const [empty, setEmpty] = useState(false);
   if (loading && !data) return <Loading />;
@@ -270,6 +279,8 @@ function Logs({ data, error, loading }: { data?: EventLogInfo[]; error?: string 
       <div className="row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
         <label className="check"><input type="checkbox" checked={empty} onChange={(e) => setEmpty(e.target.checked)} /> Include empty logs</label>
         <span className="small muted">{(data || []).length.toLocaleString()} log files read; a Windows installation keeps a few hundred, most of them empty.</span>
+        <span style={{ flex: 1 }} />
+        {!!data?.length && <ExportButton path={path} what="list of logs" />}
       </div>
       <ErrorBanner error={error} />
       {!rows.length ? <Empty title="No event logs" /> : (

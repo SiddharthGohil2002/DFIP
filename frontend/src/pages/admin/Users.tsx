@@ -6,6 +6,7 @@ import { useTime } from '../../lib/format';
 import { useApi } from '../../lib/useApi';
 import type { User } from '../../lib/types';
 import { Banner, Button, Card, Empty, Field, Loading, Modal, PageHeader, StatusBadge, useToast } from '../../ui';
+import { ExportButton } from '../../ui/ExportButton';
 
 const ROLES = ['ADMIN', 'INVESTIGATOR', 'ANALYST', 'VIEWER'];
 const ROLE_NOTES: Record<string, string> = {
@@ -19,8 +20,10 @@ export function UsersPage() {
   const { can, user: me } = useAuth();
   const toast = useToast();
   const time = useTime();
-  const list = useApi<{ data: (User & { created_at?: string; last_login_at?: string })[] }>(can('USER_MANAGE') ? '/admin/users' : null);
-  const roles = useApi<{ data: { name: string; permissions: string[] }[] }>(can('ROLE_MANAGE') ? '/admin/roles' : null);
+  const path = can('USER_MANAGE') ? '/admin/users' : null;
+  const rolesPath = can('ROLE_MANAGE') ? '/admin/roles' : null;
+  const list = useApi<{ data: (User & { created_at?: string; last_login_at?: string })[] }>(path);
+  const roles = useApi<{ data: { name: string; permissions: string[] }[] }>(rolesPath);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', role: 'INVESTIGATOR', password: '' });
   const [error, setError] = useState('');
@@ -78,7 +81,7 @@ export function UsersPage() {
         </Card>
       )}
 
-      <Card flush>
+      <Card flush actions={can('REPORT_EXPORT') && !!list.data?.data.length && <ExportButton path={path} what="list of users" />}>
         {list.loading && !list.data ? <Loading /> : !others.length ? <Empty title="No users" /> : (
           <div className="table-wrap">
             <table className="table">
@@ -116,7 +119,7 @@ export function UsersPage() {
       </Card>
 
       {roles.data && (
-        <Card title="Role permissions" flush>
+        <Card title="Role permissions" flush actions={<ExportButton path={rolesPath} what="list of roles" />}>
           <table className="table">
             <thead><tr><th>Role</th><th>Can</th><th>Permissions</th></tr></thead>
             <tbody>

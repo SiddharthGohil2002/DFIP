@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { ShieldCheck, ShieldX } from 'lucide-react';
+import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { actionLabel, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { Banner, Card, Empty, Hash, Loading, PageHeader, StatusBadge } from '../ui';
+import { ExportButton } from '../ui/ExportButton';
 
 export function CustodyPage() {
   const { caseId, overview } = useCase();
+  const { can } = useAuth();
   const time = useTime();
   const [evidence, setEvidence] = useState('');
   const path = `/chain?case_id=${encodeURIComponent(caseId)}${evidence ? `&evidence_id=${encodeURIComponent(evidence)}` : ''}`;
@@ -35,7 +38,7 @@ export function CustodyPage() {
             : `Audit hash chain BROKEN at sequence ${chain.broken_sequence}: records may have been altered.`}
         </Banner>
       )}
-      <Card flush>
+      <Card flush actions={can('REPORT_EXPORT') && !!data?.data.length && <ExportButton path={path} what="custody log" />}>
         {loading && !data ? <Loading /> : !data?.data.length ? (
           <Empty title="No custody records" text="Records are created when evidence is registered, verified, analyzed or files are recovered." />
         ) : (

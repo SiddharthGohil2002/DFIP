@@ -14,6 +14,7 @@ import { AnalysisModulesCard, AnalysisOptionsModal } from './AnalysisModules';
 import { TimeZoneBanner } from './TimeZone';
 import { ImageFilesCard, VolumesCard } from './Volumes';
 import { Comments } from '../ui/Comments';
+import { ExportButton } from '../ui/ExportButton';
 
 const RUNNING = new Set(['QUEUED', 'RUNNING']);
 
@@ -31,7 +32,8 @@ export function EvidenceDetailPage() {
   const [queued, setQueued] = useState<string | null>(null);
   const [polling, setPolling] = useState(true);
   const job = useApi<Job>(queued ? `/jobs/${queued}` : jobPath, { pollMs: polling ? 1500 : undefined });
-  const custody = useApi<{ data: any[] }>(e ? `/chain?evidence_id=${encodeURIComponent(e.evidence_id)}` : null);
+  const custodyPath = e ? `/chain?evidence_id=${encodeURIComponent(e.evidence_id)}` : null;
+  const custody = useApi<{ data: any[] }>(custodyPath);
   const [busy, setBusy] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [options, setOptions] = useState(false);
@@ -153,7 +155,8 @@ export function EvidenceDetailPage() {
             <dt>Storage</dt><dd className="small">Original sealed read-only on the server; analysis reads it, never writes.</dd>
           </dl>
         </Card>
-        <Card title="Chain of custody" subtitle="For this evidence item" flush>
+        <Card title="Chain of custody" subtitle="For this evidence item" flush
+          actions={!!custody.data?.data.length && <ExportButton path={custodyPath} what="custody log" />}>
           {!custody.data?.data.length ? (
             <Empty title="No custody records" />
           ) : (

@@ -6,6 +6,7 @@ import { formatBytes, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import { ViewButton } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 import { Badge, Button, Empty, ErrorBanner, Loading, Pager, type Tone } from '../ui';
 
 /** Tabs of the Windows activity page from Jump Lists, the Timeline, thumbnails, SRUM and Windows Search (module user_activity). */
@@ -26,11 +27,20 @@ export const USER_COUNT = (c: any): Partial<Record<UserTab, number>> => ({
   JUMPLISTS: c?.jumplist_entries, TIMELINE: c?.timeline_activities, THUMBNAILS: c?.thumbnails, SEARCH_INDEX: c?.search_index_entries,
 });
 
-function useRows(caseId: string, type: string, search: string, skip: number, extra: Record<string, string> = {}) {
+function rowsPath(caseId: string, type: string, search: string, skip: number, extra: Record<string, string> = {}) {
   const qs = new URLSearchParams({ case_id: caseId, type, limit: String(LIMIT), skip: String(skip), ...extra });
   if (search) qs.set('search', search);
-  return useApi<{ data: any[]; total: number }>(`/forensics/user-activity?${qs}`);
+  return `/forensics/user-activity?${qs}`;
 }
+
+function useRows(caseId: string, type: string, search: string, skip: number, extra: Record<string, string> = {}) {
+  return useApi<{ data: any[]; total: number }>(rowsPath(caseId, type, search, skip, extra));
+}
+
+const ROW_TYPE: Record<Exclude<UserTab, 'NETWORK'>, string> = {
+  JUMPLISTS: 'JUMPLIST_ENTRY', TIMELINE: 'TIMELINE_ACTIVITY', THUMBNAILS: 'THUMBNAIL', SEARCH_INDEX: 'SEARCH_INDEX_ENTRY',
+};
+const networkPath = (caseId: string) => `/forensics/user-activity/network?case_id=${encodeURIComponent(caseId)}`;
 
 export function UserActivity({ tab }: { tab: UserTab }) {
   const { caseId } = useCase();
@@ -40,6 +50,8 @@ export function UserActivity({ tab }: { tab: UserTab }) {
   const [skip, setSkip] = useState(0);
   useEffect(() => { setQ(''); setSearch(''); setState(''); setSkip(0); }, [tab]);
   useEffect(() => setSkip(0), [search, state]);
+  const exportPath = tab === 'NETWORK' ? networkPath(caseId)
+    : rowsPath(caseId, ROW_TYPE[tab], search, skip, tab === 'SEARCH_INDEX' && state ? { file_state: state } : {});
   return (
     <>
       {tab !== 'NETWORK' && (
@@ -56,9 +68,16 @@ export function UserActivity({ tab }: { tab: UserTab }) {
               <option value="on disk">Still on the disk</option>
             </select>
           )}
+          <span style={{ flex: 1 }} />
+          <ExportButton path={exportPath} />
         </div>
       )}
-      <p className="small muted" style={{ margin: 0, padding: '10px 14px 0' }}>{NOTES[tab]}</p>
+      {tab === 'NETWORK' ? (
+        <div className="row" style={{ padding: '10px 14px 0', alignItems: 'flex-start' }}>
+          <p className="small muted grow" style={{ margin: 0 }}>{NOTES[tab]}</p>
+          <ExportButton path={exportPath} />
+        </div>
+      ) : <p className="small muted" style={{ margin: 0, padding: '10px 14px 0' }}>{NOTES[tab]}</p>}
       {tab === 'JUMPLISTS' && <JumpLists caseId={caseId} search={search} skip={skip} onPage={setSkip} />}
       {tab === 'TIMELINE' && <Timeline caseId={caseId} search={search} skip={skip} onPage={setSkip} />}
       {tab === 'THUMBNAILS' && <Thumbnails caseId={caseId} search={search} skip={skip} onPage={setSkip} />}
@@ -73,7 +92,7 @@ interface ListProps { caseId: string; search: string; skip: number; onPage: (s: 
 function JumpLists({ caseId, search, skip, onPage }: ListProps) {
   const time = useTime();
   const [open, setOpen] = useState<string | null>(null);
-  const { data, error, loading } = useRows(caseId, 'JUMPLIST_ENTRY', search, skip);
+  const { data, error, loading } = useRows(caseId, ROW_TYPE.JUMPLISTS, search, skip);
   if (loading && !data) return <Loading />;
   if (!data?.data.length) return <><ErrorBanner error={error} /><Empty title="No Jump Lists" text={search ? 'Nothing matches this search.' : 'No AutomaticDestinations or CustomDestinations files were found in the users\' Recent folders.'} /></>;
   return (
@@ -135,7 +154,7 @@ function JumpLists({ caseId, search, skip, onPage }: ListProps) {
 
 function Timeline({ caseId, search, skip, onPage }: ListProps) {
   const time = useTime();
-  const { data, error, loading } = useRows(caseId, 'TIMELINE_ACTIVITY', search, skip);
+  const { data, error, loading } = useRows(caseId, ROW_TYPE.TIMELINE, search, skip);
   if (loading && !data) return <Loading />;
   if (!data?.data.length) return <><ErrorBanner error={error} /><Empty title="No Windows Timeline activity" text={search ? 'Nothing matches this search.' : 'No ActivitiesCache.db was found (Windows 10 version 1803 and later keep one per account).'} /></>;
   return (
@@ -187,7 +206,7 @@ function ThumbImage({ artifactId, label }: { artifactId: string; label: string }
 }
 
 function Thumbnails({ caseId, search, skip, onPage }: ListProps) {
-  const { data, error, loading } = useRows(caseId, 'THUMBNAIL', search, skip);
+  const { data, error, loading } = useRows(caseId, ROW_TYPE.THUMBNAILS, search, skip);
   if (loading && !data) return <Loading />;
   if (!data?.data.length) return <><ErrorBanner error={error} /><Empty title="No thumbnails" text={search ? 'Nothing matches this search.' : 'No thumbcache_*.db files were found under AppData\\Local\\Microsoft\\Windows\\Explorer.'} /></>;
   return (
@@ -220,7 +239,7 @@ function Thumbnails({ caseId, search, skip, onPage }: ListProps) {
 
 function Network({ caseId }: { caseId: string }) {
   const time = useTime();
-  const { data, error, loading } = useApi<{ data: any[] }>(`/forensics/user-activity/network?case_id=${encodeURIComponent(caseId)}`);
+  const { data, error, loading } = useApi<{ data: any[] }>(networkPath(caseId));
   if (loading && !data) return <Loading />;
   if (!data?.data.length) return <><ErrorBanner error={error} /><Empty title="No network usage" text="No SRUM database (Windows\System32\sru\SRUDB.dat) was found." /></>;
   return (
@@ -248,7 +267,7 @@ function Network({ caseId }: { caseId: string }) {
 
 function SearchIndex({ caseId, search, state, skip, onPage }: ListProps & { state: string }) {
   const time = useTime();
-  const { data, error, loading } = useRows(caseId, 'SEARCH_INDEX_ENTRY', search, skip, state ? { file_state: state } : {});
+  const { data, error, loading } = useRows(caseId, ROW_TYPE.SEARCH_INDEX, search, skip, state ? { file_state: state } : {});
   if (loading && !data) return <Loading />;
   if (!data?.data.length) return <><ErrorBanner error={error} /><Empty title="No search index entries" text={search || state ? 'Nothing matches these filters.' : 'No Windows Search database (Windows.edb or Windows.db) was found.'} /></>;
   return (

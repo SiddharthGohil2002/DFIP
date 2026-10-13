@@ -8,6 +8,7 @@ import { IS_DESKTOP } from '../lib/platform';
 import { TagButton } from '../lib/tags';
 import { useApi } from '../lib/useApi';
 import { ViewButton, type ViewSource } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 import { Badge, Button, Card, Empty, ErrorBanner, Loading, Modal, PageHeader, Pager, Tabs } from '../ui';
 
 type Tab = 'all' | 'picture' | 'video' | 'gps' | 'text';
@@ -43,7 +44,8 @@ export function MediaPage() {
   if (camera) qs.set('camera', camera);
   if (origin) qs.set('source', origin);
   if (deleted) qs.set('deleted', 'true');
-  const { data, error, loading } = useApi<{ data: Item[]; total: number }>(`/forensics/media?${qs}`);
+  const path = `/forensics/media?${qs}`;
+  const { data, error, loading } = useApi<{ data: Item[]; total: number }>(path);
   const cams = useApi<{ data: { camera: string; items: number }[] }>(`/forensics/media/cameras?case_id=${encodeURIComponent(caseId)}`);
   const places = useApi<{ data: Point[] }>(`/forensics/media/locations?case_id=${encodeURIComponent(caseId)}`);
   const c = overview?.counts;
@@ -81,6 +83,8 @@ export function MediaPage() {
           </select>
           <label className="check"><input type="checkbox" checked={deleted} onChange={(e) => setDeleted(e.target.checked)} /> Deleted only</label>
           <span className="small muted">{data ? `${data.total.toLocaleString()} items` : ''}</span>
+          <span style={{ flex: 1 }} />
+          {!!data?.data.length && <ExportButton path={path} what="list of pictures and videos" />}
         </div>
         <ErrorBanner error={error} />
         {loading && !data ? <Loading /> : !data?.data.length ? (

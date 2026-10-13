@@ -1,8 +1,10 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bookmark, MessageSquare } from 'lucide-react';
+import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { Comments } from '../ui/Comments';
+import { ExportButton } from '../ui/ExportButton';
 import { useTime } from '../lib/format';
 import { TAG_LABELS, TAG_TONES, TagButton, useTags, type Tag, type TagItemType, type TagLabel } from '../lib/tags';
 import { Badge, Button, Card, Empty, PageHeader, Tabs } from '../ui';
@@ -24,6 +26,7 @@ type Filter = 'ALL' | TagLabel;
 export function TaggedPage() {
   const { tags, reload } = useTags();
   const { caseId } = useCase();
+  const { can } = useAuth();
   const time = useTime();
   const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('ALL');
@@ -31,6 +34,8 @@ export function TaggedPage() {
 
   const count = (l: TagLabel) => tags.filter((t) => t.label === l).length;
   const shown = filter === 'ALL' ? tags : tags.filter((t) => t.label === filter);
+  // The list useTags loads, narrowed to the tab shown.
+  const path = `/tags?case_id=${encodeURIComponent(caseId)}${filter === 'ALL' ? '' : `&label=${filter}`}`;
 
   return (
     <div className="stack">
@@ -38,7 +43,7 @@ export function TaggedPage() {
         title="Tagged items"
         subtitle="Files, events, web visits, USB devices and Windows activity marked during the review. Tagged items and their notes are listed in the case report."
       />
-      <Card flush>
+      <Card flush actions={can('REPORT_EXPORT') && shown.length > 0 && <ExportButton path={path} what="list of tagged items" />}>
         <Tabs<Filter>
           value={filter}
           onChange={setFilter}

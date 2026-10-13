@@ -7,6 +7,7 @@ import { formatBytes } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { TagButton } from '../lib/tags';
 import { ViewButton } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 import type { Artifact } from '../lib/types';
 import { Banner, Button, Card, Empty, Field, Hash, Loading, PageHeader, Pager, useToast } from '../ui';
 
@@ -27,7 +28,8 @@ export function CarvingPage() {
     if (!evidenceId && evidence[0]) setEvidenceId(evidence[0].evidence_id);
   }, [evidence, evidenceId]);
 
-  const carved = useApi<{ data: Artifact[] }>(`/forensics/artifacts?case_id=${encodeURIComponent(caseId)}&artifact_type=CARVED_FILE`);
+  const path = `/forensics/artifacts?case_id=${encodeURIComponent(caseId)}&artifact_type=CARVED_FILE`;
+  const carved = useApi<{ data: Artifact[] }>(path);
   const all = carved.data?.data || [];
   const exts = Array.from(new Set(all.map((a) => (a.filename || '').split('.').pop()?.toLowerCase() || ''))).filter(Boolean).sort();
   const rows = ext ? all.filter((a) => a.filename?.toLowerCase().endsWith(`.${ext}`)) : all;
@@ -86,12 +88,15 @@ export function CarvingPage() {
       <Card
         title="Carved files"
         subtitle={`${all.length.toLocaleString()} files, each hashed and registered as an artifact`}
-        actions={exts.length > 1 && (
-          <select className="select sm" style={{ width: 130 }} value={ext} onChange={(e) => { setExt(e.target.value); setSkip(0); }} aria-label="File type">
-            <option value="">All types</option>
-            {exts.map((x) => <option key={x} value={x}>.{x}</option>)}
-          </select>
-        )}
+        actions={<>
+          {exts.length > 1 && (
+            <select className="select sm" style={{ width: 130 }} value={ext} onChange={(e) => { setExt(e.target.value); setSkip(0); }} aria-label="File type">
+              <option value="">All types</option>
+              {exts.map((x) => <option key={x} value={x}>.{x}</option>)}
+            </select>
+          )}
+          {all.length > 0 && <ExportButton path={path} what="list of carved files" />}
+        </>}
         flush
       >
         {carved.loading && !carved.data ? <Loading /> : !rows.length ? (

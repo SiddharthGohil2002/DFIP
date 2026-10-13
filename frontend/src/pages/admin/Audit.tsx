@@ -5,11 +5,13 @@ import { api } from '../../lib/api';
 import { humanize, useTime } from '../../lib/format';
 import { useApi } from '../../lib/useApi';
 import { Banner, Button, Card, Empty, Loading, PageHeader } from '../../ui';
+import { ExportButton } from '../../ui/ExportButton';
 
 export function AuditPage() {
   const { can } = useAuth();
   const time = useTime();
-  const log = useApi<{ data: any[] }>(can('AUDIT_READ') ? '/admin/audit' : null);
+  const path = can('AUDIT_READ') ? '/admin/audit' : null;
+  const log = useApi<{ data: any[] }>(path);
   const [verify, setVerify] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState('');
@@ -45,6 +47,8 @@ export function AuditPage() {
         <div className="row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
           <input className="input sm" style={{ maxWidth: 320 }} value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by user, action, case…" aria-label="Filter" />
           <span className="small muted">{rows.length} records</span>
+          <span style={{ flex: 1 }} />
+          {!!log.data?.data.length && <ExportButton path={path} what="audit log" />}
         </div>
         {log.loading && !log.data ? <Loading /> : !rows.length ? <Empty title="No records" /> : (
           <div className="table-wrap">

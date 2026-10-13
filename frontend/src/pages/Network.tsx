@@ -7,6 +7,7 @@ import { TagButton } from '../lib/tags';
 import { useApi } from '../lib/useApi';
 import { Badge, Banner, Button, Card, Empty, ErrorBanner, Loading, Modal, PageHeader, Pager, Stat, Tabs } from '../ui';
 import { ViewButton } from '../ui/FileViewer';
+import { ExportButton } from '../ui/ExportButton';
 
 type Tab = 'HTTP_REQUEST' | 'DNS_QUERY' | 'TLS_HANDSHAKE' | 'NET_CONVERSATION' | 'FILES';
 const LIMIT = 200;
@@ -109,7 +110,8 @@ function Records({ caseId, type }: { caseId: string; type: Exclude<Tab, 'FILES'>
   const qs = new URLSearchParams({ case_id: caseId, type, limit: String(LIMIT), skip: String(skip) });
   if (search) qs.set('search', search);
   if (uploads) qs.set('uploads', 'true');
-  const res = useApi<{ data: any[]; total: number }>(`/forensics/network?${qs}`);
+  const path = `/forensics/network?${qs}`;
+  const res = useApi<{ data: any[]; total: number }>(path);
   const rows = res.data?.data || [];
   const t = (v: any) => (v ? time(v) : '—');
   const cols: Record<typeof type, string[]> = {
@@ -126,6 +128,8 @@ function Records({ caseId, type }: { caseId: string; type: Exclude<Tab, 'FILES'>
         <Button size="sm" icon={<Search size={13} />} onClick={() => { setSearch(q.trim()); setSkip(0); }}>Search</Button>
         {type === 'HTTP_REQUEST' && <label className="check"><input type="checkbox" checked={uploads} onChange={(e) => { setUploads(e.target.checked); setSkip(0); }} /> Only uploads</label>}
         <span className="small muted">{res.data ? `${res.data.total.toLocaleString()} records` : ''}</span>
+        <span style={{ flex: 1 }} />
+        {rows.length > 0 && <ExportButton path={path} />}
       </div>
       <ErrorBanner error={res.error} />
       {!res.data ? <Loading /> : !rows.length ? <Empty title="Nothing here" text="No record of this kind was found." /> : (
@@ -184,7 +188,8 @@ function Files({ caseId }: { caseId: string }) {
   const [skip, setSkip] = useState(0);
   const qs = new URLSearchParams({ case_id: caseId, limit: String(LIMIT), skip: String(skip) });
   if (search) qs.set('search', search);
-  const res = useApi<{ data: any[]; total: number }>(`/forensics/network/files?${qs}`);
+  const path = `/forensics/network/files?${qs}`;
+  const res = useApi<{ data: any[]; total: number }>(path);
   const rows = res.data?.data || [];
   return (
     <>
@@ -193,6 +198,8 @@ function Files({ caseId }: { caseId: string }) {
           placeholder="Search names, types, SHA-256" aria-label="Search files" />
         <Button size="sm" icon={<Search size={13} />} onClick={() => { setSearch(q.trim()); setSkip(0); }}>Search</Button>
         <span className="small muted">{res.data ? `${res.data.total.toLocaleString()} files` : ''}</span>
+        <span style={{ flex: 1 }} />
+        {rows.length > 0 && <ExportButton path={path} what="file list" />}
       </div>
       <ErrorBanner error={res.error} />
       {!res.data ? <Loading /> : !rows.length ? <Empty title="No files" text="HTTP carried no files in the case's captures." /> : (
