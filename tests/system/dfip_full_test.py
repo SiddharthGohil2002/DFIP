@@ -511,7 +511,7 @@ STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry',
                     'browser_depth', 'fileproc', 'email', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
 ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'phone', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth',
-               'fileproc', 'containers', 'email', 'chat_cloud', 'network', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content',
+               'fileproc', 'containers', 'email', 'chat_cloud', 'network', 'memory', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content',
                'unallocated', 'found_data']
 # What re-reading the file system index refreshes on evidence analysed with the standard profile.
 AFTER_FS_INDEX = ['fs_index', 'artifacts', 'registry', 'unix', 'phone', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc', 'email', 'chat_cloud',
@@ -4299,6 +4299,140 @@ def t_phones():
           and 'not-a-real-key' not in text, (rep.status, text[text.find('Phones'):][:600]))
 
 
+MEMORY_SAMPLE = Path(os.environ.get('MEMORY_SAMPLE') or '/testdata/memory/sample.mem')
+SYMBOLS_SERVED: dict[str, bytes] = {}
+
+
+def _start_symbol_server():
+    """The Volatility Foundation's download site stand-in on port 18083 (MEMORY_SYMBOL_PACK_URL in compose.yml), serving
+    SYMBOLS_SERVED by path."""
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = SYMBOLS_SERVED.get(self.path)
+            self.send_response(200 if body is not None else 404)
+            self.send_header('Content-Type', 'application/zip')
+            self.send_header('Content-Length', str(len(body or b'')))
+            self.end_headers()
+            self.wfile.write(body or b'')
+
+        def log_message(self, *a):
+            pass
+    srv = http.server.ThreadingHTTPServer(('0.0.0.0', 18083), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+
+def _symbol_pack(*members: str) -> bytes:
+    buf = io.BytesIO()
+    with __import__('zipfile').ZipFile(buf, 'w') as z:
+        for m in members:
+            z.writestr(m, b'\xfd7zXZ\x00' + m.encode())
+    return buf.getvalue()
+
+
+@section('12z3 Memory images (recognised at upload, read with Volatility, symbol packs)')
+def t_memory():
+    inv, adm = C['INVESTIGATOR'], C['ADMIN']
+    db = mongo()
+    case = C['MEM_CASE'] = post('/api/cases', inv, {'name': 'Memory images', 'priority': 'LOW'}).json['case_id']
+    junk = os.urandom(4 << 20)
+    r = upload(inv, case, junk, 'laptop-ram.mem')
+    ev = r.json.get('evidence_id')
+    check('a .mem file is registered as a memory image (a raw capture), hashed and sealed like any evidence',
+          r.status == 200 and r.json.get('format') == 'MEMORY' and (r.json.get('memory') or {}).get('container') == 'Raw capture'
+          and r.json.get('sha256') == hashlib.sha256(junk).hexdigest(), r)
+    for name, head, label in (('crash.dmp', b'PAGEDU64', 'Windows crash dump (64-bit)'), ('capture.lime', b'EMiL\x01\x00\x00\x00', 'LiME capture')):
+        x = upload(inv, case, head + os.urandom(64 << 10), name)
+        check(f'{name} is known by its own bytes as a {label}', x.status == 200 and x.json.get('format') == 'MEMORY'
+              and x.json['memory']['container'] == label, x)
+    x = upload(inv, case, os.urandom(64 << 10), 'workstation.raw', extra={'kind': 'memory'})
+    check('a raw file marked as a memory image (kind=memory) is one, whatever its name', x.status == 200 and x.json.get('format') == 'MEMORY', x)
+    mini = upload(inv, case, b'MDMP' + os.urandom(4096), 'chrome.dmp')
+    pair = upload_set(inv, case, [('a.mem', os.urandom(8192)), ('b.mem', os.urandom(8192))])
+    check('a minidump of one process is refused, saying why; a memory image is uploaded on its own (400)',
+          mini.status == 400 and 'minidump' in str(mini.detail) and pair.status == 400 and 'on its own' in str(pair.detail), (mini, pair))
+    parts = get(f'/api/forensics/evidence/{ev}/partitions', inv)
+    check("a memory image has no partitions (409, pointing to the Memory page) and no files in the file index",
+          parts.status == 409 and 'see Memory' in str(parts.detail) and get(f'/api/forensics/evidence/{ev}/files', inv).json['total'] == 0, parts)
+    j = _analyse(inv, ev, {'profile': 'standard'})
+    s = (j.get('result') or {}).get('summary') or {}
+    mods = get(f'/api/evidence/{ev}', inv).json.get('modules') or {}
+    truth = subprocess.run(['vol', '-q', '--offline', '-r', 'json', '-f', str(Path(get(f'/api/evidence/{ev}', adm).json['storage_path'])), 'windows.info'],
+                           capture_output=True, text=True, env={**os.environ, 'XDG_CACHE_HOME': '/tmp/vol-test-cache'}, timeout=600)
+    check('only the memory module applies to a memory image; Volatility (run here directly) finds no Windows kernel in random bytes, '
+          'and the analysis fails saying so, not with an empty result',
+          j['status'] == 'FAILED' and 'no Windows kernel was found in it' in (j.get('error') or '') and (mods.get('memory') or {}).get('status') == 'FAILED'
+          and truth.returncode != 0 and 'kernel.layer_name' in truth.stdout + truth.stderr and 'fs_index' not in mods,
+          (j['status'], j.get('error'), {k: v.get('status') for k, v in mods.items()}, truth.stdout[-200:]))
+    check('nothing was stored for it', not db.forensic_artifacts.count_documents({'evidence_id': ev}) and
+          get(f'/api/forensics/memory?case_id={case}&type=MEMORY_INFO', inv).json['data'] == [])
+    check('records are listed only for a known type (400), and only to people who can see the case (404)',
+          get(f'/api/forensics/memory?case_id={case}&type=NOPE', inv).status == 400
+          and get(f'/api/forensics/memory?case_id={case}&type=MEMORY_PROCESS', C['INV2']).status == 404
+          and get(f'/api/forensics/memory/tree?case_id={case}&evidence_id={ev}', C['INV2']).status == 404)
+    ov = get(f'/api/cases/{case}/overview', inv).json['counts']
+    check('the overview counts the memory images', ov.get('memory_images') == 4 and ov.get('memory_processes') == 0, ov)
+
+    # Symbol packs: listed for everyone, added, downloaded and deleted by administrators.
+    st = get('/api/forensics/memory/status', inv).json
+    check('the status names the Volatility version and says Volatility runs offline (no symbol server)', bool(st.get('volatility'))
+          and st['symbol_server'] is False and st['pack_url'].endswith('/windows.zip'), st)
+    pack = _symbol_pack('windows/ntkrnlmp.pdb/1E2D3C4B5A69788796A5B4C3D2E1F001-1.json.xz', 'windows/ntkrnlmp.pdb/00112233445566778899AABBCCDDEEFF-1.json.xz')
+    a = form('POST', '/api/forensics/memory/symbols', adm, {}, 'lab-windows.zip', pack)
+    check('an administrator adds a symbol pack; it is checked, listed with its symbol tables and SHA-256', a.status == 200
+          and a.json['symbols'] == {'windows': 2, 'linux': 0, 'mac': 0} and a.json['sha256'] == hashlib.sha256(pack).hexdigest()
+          and any(p['name'] == 'lab-windows.zip' and p['sha256'] == a.json['sha256'] for p in get('/api/forensics/memory/status', inv).json['packs']), a)
+    check('a pack with anything but symbol tables, or not a ZIP, is refused (400); an investigator may not add one (403)',
+          form('POST', '/api/forensics/memory/symbols', adm, {}, 'bad.zip', _symbol_pack('windows/readme.txt')).status == 400
+          and form('POST', '/api/forensics/memory/symbols', adm, {}, 'climb.zip', _symbol_pack('windows/../../x.json')).status == 400
+          and form('POST', '/api/forensics/memory/symbols', adm, {}, 'plain.zip', b'not a zip').status == 400
+          and form('POST', '/api/forensics/memory/symbols', inv, {}, 'lab-windows.zip', pack).status == 403)
+    _start_symbol_server()
+    served = _symbol_pack('windows/ntkrnlmp.pdb/AA11BB22CC33DD44EE55FF6600112233-1.json.xz', 'linux/Ubuntu_5.15.0-91-generic.json.xz')
+    SYMBOLS_SERVED['/volatility3/symbols/windows.zip'] = served
+    d = post('/api/forensics/memory/symbols/download', adm)
+    jd = wait_job(adm, d.json['job_id']) if d.status == 200 else {}
+    packs = {p['name']: p for p in get('/api/forensics/memory/status', inv).json['packs']}
+    check('the Windows pack is downloaded by the worker as a job, checked and listed with its source and SHA-256', jd.get('status') == 'COMPLETED'
+          and packs.get('windows.zip', {}).get('sha256') == hashlib.sha256(served).hexdigest() and packs['windows.zip']['source'] == 'download'
+          and packs['windows.zip']['symbols'] == {'windows': 1, 'linux': 1, 'mac': 0}, (d, jd.get('error'), packs))
+    SYMBOLS_SERVED['/volatility3/symbols/windows.zip'] = b'<html>moved</html>'
+    jd = wait_job(adm, post('/api/forensics/memory/symbols/download', adm).json['job_id'])
+    check('a download that is not a symbol pack fails, and the pack already there stays', jd.get('status') == 'FAILED' and 'ZIP' in (jd.get('error') or '')
+          and 'windows.zip' in {p['name'] for p in get('/api/forensics/memory/status', inv).json['packs']}, jd.get('error'))
+    check('only an administrator downloads or deletes packs (403)', post('/api/forensics/memory/symbols/download', inv).status == 403
+          and req('DELETE', '/api/forensics/memory/symbols/windows.zip', inv).status == 403)
+    for name in ('lab-windows.zip', 'windows.zip'):
+        req('DELETE', f'/api/forensics/memory/symbols/{name}', adm)
+    check('packs are deleted', not [p for p in get('/api/forensics/memory/status', inv).json['packs'] if p['name'].endswith('.zip')]
+          and req('DELETE', '/api/forensics/memory/symbols/windows.zip', adm).status == 404)
+    acts = {x['action'] for x in db.audit_logs.find({'action': {'$regex': '^MEMORY_SYMBOLS_'}})}
+    check('symbol packs added, downloaded and deleted are audited', {'MEMORY_SYMBOLS_ADDED', 'MEMORY_SYMBOLS_DOWNLOAD_STARTED', 'MEMORY_SYMBOLS_DELETED'} <= acts, acts)
+
+    # A real Windows memory image, when one is configured: DFIP's processes and connections against Volatility run directly.
+    if not MEMORY_SAMPLE.exists():
+        note('Windows memory image analysed end to end', f'no sample at {MEMORY_SAMPLE}; skipped (place one there with its symbol pack in '
+                                                         f'{MEMORY_SAMPLE.parent}/symbols to run it)')
+        return
+    for p in sorted((MEMORY_SAMPLE.parent / 'symbols').glob('*.zip')):
+        form('POST', '/api/forensics/memory/symbols', adm, {}, p.name, p.read_bytes())
+    r = upload(inv, case, MEMORY_SAMPLE.read_bytes(), MEMORY_SAMPLE.name, extra={'kind': 'memory'})
+    j = _analyse(inv, r.json['evidence_id'], {'profile': 'standard'})
+    sample = r.json['evidence_id']
+    env = {**os.environ, 'XDG_CACHE_HOME': '/tmp/vol-test-cache'}
+    sym = ['-s', '/app/storage/volatility/symbols']
+    ps = json.loads(subprocess.run(['vol', '-q', '--offline', *sym, '-r', 'json', '-f', str(MEMORY_SAMPLE), 'windows.pslist'], capture_output=True, text=True,
+                                   env=env, timeout=3600).stdout or '[]')
+    got = get(f'/api/forensics/memory?case_id={case}&type=MEMORY_PROCESS&evidence_id={sample}&limit=1000', inv).json['data']
+    check('a Windows memory image: the same processes (PID, parent, name) as Volatility run directly', j['status'] == 'COMPLETED'
+          and sorted((p['PID'], p['PPID'], p['ImageFileName']) for p in ps) == sorted((p['pid'], p['ppid'], p['name']) for p in got), (j.get('error'), len(ps), len(got)))
+    # Removed again so later sections see no symbol packs.
+    for p in sorted((MEMORY_SAMPLE.parent / 'symbols').glob('*.zip')):
+        req('DELETE', f'/api/forensics/memory/symbols/{p.name}', adm)
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -5771,7 +5905,7 @@ PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
              t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_email, t_chat_cloud, t_browser_depth,
-             t_comms_samples, t_media, t_malware, t_disk_formats, t_encrypted_volumes, t_shadow_copies, t_packages, t_unix, t_more_filesystems, t_plaso, t_network, t_phones,
+             t_comms_samples, t_media, t_malware, t_disk_formats, t_encrypted_volumes, t_shadow_copies, t_packages, t_unix, t_more_filesystems, t_plaso, t_network, t_phones, t_memory,
              t_indicators, t_carving, t_search, t_findings, t_tags, t_review, t_physical, t_graph_summary, t_claude, t_analyst, t_reports, t_report_templates, t_exports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold, t_retention],
     'desktop_writes': [t_desktop_writes],

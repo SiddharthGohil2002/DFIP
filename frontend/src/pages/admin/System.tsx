@@ -5,6 +5,7 @@ import { IS_DESKTOP } from '../../lib/platform';
 import { useApi } from '../../lib/useApi';
 import { Badge, Card, Loading, PageHeader } from '../../ui';
 import { WorkstationCard } from '../../app/Workstation';
+import { MemorySymbolsCard } from './MemorySymbols';
 
 const TOOL_PURPOSE: Record<string, string> = {
   sleuthkit_mmls: 'Partition tables',
@@ -65,6 +66,7 @@ export function SystemPage() {
           </table>
         )}
       </Card>
+      <MemorySymbolsCard />
     </div>
   );
 }

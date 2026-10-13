@@ -35,12 +35,14 @@ ITEM_COLLECTIONS = {
     'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts', 'ENTITY': 'entities',
     'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records', 'WINDOWS': 'forensic_artifacts', 'USN': 'usn_records',
     'EMAIL': 'email_messages', 'CHAT_CLOUD': 'forensic_artifacts', 'PROGRAM': 'forensic_artifacts', 'SHADOW_FILE': 'shadow_files', 'UNIX': 'forensic_artifacts',
-    'NETWORK': 'forensic_artifacts', 'PHONE': 'forensic_artifacts',
+    'NETWORK': 'forensic_artifacts', 'PHONE': 'forensic_artifacts', 'MEMORY': 'forensic_artifacts',
 }
 NETWORK_LABELS = {'CAPTURE_INFO': 'Network capture', 'NET_CONVERSATION': 'Conversation', 'DNS_QUERY': 'DNS lookup', 'HTTP_REQUEST': 'HTTP request',
                   'TLS_HANDSHAKE': 'TLS connection'}
 PHONE_LABELS = {'PHONE_DEVICE': 'Phone', 'PHONE_MESSAGE': 'Message', 'PHONE_CALL': 'Call', 'PHONE_CONTACT': 'Contact', 'PHONE_APP': 'App',
                 'PHONE_WIFI': 'Wi-Fi network'}
+MEMORY_LABELS = {'MEMORY_PROCESS': 'Process', 'MEMORY_CONNECTION': 'Network connection', 'MEMORY_INJECTION': 'Injected code',
+                 'MEMORY_SERVICE': 'Service', 'MEMORY_DLL': 'DLL'}
 LABELS = ('EVIDENCE', 'NOTABLE', 'FOLLOW_UP')
 _ARTIFACT_TYPES = {
     'BROWSER': {'BROWSER_HISTORY', 'BROWSER_DOWNLOAD', 'BROWSER_COOKIE', 'BROWSER_SEARCH', 'BROWSER_BOOKMARK', 'BROWSER_AUTOFILL',
@@ -50,6 +52,7 @@ _ARTIFACT_TYPES = {
     'UNIX': {'SHELL_COMMAND', 'UNIX_EVENT', 'SCHEDULED_JOB', 'RECENT_DOCUMENT', 'WIFI_NETWORK', 'QUARANTINE_EVENT'},
     'NETWORK': set(NETWORK_LABELS),
     'PHONE': set(PHONE_LABELS),
+    'MEMORY': set(MEMORY_LABELS),
     'ACTIVITY': {'PROGRAM_RUN', 'RECENT_FILE', 'RECYCLE_BIN_ITEM'},
     'ARTIFACT': {'RECOVERED_FILE', 'CARVED_FILE', 'EXTRACTED_FILE', 'MALWARE_INDICATOR'},
     'REGISTRY': {'USERASSIST', 'SHELLBAG', 'TYPED_PATH', 'TYPED_URL', 'EXPLORER_SEARCH', 'RECENT_DOC', 'RUN_MRU', 'PERSISTENCE',
@@ -94,7 +97,7 @@ def natural_key(item_type: str, doc) -> dict:
         return {'evidence_id': e, 'type': t, 'source_path': doc.get('source_path'), 'row_id': doc.get('row_id')}
     if item_type == 'EMAIL':
         return {'evidence_id': e, 'nk': doc.get('nk')}
-    if item_type in ('CHAT_CLOUD', 'PROGRAM', 'UNIX', 'NETWORK', 'PHONE'):
+    if item_type in ('CHAT_CLOUD', 'PROGRAM', 'UNIX', 'NETWORK', 'PHONE', 'MEMORY'):
         return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
     if item_type == 'USB':
         return {'evidence_id': e, 'instance_id': doc.get('instance_id')}
@@ -242,6 +245,16 @@ def snapshot(item_type: str, doc) -> dict:
         if t == 'PHONE_MESSAGE':
             detail += f' · {doc.get("app")} {"to" if doc.get("direction") == "outgoing" else "from"} {who}'
         return {'title': (title or '')[:300], 'detail': detail, 'timestamp': _iso(when), 'source': doc.get('source_path')}
+    elif item_type == 'MEMORY':
+        title, when = {
+            'MEMORY_PROCESS': (f'{doc.get("name")} (PID {doc.get("pid")})' + (f': {doc["cmdline"]}' if doc.get('cmdline') else ''), doc.get('created')),
+            'MEMORY_CONNECTION': (f'{doc.get("owner") or "PID " + str(doc.get("pid"))} {doc.get("proto")} {doc.get("local_addr")}:{doc.get("local_port")} to '
+                                  f'{doc.get("foreign_addr")}:{doc.get("foreign_port")}', doc.get('created')),
+            'MEMORY_INJECTION': (f'{doc.get("process")} (PID {doc.get("pid")}) at {doc.get("start")}, {doc.get("protection")}', None),
+            'MEMORY_SERVICE': (f'{doc.get("name")}: {doc.get("binary_registry") or doc.get("binary") or doc.get("display") or ""}', None),
+            'MEMORY_DLL': (f'{doc.get("path") or doc.get("name")} in {doc.get("process")} (PID {doc.get("pid")})', doc.get('load_time')),
+        }.get(t, (t, None))
+        return {'title': (title or '')[:300], 'detail': f'Memory image · {MEMORY_LABELS.get(t, t)}', 'timestamp': _iso(when), 'source': 'Volatility'}
     elif item_type == 'SHADOW_FILE':
         change = {'DELETED_SINCE': 'deleted since', 'CHANGED_SINCE': 'changed since', 'ADDED_SINCE': 'added since'}.get(doc.get('change'), '')
         created = doc.get('store_created')

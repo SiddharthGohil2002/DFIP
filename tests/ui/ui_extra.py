@@ -334,7 +334,7 @@ with sync_playwright() as p:
     print('== disk images, encrypted volumes and shadow copies')
     page.get_by_label('Active case').select_option(VOL_CASE)
     page.get_by_role('link', name=re.compile(r'^Evidence')).first.click()
-    page.get_by_label('Disk image files').set_input_files([f'{SAMPLES}/ext2.splitraw.001', f'{SAMPLES}/ext2.splitraw.000'])
+    page.get_by_label('Evidence files').set_input_files([f'{SAMPLES}/ext2.splitraw.001', f'{SAMPLES}/ext2.splitraw.000'])
     expect(page.get_by_text('2 files of one image')).to_be_visible()
     page.get_by_role('button', name='Upload and seal').click()
     expect(page.get_by_text(re.compile(r'EVID-\d+ registered · ext2\.splitraw\.000'))).to_be_visible(timeout=60000)
@@ -409,6 +409,29 @@ with sync_playwright() as p:
     page.get_by_label('Only what stands out').check()
     expect(page.locator('tbody tr')).to_have_count(4)
     check('WhatsApp messages, calls (FaceTime) and the four apps that stand out (Signal and Proton Mail on each phone)', True)
+
+    print('== memory images')
+    page.get_by_role('link', name=re.compile(r'^Evidence\b')).first.click()
+    page.get_by_label('Evidence files').set_input_files({'name': 'ram-capture.raw', 'mimeType': 'application/octet-stream',
+                                                        'buffer': uuid.uuid4().bytes * 65536})
+    page.get_by_label('This is a memory image (a RAM capture), not a disk image').check()
+    page.get_by_role('button', name='Upload and seal').click()
+    done = page.get_by_text(re.compile(r'EVID-\d+ registered · ram-capture\.raw'))
+    expect(done).to_be_visible(timeout=120000)
+    mem_eid = re.search(r'EVID-\d+', done.inner_text()).group(0)
+    page.get_by_role('button', name='Run analysis').click()
+    token = api('POST', '/auth/login', body={'email': 'investigator@dfip.local', 'password': PW})['access_token']
+    for _ in range(240):
+        if (api('GET', f'/evidence/{mem_eid}', token).get('modules') or {}).get('memory', {}).get('status') in ('COMPLETED', 'FAILED'):
+            break
+        time.sleep(1)
+    check('a raw file is uploaded as a memory image from the Evidence page, and analysed', api('GET', f'/evidence/{mem_eid}', token)['format'] == 'MEMORY')
+    page.get_by_role('link', name=re.compile(r'^Memory\b')).first.click()
+    expect(page.get_by_text(re.compile(r'1 of the 1 memory images in this case has not been read'))).to_be_visible()
+    page.goto(f'{BASE}/app/evidence/{mem_eid}')
+    expect(page.get_by_text(re.compile('no Windows kernel was found in it'))).to_be_visible()
+    check('Memory says the image could not be read; the evidence page says why (no Windows kernel in random bytes)', True)
+    page.screenshot(path=f'{OUT}/x28-memory-unreadable.png', full_page=True)
 
     print('== Linux and macOS, collections, Plaso timelines')
     page.get_by_label('Active case').select_option(UNIX_CASE)
@@ -724,6 +747,24 @@ with sync_playwright() as p:
     expect(page.locator('tbody tr', has_text=rs_name)).to_have_count(0)
     check('...and deletes it', True)
 
+    print('== memory analysis symbols (administrator)')
+    import io as _io, zipfile as _zip
+    buf = _io.BytesIO()
+    with _zip.ZipFile(buf, 'w') as z:
+        z.writestr('windows/ntkrnlmp.pdb/0123456789ABCDEF0123456789ABCDEF-1.json.xz', b'\xfd7zXZ\x00ui')
+    pack_name = f'ui-pack-{uuid.uuid4().hex[:4]}.zip'
+    page.locator('a.nav-link[href$="/admin/system"]').click()
+    card = page.locator('.card', has=page.get_by_role('heading', name='Memory analysis symbols'))
+    expect(card).to_be_visible()
+    card.get_by_label('Symbol pack (ZIP)').set_input_files({'name': pack_name, 'mimeType': 'application/zip', 'buffer': buf.getvalue()})
+    row = card.locator('tr', has_text=pack_name)
+    expect(row.get_by_text('1 windows')).to_be_visible()
+    check('an administrator adds a Volatility symbol pack; it is listed with its symbol tables', True)
+    page.screenshot(path=f'{OUT}/x29-memory-symbols.png', full_page=True)
+    row.get_by_role('button', name=f'Delete {pack_name}').click()
+    expect(card.locator('tr', has_text=pack_name)).to_have_count(0)
+    check('...and deletes it', True)
+
     print('== reviewing a finding and retention (administrator)')
     page.get_by_label('Active case').select_option(SHOWCASE)
     page.get_by_role('link', name=re.compile(r'^Findings\b')).first.click()
@@ -749,7 +790,7 @@ with sync_playwright() as p:
         sign_in(page, 'investigator@dfip.local')
         expect(page.get_by_text('Investigation functions')).to_be_visible()
         bad = []
-        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/shadow-copies', '/app/unix', '/app/network', '/app/phones', '/app/physical', '/app/graph', '/app/summary', '/app/findings', '/app/usb', '/app/reports', '/app/custody'):
+        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/shadow-copies', '/app/unix', '/app/network', '/app/phones', '/app/memory', '/app/physical', '/app/graph', '/app/summary', '/app/findings', '/app/usb', '/app/reports', '/app/custody'):
             page.goto(BASE + path)
             page.wait_for_load_state('networkidle')
             sw = page.evaluate('document.documentElement.scrollWidth')

@@ -21,13 +21,18 @@ EWF = ('E01', 'EX01')
 RAW = 'RAW'
 LABELS = {'E01': 'EnCase (E01)', 'EX01': 'EnCase (Ex01)', 'RAW': 'Raw (dd)', 'AFF': 'Advanced Forensic Format', 'AFF4': 'AFF4',
           'VHD': 'Virtual Hard Disk (VHD)', 'VHDX': 'Virtual Hard Disk v2 (VHDX)', 'VMDK': 'VMware disk (VMDK)', 'QCOW2': 'QEMU disk (QCOW2)',
-          'LOGICAL': 'Logical package (collected files)', 'PCAP': 'Network capture (pcap, pcapng)'}
+          'LOGICAL': 'Logical package (collected files)', 'PCAP': 'Network capture (pcap, pcapng)', 'MEMORY': 'Memory image (RAM)'}
 # File name extensions accepted for upload (numbered parts of a split raw image are accepted too).
 EXTENSIONS = ('E01', 'EX01', 'RAW', 'DD', 'IMG', 'AFF', 'AFF4', 'VHD', 'VHDX', 'VMDK', 'QCOW2', 'QCOW')
 LOGICAL = 'LOGICAL'  # a package of collected files (ZIP or TAR), see packages.py
 PCAP = 'PCAP'  # a network capture (pcap or pcapng), see network.py
 CAPTURE_EXTENSIONS = ('PCAP', 'PCAPNG', 'CAP')
 _PCAP_MAGIC = (b'\xd4\xc3\xb2\xa1', b'\xa1\xb2\xc3\xd4', b'\x4d\x3c\xb2\xa1', b'\xa1\xb2\x3c\x4d', b'\x0a\x0d\x0d\x0a')
+MEMORY = 'MEMORY'  # a memory image (RAM), read with Volatility 3, see memory.py
+# Raw captures (FTK Imager, Magnet, DumpIt, winpmem) carry no header, so their usual names say what they are; Windows crash
+# dumps and LiME captures are known by their bytes. A raw capture named otherwise is uploaded as a memory image explicitly.
+MEMORY_EXTENSIONS = ('MEM', 'VMEM', 'LIME', 'DMP')
+_MEMORY_MAGIC = {b'PAGEDU64': 'Windows crash dump (64-bit)', b'PAGEDUMP': 'Windows crash dump (32-bit)', b'EMiL': 'LiME capture'}
 _SPLIT = re.compile(r'^(?P<base>.+)\.(?P<n>\d{3,4})$')
 _EWF = re.compile(r'^(?P<base>.+)\.(?P<seg>E(?:X)?(?:\d\d|[A-Z][A-Z]))$', re.I)
 CHUNK = 4 << 20
@@ -40,11 +45,20 @@ class SetError(ValueError):
 def extension_ok(name: str) -> bool:
     from .packages import is_package_name
     ext = Path(name).suffix.lstrip('.').upper()
-    return ext in EXTENSIONS or ext in CAPTURE_EXTENSIONS or bool(_SPLIT.match(name)) or bool(_EWF.match(name)) or is_package_name(name)
+    return (ext in EXTENSIONS or ext in CAPTURE_EXTENSIONS or ext in MEMORY_EXTENSIONS or bool(_SPLIT.match(name)) or bool(_EWF.match(name))
+            or is_package_name(name))
+
+
+def memory_container(path: Path) -> str:
+    """How a memory image is stored: a Windows crash dump, a LiME capture, or raw."""
+    with path.open('rb') as f:
+        head = f.read(8)
+    return next((label for magic, label in _MEMORY_MAGIC.items() if head.startswith(magic)), 'Raw capture')
 
 
 def detect(path: Path) -> str:
-    """The format from the file's own bytes (never its name): E01, EX01, VHD, VHDX, VMDK, QCOW2, or RAW."""
+    """The format from the file's own bytes: E01, EX01, VHD, VHDX, VMDK, QCOW2, a capture, a package, a memory image, or RAW.
+    (A raw memory capture has no header: its name says what it is.)"""
     size = path.stat().st_size
     with path.open('rb') as f:
         head = f.read(512)
@@ -54,6 +68,13 @@ def detect(path: Path) -> str:
             tail = f.read(512)
     if head[:4] in _PCAP_MAGIC:
         return PCAP
+    if any(head.startswith(m) for m in _MEMORY_MAGIC):
+        return MEMORY
+    if head.startswith(b'MDMP'):
+        raise SetError(f'{path.name} is a minidump of one process, not a memory image of the computer: Volatility reads full memory '
+                       'captures (raw, a complete Windows crash dump, LiME)')
+    if path.suffix.upper().lstrip('.') in MEMORY_EXTENSIONS:
+        return MEMORY
     if head.startswith(b'EVF\x09\x0d\x0a\xff\x00'):
         return 'E01'
     if head.startswith(b'EVF2\x0d\x0a\x81\x00'):
@@ -180,6 +201,8 @@ def classify(paths: list[Path]) -> dict:
         raise SetError('A package of collected files (ZIP or TAR) is uploaded on its own, as one evidence item')
     if PCAP in formats.values() and len(paths) > 1:
         raise SetError('A network capture is uploaded on its own, as one evidence item')
+    if MEMORY in formats.values() and len(paths) > 1:
+        raise SetError('A memory image is uploaded on its own, as one evidence item')
     if len(paths) == 1:
         p = paths[0]
         fmt = formats[p]

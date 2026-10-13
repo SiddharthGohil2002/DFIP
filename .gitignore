@@ -24,6 +24,7 @@ storage/yara/**
 storage/physical/**
 storage/findings/**
 storage/signing/**
+storage/volatility/**
 !storage/**/
 !storage/**/.gitkeep
 

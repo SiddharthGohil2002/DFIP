@@ -115,6 +115,9 @@ def facts(case_id: str) -> list[dict]:
     for x in art.find({'case_id': case_id, 'type': 'EXECUTABLE', 'score': {'$gte': 3}}).sort([('score', -1), ('path', 1)]).limit(50):
         why = '; '.join(f.get('label') for f in x.get('flags') or [] if f.get('label'))
         F.add('programs', f'{x.get("path")} stands out: {why or "flagged"}.', [_ref('forensic_artifacts', x)])
+    for x in art.find({'case_id': case_id, 'type': 'MEMORY_PROCESS', 'notable': True}).sort([('score', -1), ('pid', 1)]).limit(50):
+        why = '; '.join(f.get('label') for f in x.get('flags') or [] if f.get('severity') in ('high', 'medium'))
+        F.add('programs', f'{x.get("name")} (PID {x.get("pid")}) in the memory image {x.get("evidence_id")} stands out: {why}.', [_ref('forensic_artifacts', x)])
     for x in art.find({'case_id': case_id, 'type': 'MALWARE_INDICATOR'}).sort('_id', 1).limit(50):
         F.add('programs', f'{x.get("original_path") or x.get("path")} matches {x.get("engine") or "YARA"} signature {x.get("rule") or x.get("signature")}.',
               [_ref('forensic_artifacts', x)])

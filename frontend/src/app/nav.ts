@@ -1,5 +1,5 @@
 import {
-  Activity, Archive, BarChart3, CalendarClock, ClipboardList, Monitor, Bookmark, Share2, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, Mail,
+  Activity, Archive, BarChart3, CalendarClock, ClipboardList, Monitor, Bookmark, Share2, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, Mail, MemoryStick,
   MessagesSquare, NotebookPen, Images, Bug, History, Network, ScanSearch, Smartphone, SquareTerminal, ScrollText, Search, ShieldAlert, Usb, Users, Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -146,6 +146,13 @@ export const NAV: NavGroup[] = [
         count: (c) => (c.shell_commands ?? 0) + (c.unix_events ?? 0) + (c.scheduled_jobs ?? 0),
         alert: (c) => (c.shell_commands_flagged ?? 0) + (c.scheduled_jobs_flagged ?? 0) > 0,
         countLabel: (c) => `${n(c.shell_commands_flagged ?? 0)} commands and ${n(c.scheduled_jobs_flagged ?? 0)} jobs stand out`,
+      },
+      {
+        to: '/app/memory', label: 'Memory', icon: MemoryStick, tone: 'teal',
+        description: 'Windows memory images (Volatility 3): processes and their tree, network connections, code injected into processes, services and DLLs.',
+        count: (c) => c.memory_processes ?? 0,
+        alert: (c) => (c.memory_processes_notable ?? 0) + (c.memory_injections ?? 0) > 0,
+        countLabel: (c) => `${n(c.memory_processes ?? 0)} processes · ${n(c.memory_processes_notable ?? 0)} stand out · ${n(c.memory_injections ?? 0)} injected regions`,
       },
       {
         to: '/app/computer', label: 'Computer and users', icon: Monitor, tone: 'teal',

@@ -284,6 +284,52 @@ def clamav_update_task(self, job_id: str, _subject, created_by: str):
         raise
 
 
+@celery_app.task(bind=True, name='dfip.memory_symbols', max_retries=0)
+def memory_symbols_task(self, job_id: str, _subject, created_by: str):
+    """Downloads a Volatility symbol pack (the Windows pack by default) into the symbols folder, checked like an upload."""
+    import shutil
+    import httpx
+    from .forensic import volatility as vol
+    job, _ = _claim(job_id)
+    if not job:
+        return {'job_id': job_id, 'status': 'DUPLICATE_IGNORED'}
+    url = (job.get('payload') or {}).get('url') or ''
+    name = url.rsplit('/', 1)[-1].split('?', 1)[0]
+    name = name if vol.PACK_NAME.match(name) else 'symbols.zip'
+    incoming = vol.symbols_dir() / '.incoming'
+    incoming.mkdir(exist_ok=True)
+    tmp = incoming / name
+    try:
+        _set_job(job_id, progress=2, stage='downloading')
+        done = 0
+        with httpx.stream('GET', url, timeout=60, follow_redirects=True) as resp, tmp.open('wb') as out:
+            if resp.status_code != 200:
+                raise ValueError(f'{url} answered HTTP {resp.status_code}')
+            total = int(resp.headers.get('Content-Length') or 0)
+            for chunk in resp.iter_bytes(1 << 20):
+                done += len(chunk)
+                if done > vol.MAX_PACK_BYTES:
+                    raise ValueError('The download is larger than any symbol pack')
+                out.write(chunk)
+                if total:
+                    _set_job(job_id, progress=int(2 + 88 * done / total), stage='downloading')
+        _set_job(job_id, progress=92, stage='checking')
+        vol.check_pack(tmp)
+        tmp.replace(vol.symbols_dir() / name)
+        shutil.rmtree(vol.cache_dir() / 'volatility3', ignore_errors=True)
+        info = vol.record_pack(name, vol.symbols_dir() / name, 'download', None, url=url)
+        summary = {'name': name, **info}
+        _set_job(job_id, status='COMPLETED', progress=100, stage='complete', result=summary, finished_at=datetime.now(timezone.utc))
+        _notify(created_by, 'Symbol pack downloaded', f'{name}: {sum(info["symbols"].values()):,} symbol tables. Run the analysis of memory images '
+                                                      'that needed them again.')
+        return summary
+    except Exception as exc:
+        tmp.unlink(missing_ok=True)
+        _set_job(job_id, status='FAILED', stage='failed', error=str(exc)[:2000], finished_at=datetime.now(timezone.utc))
+        _notify(created_by, 'Symbol pack download failed', str(exc)[:300], 'ERROR')
+        raise
+
+
 @celery_app.task(bind=True, name='dfip.volume_decrypt', max_retries=0,
                  soft_time_limit=settings.analysis_time_limit, time_limit=settings.analysis_time_limit + 600)
 def volume_decrypt_task(self, job_id: str, evidence_id: str, created_by: str):
@@ -458,6 +504,7 @@ TASKS_BY_TYPE = {
     'CLAMAV_UPDATE': clamav_update_task,
     'VOLUME_DECRYPT': volume_decrypt_task,
     'TIMELINE_IMPORT': timeline_import_task,
+    'MEMORY_SYMBOLS': memory_symbols_task,
 }
 
 

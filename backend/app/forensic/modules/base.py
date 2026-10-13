@@ -153,9 +153,10 @@ class ModuleContext:
         return self._cancel_check()
 
     def run_tool(self, argv: list[str], *, timeout: float, stdout_path: Path | None = None,
-                 max_output: int = 500_000, memory_bytes: int | None = DEFAULT_TOOL_MEMORY, file_bytes: int | None = None) -> dict:
+                 max_output: int = 500_000, memory_bytes: int | None = DEFAULT_TOOL_MEMORY, file_bytes: int | None = None,
+                 env: dict | None = None) -> dict:
         return run_tool(argv, timeout=timeout, stdout_path=stdout_path, max_output=max_output,
-                        memory_bytes=memory_bytes, file_bytes=file_bytes, should_stop=self._should_stop)
+                        memory_bytes=memory_bytes, file_bytes=file_bytes, should_stop=self._should_stop, env=env)
 
     def stream_tool(self, argv: list[str], on_data, *, timeout: float, memory_bytes: int | None = DEFAULT_TOOL_MEMORY) -> dict:
         return stream_tool(argv, on_data, timeout=timeout, memory_bytes=memory_bytes, should_stop=self._should_stop)
@@ -188,11 +189,12 @@ def _kill_group(proc):
 
 
 def run_tool(argv: list[str], *, timeout: float, stdout_path: Path | None = None, max_output: int = 500_000,
-             memory_bytes: int | None = DEFAULT_TOOL_MEMORY, file_bytes: int | None = None, should_stop=None) -> dict:
+             memory_bytes: int | None = DEFAULT_TOOL_MEMORY, file_bytes: int | None = None, should_stop=None, env: dict | None = None) -> dict:
     """Runs an external tool without a shell, in its own process group, under a memory limit and a timeout.
 
     stdout goes to `stdout_path` when given (large outputs such as bodyfiles), otherwise it is captured up to
-    `max_output` bytes. Cancellation (`should_stop()`) and the timeout kill the whole process group.
+    `max_output` bytes. Cancellation (`should_stop()`) and the timeout kill the whole process group. `env` adds to
+    (or overrides) the environment the tool sees.
     Returns {status: COMPLETED|FAILED|TIMEOUT|CANCELLED|TOOL_UNAVAILABLE, returncode, stdout, stderr}.
     """
     import tempfile
@@ -206,7 +208,7 @@ def run_tool(argv: list[str], *, timeout: float, stdout_path: Path | None = None
     try:
         try:
             proc = subprocess.Popen(argv, stdout=out, stderr=err, stdin=subprocess.DEVNULL, shell=False,
-                                    preexec_fn=_limits(memory_bytes, file_bytes))
+                                    preexec_fn=_limits(memory_bytes, file_bytes), env={**os.environ, **env} if env else None)
         except FileNotFoundError:
             return {'status': 'TOOL_UNAVAILABLE', 'tool': argv[0], 'returncode': None, 'stdout': '', 'stderr': ''}
         started = time.monotonic()

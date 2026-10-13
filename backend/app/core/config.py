@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     report_tsa_url:str=''
     report_trust_roots:str=''
     report_tsa_trust_roots:str=''
+    # Memory images (Volatility 3): where symbol packs are kept (default storage/volatility/symbols), whether Volatility may
+    # download symbols from Microsoft's symbol server (it sends the kernel's PDB name and GUID), the Windows pack an
+    # administrator can download, and the time limit for each plugin
+    memory_symbols_path:str=''
+    memory_symbol_server:bool=False
+    memory_symbol_pack_url:str='https://downloads.volatilityfoundation.org/volatility3/symbols/windows.zip'
+    memory_plugin_timeout:int=7200
     urlhaus_api_key:str=''
     model_config=SettingsConfigDict(env_file='.env',extra='ignore',case_sensitive=False)
 

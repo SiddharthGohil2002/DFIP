@@ -390,9 +390,9 @@ def is_logical(evidence: dict) -> bool:
 
 
 def evidence_kind(evidence: dict) -> str:
-    """'capture' (a network capture), 'logical' (a package of collected files) or 'disk' (a disk image)."""
+    """'capture' (a network capture), 'memory' (a memory image), 'logical' (a package of collected files) or 'disk' (a disk image)."""
     fmt = str(evidence.get('format', '')).upper()
-    return 'capture' if fmt == 'PCAP' else 'logical' if fmt == 'LOGICAL' else 'disk'
+    return 'capture' if fmt == 'PCAP' else 'memory' if fmt == 'MEMORY' else 'logical' if fmt == 'LOGICAL' else 'disk'
 
 
 # --------------------------------------------------------------------------------------------- container members

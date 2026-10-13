@@ -32,6 +32,10 @@ x-env: &env
   REPORT_TSA_URL: http://127.0.0.1:18082/tsa
   REPORT_TRUST_ROOTS: /app/storage/test-pki/ca.crt
   REPORT_TSA_TRUST_ROOTS: /app/storage/test-pki/ca.crt
+  # The Windows symbol pack is downloaded (by the worker) from a stand-in the test script runs in the backend container
+  MEMORY_SYMBOL_PACK_URL: http://backend:18083/volatility3/symbols/windows.zip
+  # A Windows memory image to analyse end to end, when one is placed here (with its symbols in storage/test-images/memory/symbols)
+  MEMORY_SAMPLE: /testdata/memory/sample.mem
 services:
   mongodb:
     image: mongo:8

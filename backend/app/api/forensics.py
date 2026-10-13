@@ -35,6 +35,7 @@ def tsk_image(e,create=False):
     if is_logical(e): raise HTTPException(409,'This evidence is a package of collected files, not a disk image: partitions, unallocated space, '
                                               'file system details and carving do not apply')
     if evidence_kind(e)=='capture': raise HTTPException(409,'This evidence is a network capture, not a disk image: see Network for what it holds')
+    if evidence_kind(e)=='memory': raise HTTPException(409,'This evidence is a memory image, not a disk image: see Memory for what it holds')
     try:
         return analysis_image(e,create=create,db=get_db(),actor='DFIP')
     except WorkingCopyUnavailable as exc:
@@ -558,6 +559,9 @@ def search(case_id:str,q:str,limit:int=50,u=Depends(current_user)):
         'phone':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['PHONE_MESSAGE','PHONE_CALL','PHONE_CONTACT','PHONE_APP','PHONE_WIFI','PHONE_DEVICE']},
                   '$or':[{f:rx} for f in ('text','party','party_name','chat_name','name','numbers','emails','app_id','ssid','attachments.name','model')]},
                   [('type',1),('time',1)]),
+        'memory':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['MEMORY_PROCESS','MEMORY_CONNECTION','MEMORY_SERVICE','MEMORY_DLL']},
+                   '$or':[{f:rx} for f in ('name','path','cmdline','foreign_addr','local_addr','owner','display','binary','process')]},
+                   [('type',1),('score',-1)]),
         'shadow':('shadow_files',{'case_id':case_id,'change':{'$in':['DELETED_SINCE','CHANGED_SINCE']},'path':rx},
                   [('evidence_id',1),('volume_id',1),('path',1)]),
         'cloud':('forensic_artifacts',{'case_id':case_id,'type':{'$in':['CLOUD_FILE','CLOUD_ACCOUNT']},

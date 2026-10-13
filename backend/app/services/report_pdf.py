@@ -119,6 +119,7 @@ SECTIONS = [  # (id, title, group): every section a report can have, in the defa
     ('unix', 'Linux and macOS', 'Computers'),
     ('network', 'Network captures', 'Communications'),
     ('phones', 'Phones', 'Communications'),
+    ('memory', 'Memory images', 'Computers'),
     ('malware', 'Malware indicators', 'Indicators'),
     ('hash_sets', 'Hash set matches', 'Indicators'),
     ('renamed', 'Renamed and encrypted files', 'Indicators'),
@@ -753,6 +754,43 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
                   for x in art.find(q).sort([('platform', 1), ('ssid', 1)]).limit(MAX_ROWS)],
                  [2.0, 1.4, 1.4, 1.4, 0.8], 'No saved Wi-Fi networks.', total=art.count_documents(q), heading=H3)
 
+    def _s_memory():
+        # Memory images (module memory, Volatility 3).
+        mm_title = T('Memory images')
+        story.append(Paragraph(escape(mm_title), H2))
+        story.append(Paragraph('Windows memory images read with Volatility 3 (windows.info, pstree, cmdline, netscan, malfind, svcscan, and dlllist '
+                               'for the processes that stand out). A process stands out for its name, folder or parent, for code no file '
+                               'backs (malfind), encoded PowerShell, or connections a program rarely makes; these are leads to examine, not '
+                               'findings. Times are UTC as Windows keeps them.', NOTE))
+        n = mm_title.split('.')[0]
+        q = {'case_id': cid, 'type': 'MEMORY_INFO'}
+        _section(story, f'{n}.1 Memory images', ['Evidence', 'Windows', 'Build', 'Captured', 'Processes', 'Stand out', 'Connections', 'Injected'],
+                 [[x.get('evidence_id'), f'{x.get("windows") or ""} {x.get("architecture") or ""}'.strip(), x.get('build'), x.get('system_time'),
+                   x.get('processes'), x.get('processes_notable'), x.get('connections'), x.get('injections')]
+                  for x in art.find(q).sort('evidence_id', 1)],
+                 [0.9, 1.5, 0.6, 1.4, 0.8, 0.7, 0.9, 0.7], 'No memory image was analysed.', heading=H3)
+        why = lambda x: '; '.join(f.get('label') for f in x.get('flags') or [] if f.get('severity') in ('high', 'medium'))
+        q = {'case_id': cid, 'type': 'MEMORY_PROCESS', 'notable': True}
+        _section(story, f'{n}.2 Processes that stand out', ['PID', 'Process', 'Started by', 'Started', 'Why', 'Command line'],
+                 [[x.get('pid'), x.get('name'), x.get('parent_name'), x.get('created'), why(x), x.get('decoded_command') or x.get('cmdline') or x.get('path')]
+                  for x in art.find(q).sort([('score', -1), ('pid', 1)]).limit(MAX_ROWS)],
+                 [0.5, 1.0, 1.0, 1.2, 2.0, 1.8], 'No process stands out.', total=art.count_documents(q), heading=H3)
+        q = {'case_id': cid, 'type': 'MEMORY_INJECTION'}
+        _section(story, f'{n}.3 Code injected into processes (malfind)', ['Process', 'Region', 'Protection', 'Program header', 'First bytes'],
+                 [[f'{x.get("process")} ({x.get("pid")})', f'{x.get("start")}-{x.get("end")}', x.get('protection'), 'yes' if x.get('mz') else 'no',
+                   ' '.join((x.get('hexdump') or '').split()[:16])] for x in art.find(q).sort([('score', -1), ('pid', 1)]).limit(MAX_ROWS)],
+                 [1.2, 1.9, 1.3, 0.7, 2.4], 'No injected code was found.', mono_cols=(1, 4), total=art.count_documents(q), heading=H3)
+        q = {'case_id': cid, 'type': 'MEMORY_CONNECTION', 'external': True}
+        _section(story, f'{n}.4 Connections to internet addresses', ['Process', 'Local', 'Remote', 'State', 'Created'],
+                 [[f'{x.get("owner")} ({x.get("pid")})', f'{x.get("local_addr")}:{x.get("local_port")}', f'{x.get("foreign_addr")}:{x.get("foreign_port")}',
+                   x.get('state'), x.get('created')] for x in art.find(q).sort([('score', -1), ('created', 1)]).limit(MAX_ROWS)],
+                 [1.5, 1.7, 1.7, 1.0, 1.6], 'No connection to an internet address.', total=art.count_documents(q), heading=H3)
+        q = {'case_id': cid, 'type': 'MEMORY_SERVICE', 'notable': True}
+        _section(story, f'{n}.5 Services that stand out', ['Service', 'Program', 'State', 'Why'],
+                 [[x.get('name'), x.get('binary_registry') or x.get('binary'), x.get('state'), why(x)]
+                  for x in art.find(q).sort('name', 1).limit(MAX_ROWS)],
+                 [1.3, 3.3, 0.9, 2.0], 'No service stands out.', total=art.count_documents(q), heading=H3)
+
     def _s_malware():
         # Malware indicators (modules yara, clamav, executables, reputation).
         mw_title = T('Malware indicators')
@@ -842,7 +880,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
         item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
                      'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file', 'ENTITY': 'Found data',
                      'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity', 'USN': 'USN journal record', 'SHADOW_FILE': 'Shadow copy file', 'UNIX': 'Linux or macOS record',
-                     'NETWORK': 'Network capture record', 'PHONE': 'Phone record',
+                     'NETWORK': 'Network capture record', 'PHONE': 'Phone record', 'MEMORY': 'Memory image record',
                      'EMAIL': 'Email', 'CHAT_CLOUD': 'Chat or cloud storage record', 'PROGRAM': 'Program'}
         _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
                  [[(t.get('label') or '').replace('_', ' ').capitalize(),
@@ -883,7 +921,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
                   Paragraph('The SHA-256 of this PDF is recorded by DFIP when it is generated and returned with every download '
                             '(X-DFIP-Report-SHA256 header), so any later modification of the file can be detected.', NOTE)])
 
-    sections = {'evidence': _s_evidence, 'custody': _s_custody, 'physical': _s_physical, 'analysis': _s_analysis, 'computer': _s_computer, 'deleted': _s_deleted, 'recovered': _s_recovered, 'usb': _s_usb, 'browser_history': _s_browser_history, 'browser_downloads': _s_browser_downloads, 'browser_depth': _s_browser_depth, 'media': _s_media, 'email': _s_email, 'chat_cloud': _s_chat_cloud, 'windows_activity': _s_windows_activity, 'execution': _s_execution, 'shellbags': _s_shellbags, 'searches': _s_searches, 'persistence': _s_persistence, 'installed': _s_installed, 'remote': _s_remote, 'user_activity': _s_user_activity, 'ntfs': _s_ntfs, 'shadow_copies': _s_shadow_copies, 'event_logs': _s_event_logs, 'unix': _s_unix, 'network': _s_network, 'phones': _s_phones, 'malware': _s_malware, 'hash_sets': _s_hash_sets, 'renamed': _s_renamed, 'found': _s_found, 'findings': _s_findings, 'tags': _s_tags, 'imports': _s_imports, 'timeline': _s_timeline, 'audit': _s_audit}
+    sections = {'evidence': _s_evidence, 'custody': _s_custody, 'physical': _s_physical, 'analysis': _s_analysis, 'computer': _s_computer, 'deleted': _s_deleted, 'recovered': _s_recovered, 'usb': _s_usb, 'browser_history': _s_browser_history, 'browser_downloads': _s_browser_downloads, 'browser_depth': _s_browser_depth, 'media': _s_media, 'email': _s_email, 'chat_cloud': _s_chat_cloud, 'windows_activity': _s_windows_activity, 'execution': _s_execution, 'shellbags': _s_shellbags, 'searches': _s_searches, 'persistence': _s_persistence, 'installed': _s_installed, 'remote': _s_remote, 'user_activity': _s_user_activity, 'ntfs': _s_ntfs, 'shadow_copies': _s_shadow_copies, 'event_logs': _s_event_logs, 'unix': _s_unix, 'network': _s_network, 'phones': _s_phones, 'memory': _s_memory, 'malware': _s_malware, 'hash_sets': _s_hash_sets, 'renamed': _s_renamed, 'found': _s_found, 'findings': _s_findings, 'tags': _s_tags, 'imports': _s_imports, 'timeline': _s_timeline, 'audit': _s_audit}
     for sid in tpl.get('sections') or [x[0] for x in SECTIONS]:
         sections[sid]()
 

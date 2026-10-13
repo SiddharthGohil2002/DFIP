@@ -30,6 +30,7 @@ import { NtfsPage } from '../pages/Ntfs';
 import { ShadowCopiesPage } from '../pages/ShadowCopies';
 import { UnixPage } from '../pages/Unix';
 import { NetworkPage } from '../pages/Network';
+import { MemoryPage } from '../pages/Memory';
 import { PhonePage } from '../pages/Phone';
 import { PhysicalPage } from '../pages/Physical';
 import { LinkGraphPage } from '../pages/LinkGraph';
@@ -148,6 +149,7 @@ function Workspace() {
         <Route path="shadow-copies" element={c(<ShadowCopiesPage />)} />
         <Route path="unix" element={c(<UnixPage />)} />
         <Route path="network" element={c(<NetworkPage />)} />
+        <Route path="memory" element={c(<MemoryPage />)} />
         <Route path="phones" element={c(<PhonePage />)} />
         <Route path="physical" element={c(<PhysicalPage />)} />
         <Route path="graph" element={c(<LinkGraphPage />)} />

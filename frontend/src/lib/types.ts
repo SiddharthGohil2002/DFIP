@@ -225,6 +225,12 @@ export interface CaseCounts {
   phone_apps?: number;
   phone_apps_notable?: number;
   phone_wifi?: number;
+  memory_images?: number;
+  memory_processes?: number;
+  memory_processes_notable?: number;
+  memory_connections?: number;
+  memory_injections?: number;
+  memory_services?: number;
   physical_items?: number;
   physical_checked_out?: number;
   findings_in_review?: number;

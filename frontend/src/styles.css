@@ -497,3 +497,6 @@ button { font: inherit; }
 .attach-strip figure { margin: 0; width: 180px; }
 .attach-strip img { width: 180px; height: 120px; object-fit: contain; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-3); cursor: zoom-in; }
 .attach-strip figcaption { display: flex; align-items: flex-start; gap: 4px; }
+
+/* Memory images */
+.row-flagged > td:first-child { box-shadow: inset 3px 0 0 var(--danger); }

@@ -1,6 +1,7 @@
 """Indicators of compromise of a case, for sharing: files that malware signatures, known-bad hash sets or VirusTotal flag,
-programs that stand out, and where files were uploaded to (from network captures). Exported as a STIX 2.1 bundle (built
-and checked with stix2) or a MISP event. Each indicator says why it was included and which records it rests on."""
+programs that stand out, where files were uploaded to (from network captures), and the internet addresses that processes
+standing out in memory images connected to. Exported as a STIX 2.1 bundle (built and checked with stix2) or a MISP event.
+Each indicator says why it was included and which records it rests on."""
 from __future__ import annotations
 import ipaddress
 import uuid
@@ -93,6 +94,11 @@ def collect(case_id: str) -> list[dict]:
             C.add('url', d['url'], reason, ANOMALOUS, ref(d), d.get('time'))
         for h in {host, d.get('server')} - {None, ''}:
             C.add(_host_kind(h), h, reason, ANOMALOUS, ref(d), d.get('time'))
+    for d in art.find({'case_id': case_id, 'type': 'MEMORY_CONNECTION', 'external': True,
+                       'flags.code': {'$in': ['PROCESS_STANDS_OUT', 'UNUSUAL_PROGRAM']}}).limit(MAX_PER_SOURCE):
+        why = '; '.join(f['label'] for f in d.get('flags') or [])
+        C.add(_host_kind(d['foreign_addr']), d['foreign_addr'], f'{d.get("owner")} (PID {d.get("pid")}) connected to it '
+              f'(memory image {d.get("evidence_id")}): {why}', ANOMALOUS, ref(d), d.get('created'))
     out = sorted(C.items.values(), key=lambda x: (x['verdict'] != MALICIOUS, x['kind'], x['value']))
     for x in out:  # stored times are UTC (naive ones too)
         t = x['first_seen']

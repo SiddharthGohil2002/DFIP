@@ -57,7 +57,7 @@ export function NetworkPage() {
 }
 
 /** Looks a host name or address up with the configured threat-intelligence providers (an explicit action, audited). */
-function LookUp({ caseId, host }: { caseId: string; host: string }) {
+export function LookUp({ caseId, host }: { caseId: string; host: string }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any>(null);

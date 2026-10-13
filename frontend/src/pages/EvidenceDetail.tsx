@@ -18,6 +18,12 @@ import { ExportButton } from '../ui/ExportButton';
 
 const RUNNING = new Set(['QUEUED', 'RUNNING']);
 
+const KIND_LABEL: Record<string, string> = { MEMORY: 'Memory image', PCAP: 'Network capture', LOGICAL: 'Collection of files' };
+const ANALYSIS_TITLE: Record<string, [string, string]> = {
+  MEMORY: ['Memory image analysis', 'Volatility 3: Windows version, processes, network connections, injected code, services and DLLs.'],
+  PCAP: ['Network capture analysis', 'tshark: conversations, DNS, HTTP and the files it carried, TLS server names; the files go through the file checks.'],
+};
+
 export function EvidenceDetailPage() {
   const { id = '' } = useParams();
   const { can } = useAuth();
@@ -108,7 +114,7 @@ export function EvidenceDetailPage() {
       <PageHeader
         eyebrow={e.case_id}
         title={`${e.evidence_id} · ${e.filename}`}
-        subtitle={`${e.format} image · ${formatBytes(e.size)} · acquired ${time(e.created_at)}`}
+        subtitle={`${KIND_LABEL[e.format] || `${e.format} image`} · ${formatBytes(e.size)} · acquired ${time(e.created_at)}`}
         actions={
           <>
             {!e.demo && can('EVIDENCE_VERIFY') && <Button icon={<ShieldCheck size={15} />} busy={busy === 'verify'} onClick={verify}>Verify integrity</Button>}
@@ -183,7 +189,8 @@ export function EvidenceDetailPage() {
       {!e.demo && e.analysis_status && <VolumesCard evidence={e} onChanged={reloadOverview} />}
       {IS_DESKTOP && <LocalVerifyCard expected={e.sha256} />}
 
-      <Card title="Disk image analysis" subtitle="Sleuth Kit partition and filesystem examination, MACB timeline, browser and USB artifact extraction, YARA scan.">
+      <Card title={ANALYSIS_TITLE[e.format]?.[0] || 'Disk image analysis'}
+        subtitle={ANALYSIS_TITLE[e.format]?.[1] || 'Sleuth Kit partition and filesystem examination, MACB timeline, browser and USB artifact extraction, YARA scan.'}>
         {!j && !e.analysis_status && <Empty title="Not analyzed yet" text={e.demo ? undefined : 'Run the full analysis to index files, build the timeline and extract browser and USB artifacts.'} />}
         {j && (
           <div className="stack" style={{ gap: 14 }}>
@@ -228,6 +235,9 @@ export function EvidenceDetailPage() {
 function AnalysisDetails({ summary }: { summary: any }) {
   const partitions: any[] = summary.partitions || [];
   const filesystems: any[] = summary.filesystems || [];
+  if ((summary.not_applicable || []).includes('fs_index') && (summary.plan || []).includes('memory')) {
+    return <p className="small muted">A memory image: it has no partitions or file systems. Its processes, network connections, injected code, services and DLLs are on the Memory page.</p>;
+  }
   if ((summary.not_applicable || []).includes('fs_index')) {
     return <p className="small muted">A network capture: it has no partitions or file systems. Its conversations, DNS lookups, HTTP requests and the files they carried are on the Network page.</p>;
   }

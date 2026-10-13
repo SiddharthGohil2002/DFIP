@@ -21,7 +21,7 @@ titles = ['Evidence register', 'Chain of custody', 'Physical evidence', 'Analysi
           'Chat and cloud storage', 'Windows activity', 'Execution evidence', 'Folders browsed',
           'Searches and typed paths', 'Persistence', 'Installed programs', 'Remote desktop and network drives',
           'Jump lists, Timeline, thumbnails, SRUM and search index', 'NTFS: timestomping, alternate data streams and USN journal', 'Volume Shadow Copies',
-          'Event logs', 'Linux and macOS', 'Network captures', 'Phones', 'Malware indicators',
+          'Event logs', 'Linux and macOS', 'Network captures', 'Phones', 'Memory images', 'Malware indicators',
           'Hash set matches', 'Renamed and encrypted files', 'Found data',
           'Investigator findings', 'Tagged evidence', 'Imported timelines', 'Timeline of notable events', 'Audit trail integrity']
 found = [(int(m.group(1)), m.group(2)) for m in re.finditer(r'^\s*(\d+)\. (' + '|'.join(map(re.escape, titles)) + r')', a, re.M)]

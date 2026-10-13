@@ -74,7 +74,7 @@ def test_order_respects_requirements():
 
 def test_profiles_and_requests():
     assert resolve_request() == PROFILES['standard']
-    assert resolve_request('quick') == ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'phone', 'network']
+    assert resolve_request('quick') == ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'phone', 'network', 'memory']
     # Standard adds file processing (hashes, types, hash sets, YARA) on every file; full also indexes file contents.
     assert PROFILES['standard'] == [m for m in ORDER if m not in ('containers', 'ocr', 'content', 'unallocated', 'found_data')]
     assert PROFILES['full'] == ORDER

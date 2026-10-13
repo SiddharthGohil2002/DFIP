@@ -117,20 +117,21 @@ export function IndicatorsPage() {
 
       <ProgramsCard />
 
-      <Card title="Malware signature matches (YARA and ClamAV)" subtitle="Programs, scripts, documents and archives anywhere on the disk, chosen by their real type, are scanned with DFIP's YARA rules, the rule sets and ClamAV databases added in Administration, during analysis." flush
+      <Card title="Malware signature matches (YARA, ClamAV, injected code)" subtitle="Programs, scripts, documents and archives anywhere on the disk, chosen by their real type, are scanned with DFIP's YARA rules, the rule sets and ClamAV databases added in Administration, during analysis. In memory images, code no file backs (malfind) is listed too." flush
         actions={!!yara.data?.data.length && <ExportButton path={paths.yara} what="list of matches" />}>
         {yara.loading && !yara.data ? <Loading /> : !yara.data?.data.length ? (
           <Empty title="No signature matches" text="No scanned file matched a YARA rule or a ClamAV signature." />
         ) : (
           <table className="table">
-            <thead><tr><th>Engine</th><th>Rule or signature</th><th>File in image</th><th>Inode</th><th>Evidence</th></tr></thead>
+            <thead><tr><th>Engine</th><th>Rule or signature</th><th>Where</th><th>Inode</th><th>Evidence</th></tr></thead>
             <tbody>
               {yara.data.data.map((m) => (
                 <tr key={m._id}>
                   <td className="small">{m.engine || (m.source === 'CLAMAV' ? 'ClamAV' : 'YARA')}</td>
                   <td><Badge tone="danger">{m.rule}</Badge>{m.ruleset && m.ruleset !== 'DFIP' && <div className="tiny muted">{m.ruleset}</div>}</td>
-                  <td className="cell-path mono small">{m.original_path}{m.deleted && <div><Badge tone="danger">DELETED</Badge></div>}</td>
-                  <td className="mono small">{m.inode}</td>
+                  <td className="cell-path mono small">{m.pid != null ? <>{m.process} (PID {m.pid}) at {m.region}{m.mz && <div><Badge tone="danger">program header (MZ)</Badge></div>}
+                    <div className="tiny muted">{m.original_path}</div></> : m.original_path}{m.deleted && <div><Badge tone="danger">DELETED</Badge></div>}</td>
+                  <td className="mono small">{m.inode ?? '—'}</td>
                   <td className="mono small">{m.evidence_id}</td>
                 </tr>
               ))}

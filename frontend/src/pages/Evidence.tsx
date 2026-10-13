@@ -9,8 +9,8 @@ import type { Evidence } from '../lib/types';
 import { Badge, Banner, Button, Card, Empty, Hash, PageHeader, ProgressBar, StatusBadge, useToast } from '../ui';
 import { DeleteEvidenceModal } from './DeleteEvidence';
 
-const SUPPORTED = ['E01', 'EX01', 'RAW', 'DD', 'IMG', 'AFF', 'AFF4', 'VHD', 'VHDX', 'VMDK', 'QCOW2', 'QCOW', 'PCAP', 'PCAPNG', 'CAP'];
-/** A disk image file name: a known extension, an EnCase segment (.E02, .EAA, .Ex02) or a numbered part (.001). */
+const SUPPORTED = ['E01', 'EX01', 'RAW', 'DD', 'IMG', 'AFF', 'AFF4', 'VHD', 'VHDX', 'VMDK', 'QCOW2', 'QCOW', 'PCAP', 'PCAPNG', 'CAP', 'MEM', 'VMEM', 'LIME', 'DMP'];
+/** An evidence file name: a known extension, an EnCase segment (.E02, .EAA, .Ex02) or a numbered part (.001). */
 const supportedName = (name: string) => {
   const ext = name.split('.').pop()?.toUpperCase() || '';
   return SUPPORTED.includes(ext) || /^\d{3,4}$/.test(ext) || /^E(X?\d\d|[A-Z]{2})$/.test(ext) || /\.(zip|tar|tgz|tar\.gz)$/i.test(name);
@@ -112,6 +112,7 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
   const [result, setResult] = useState<Evidence | null>(null);
   const [error, setError] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
+  const [memory, setMemory] = useState(false);
 
   const file = files.length === 1 ? files[0] : null;
   const ext = file?.name.split('.').pop()?.toUpperCase() || '';
@@ -123,6 +124,7 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
 
   function choose(list: FileList | null) {
     setFiles(list ? Array.from(list).sort((a, b) => a.name.localeCompare(b.name)) : []);
+    setMemory(false);
     setResult(null);
     setError('');
   }
@@ -138,7 +140,7 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
     setError('');
     setProgress(0);
     try {
-      const ev = await uploadEvidence(caseId, files, setProgress);
+      const ev = await uploadEvidence(caseId, files, setProgress, memory ? 'memory' : undefined);
       setResult(ev);
       setFiles([]);
       toast(`${ev.evidence_id} registered and sealed read-only`, 'ok');
@@ -166,7 +168,7 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
   }
 
   return (
-    <Card title="Add a disk image" subtitle="E01 (with all its segments), raw/dd (also split into numbered parts .001, .002 ...), VHD, VHDX, VMDK, QCOW2 (with their parent disks), AFF, collections of files as ZIP or TAR (KAPE, Velociraptor, CyLR, UAC, and Android and iOS full file system extractions), and network captures (pcap, pcapng). Choose every file of one image together; large images upload directly to the server's evidence store.">
+    <Card title="Add evidence" subtitle="Disk images: E01 (with all its segments), raw/dd (also split into numbered parts .001, .002 ...), VHD, VHDX, VMDK, QCOW2 (with their parent disks), AFF. Collections of files as ZIP or TAR (KAPE, Velociraptor, CyLR, UAC, and Android and iOS full file system extractions), network captures (pcap, pcapng) and memory images (.mem, .vmem, .lime, Windows crash dumps). Choose every file of one image together; large images upload directly to the server's evidence store.">
       <div className="stack" style={{ gap: 12 }}>
         <div
           className={`dropzone ${over ? 'over' : ''}`}
@@ -179,11 +181,17 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
           onKeyDown={(e) => e.key === 'Enter' && input.current?.click()}
         >
           <UploadCloud size={28} color="var(--accent)" />
-          <div className="strong" style={{ marginTop: 8 }}>{file ? file.name : files.length ? `${files.length} files of one image` : 'Drop a disk image here or click to choose'}</div>
+          <div className="strong" style={{ marginTop: 8 }}>{file ? file.name : files.length ? `${files.length} files of one image` : 'Drop evidence here or click to choose'}</div>
           <div className="small muted">{file ? `${formatBytes(file.size)} · ${ext}` : files.length ? `${formatBytes(total)} · ${files.map((f) => f.name).slice(0, 6).join(', ')}${files.length > 6 ? ' …' : ''}`
             : 'The original files on your computer are never modified.'}</div>
-          <input ref={input} type="file" multiple hidden aria-label="Disk image files" onChange={(e) => choose(e.target.files)} />
+          <input ref={input} type="file" multiple hidden aria-label="Evidence files" onChange={(e) => choose(e.target.files)} />
         </div>
+        {file && ['RAW', 'DD', 'IMG', 'MEM', 'VMEM'].includes(ext) && (
+          <label className="check" title="A raw capture of a computer's memory has no header that says so: tick this when the file is one">
+            <input type="checkbox" checked={memory || ['MEM', 'VMEM'].includes(ext)} disabled={['MEM', 'VMEM'].includes(ext)} onChange={(e) => setMemory(e.target.checked)} />
+            This is a memory image (a RAM capture), not a disk image
+          </label>
+        )}
         {!supported && <Banner tone="warn">{unsupported.map((f) => f.name).join(', ')}: not a supported forensic image format.</Banner>}
         {lookalike && (
           <Banner tone="warn">

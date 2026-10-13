@@ -175,6 +175,18 @@ export function SearchPage() {
               </tr>
             ))}
           </Group>
+          <Group title="Memory images" total={res.totals.memory ?? 0} shown={(res.results.memory || []).length} link={{ to: '/app/memory', label: 'Open memory' }}>
+            {(res.results.memory || []).map((x) => (
+              <tr key={x._id}>
+                <td className="cell-path small mono">{x.type === 'MEMORY_PROCESS' ? (x.cmdline || x.path || x.name)
+                  : x.type === 'MEMORY_CONNECTION' ? `${x.local_addr}:${x.local_port} → ${x.foreign_addr}:${x.foreign_port}`
+                  : x.type === 'MEMORY_SERVICE' ? `${x.name}: ${x.binary_registry || x.binary || ''}` : (x.path || x.name)}</td>
+                <td className="small">{({ MEMORY_PROCESS: 'process', MEMORY_CONNECTION: `${x.proto} connection`, MEMORY_SERVICE: 'service',
+                  MEMORY_DLL: 'DLL' } as Record<string, string>)[x.type]}</td>
+                <td className="small" colSpan={2}>{x.type === 'MEMORY_PROCESS' ? `PID ${x.pid}` : x.owner || x.process || ''} <span className="muted">{x.evidence_id}</span></td>
+              </tr>
+            ))}
+          </Group>
           <Group title="Network captures" total={res.totals.network ?? 0} shown={(res.results.network || []).length} link={{ to: '/app/network', label: 'Open network' }}>
             {(res.results.network || []).map((x) => (
               <tr key={x._id}>

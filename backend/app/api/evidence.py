@@ -139,22 +139,29 @@ async def upload(
     case_id: str = Form(...),
     file: list[UploadFile] = File(...),
     sha512: Optional[str] = Form(None),
+    kind: Optional[str] = Form(None),
     u=Depends(require_write('EVIDENCE_UPLOAD'))
 ):
     """Registers one disk image: a single file, or several files that together are one image (EnCase segments, the
     numbered parts of a split raw image, or a virtual disk with its parents). Each file and the whole are hashed
-    here; the set is checked for missing parts before anything is registered."""
-    from ..forensic.disk_formats import LABELS, SetError, classify, extension_ok
+    here; the set is checked for missing parts before anything is registered. A network capture, a package of collected
+    files or a memory image is one file; `kind=memory` says that a raw file is a memory capture whatever its name."""
+    from ..forensic.disk_formats import LABELS, MEMORY, SetError, classify, extension_ok, memory_container
     uploads = file
     if not uploads:
         raise HTTPException(400, 'No file was uploaded')
     if len(uploads) > MAX_SET_FILES:
         raise HTTPException(400, f'At most {MAX_SET_FILES} files can be uploaded as one image')
+    if kind not in (None, '', 'disk', 'memory'):
+        raise HTTPException(400, 'kind must be disk or memory')
+    if kind == 'memory' and len(uploads) > 1:
+        raise HTTPException(400, 'A memory image is uploaded on its own, as one evidence item')
     for f in uploads:
         if not extension_ok(f.filename or ''):
             ext = Path(f.filename or '').suffix.lstrip('.').upper() or '(none)'
-            raise HTTPException(400, f'Unsupported forensic image format: {ext}. Supported: E01 (and its segments), RAW/DD (and the '
-                                     'numbered parts of a split image), VHD, VHDX, VMDK, QCOW2, AFF/AFF4.')
+            raise HTTPException(400, f'Unsupported evidence format: {ext}. Supported: disk images (E01 and its segments, RAW/DD and the '
+                                     'numbered parts of a split image, VHD, VHDX, VMDK, QCOW2, AFF/AFF4), packages of collected files '
+                                     '(ZIP, TAR), network captures (PCAP, PCAPNG) and memory images (MEM, VMEM, LIME, DMP).')
     case = get_case(case_id, u)
     if not case:
         raise HTTPException(404, 'Case not found or access denied')
@@ -188,6 +195,11 @@ async def upload(
         _discard(targets, folder)
         raise
 
+    if kind == 'memory' and image_set['format'] not in ('RAW', MEMORY):
+        _discard(targets, folder)
+        raise HTTPException(400, f'{targets[0].name} is {LABELS.get(image_set["format"], image_set["format"])}, not a memory image')
+    if kind == 'memory':
+        image_set['format'] = MEMORY
     order = image_set['order']
     hashes = {p: _hash_file(p) for p in order}
     digest_sha256, digest_sha512 = hashes[order[0]] if len(order) == 1 else _hash_files(order)
@@ -241,6 +253,8 @@ async def upload(
     if fmt == 'LOGICAL':
         from ..forensic.packages import archive_kind
         doc['package'] = {'archive': archive_kind(primary)}
+    if fmt == MEMORY:
+        doc['memory'] = {'container': memory_container(primary)}
     if len(order) > 1:
         doc['image_set'] = {'kind': image_set['kind'], 'count': len(order), 'label': LABELS.get(image_set['format'], image_set['format'])}
         doc['image_files'] = [{'name': p.name, 'path': str(p.resolve()), 'size': p.stat().st_size, 'sha256': hashes[p][0],
