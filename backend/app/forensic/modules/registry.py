@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from .. import user_registry as ur
 from ..registry import control_sets, open_hive
-from ..source import BlobRef, TskImageSource
+from ..source import BlobRef
 from ..system_info import parse_software
 from ..timeline import _parse_iso, _with_nk
 from .base import Module
@@ -59,7 +59,7 @@ class RegistryModule(Module):
              'container': {'$exists': False}, 'path': {'$regex': _CANDIDATES, '$options': 'i'}},
             {'path': 1, 'inode': 1, 'volume_id': 1, 'size': 1}))
         by_path = {e['path'].lower(): e for e in entries}
-        src = TskImageSource(ctx.image)
+        src = ctx.source()
         hives = []
         for e in entries:
             for kind, rx in HIVES:

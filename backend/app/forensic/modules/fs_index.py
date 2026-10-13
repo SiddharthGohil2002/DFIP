@@ -4,12 +4,17 @@ deleted entries, feeding the file index (fs_entries) and the MACB file timeline.
 File systems that store local time (FAT, exFAT) are listed with the computer's time zone (`fls -z`, from the
 tz_probe module), so every stored time is UTC. FAT keeps only the date of the last access, so access times on
 FAT are flagged as date-only.
+
+A logical package (collected files) has no partitions: each file system root found in it is a volume (`pkg`), listed
+from the unpacked folders with the times the archive kept (see packages.py); a ZIP's plain local times are converted
+with the computer's time zone and flagged.
 """
 from __future__ import annotations
 import re
 import shutil
 
 from ..filesystem import iter_bodyfile
+from .. import apfs
 from ..source import volume_id
 from ..timeline import macb_events
 from ..tools import TOOLS, filesystem_stats, parse_mmls
@@ -45,6 +50,8 @@ class FsIndexModule(Module):
     def run(self, ctx):
         self.zone = ctx.fact('tz_probe', 'zone') or 'UTC'
         self.zone_source = ctx.fact('tz_probe', 'source') or 'default'
+        if ctx.logical:
+            return self._index_package(ctx)
         mmls = parse_mmls(ctx.image)
         offsets = select_offsets(mmls)
         ctx.set_fact('partitions', mmls.get('partitions', []))
@@ -52,14 +59,30 @@ class FsIndexModule(Module):
         filesystems = []
         for i, offset in enumerate(offsets):
             ctx.progress(i / len(offsets), str(offset))
-            filesystems.append(self._index(ctx, offset, i, len(offsets)))
+            if apfs.is_container(ctx.image, offset):  # an APFS container: each of its volumes
+                for v in apfs.volumes(ctx.image, offset):
+                    filesystems.append(self._index(ctx, offset, i, len(offsets), apfs_volume=v))
+            else:
+                filesystems.append(self._index(ctx, offset, i, len(offsets)))
         ctx.set_fact('filesystems', filesystems)
         for key in ('files', 'deleted_files', 'timeline_events', 'encrypted_volumes'):
             ctx.count(key, 0)
 
-    def _index(self, ctx, offset: int, i: int, n: int) -> dict:
-        encrypted = volume_encryption(ctx.image, offset)
-        stats = filesystem_stats(ctx.image, offset)
+    def _index(self, ctx, offset: int, i: int, n: int, apfs_volume: dict | None = None) -> dict:
+        if apfs_volume:
+            vid = apfs.volume_id(offset, apfs_volume['apsb'])
+            pool = apfs.args(vid)
+            encrypted = 'APFS' if apfs_volume['encrypted'] else None
+            r = ctx.run_tool(['fsstat', *pool, str(ctx.image)], timeout=600)
+            stats = {'status': 'COMPLETED' if r.get('returncode') == 0 else 'FAILED', 'stdout': r.get('stdout') or '', 'stderr': r.get('stderr') or ''}
+            if encrypted:
+                ctx.count('encrypted_volumes')
+                ctx.warn(f'APFS volume {apfs_volume.get("name") or vid} is encrypted (FileVault) and was not opened.')
+                stats = {'status': 'FAILED', 'stderr': 'encrypted APFS volume'}
+        else:
+            vid, pool = volume_id(offset), (['-o', str(offset)] if offset else [])
+            encrypted = volume_encryption(ctx.image, offset)
+            stats = filesystem_stats(ctx.image, offset)
         if encrypted:
             ctx.count('encrypted_volumes')
             readable = stats.get('status') == 'COMPLETED'
@@ -67,9 +90,8 @@ class FsIndexModule(Module):
                      + ('only its unencrypted part (for example a BitLocker To Go discovery volume) could be read; ' if readable else '')
                      + 'its contents need the recovery key or password to be analysed (Unlock, under Volumes on the evidence page).')
         fs_type = filesystem_type(stats.get('stdout', ''))
-        vid = volume_id(offset)
         local_time = any((fs_type or '').upper().startswith(t) for t in LOCAL_TIME_FS)
-        info = {'partition_offset': offset, 'volume_id': vid, 'filesystem_type': fs_type, 'fsstat_status': stats.get('status'),
+        info = {'partition_offset': offset, 'volume_id': vid, 'apfs': apfs_volume, 'filesystem_type': fs_type, 'fsstat_status': stats.get('status'),
                 'local_time': local_time, 'time_zone': self.zone if local_time else 'UTC', 'encryption': encrypted}
         if stats.get('status') != 'COMPLETED':
             info['error'] = (stats.get('stderr') or '').strip()[:500]
@@ -81,7 +103,7 @@ class FsIndexModule(Module):
             ctx.warn(f"{fs_type} at sector offset {offset} stores local time, but the computer's time zone is unknown: "
                      'its times are shown as if they were UTC. Set the time zone on the evidence if you know it.')
         # -z only affects file systems that store local time; NTFS and ext times are UTC already.
-        argv = [fls, '-z', self.zone, '-r', '-m', '/'] + (['-o', str(offset)] if offset else []) + [str(ctx.image)]
+        argv = [fls, '-z', self.zone, '-r', '-m', '/'] + pool + [str(ctx.image)]
         r = ctx.run_tool(argv, timeout=FLS_TIMEOUT, stdout_path=bodyfile)
         info.update(bodyfile=str(bodyfile), fls_status=r.get('status'))
         if r.get('status') != 'COMPLETED':
@@ -101,6 +123,8 @@ class FsIndexModule(Module):
             doc = dict(entry, case_id=ctx.case_id, evidence_id=ctx.eid, partition_offset=offset, volume_id=vid,
                        filesystem_type=fs_type, time_zone=info['time_zone'])
             new_events = macb_events(entry, ctx.case_id, ctx.eid, offset)
+            if apfs_volume:
+                new_events = [dict(ev, volume_id=vid) for ev in new_events]
             if local_time:
                 doc['atime_date_only'] = True
                 for ev in new_events:
@@ -123,3 +147,62 @@ class FsIndexModule(Module):
         ctx.count('deleted_files', deleted)
         info.update(files=files, deleted_files=deleted)
         return info
+
+    def _index_package(self, ctx):
+        from datetime import datetime
+        from ..packages import read_manifest
+        from ..timezone import local_to_utc
+        pkg = ctx.evidence.get('package') or {}
+        manifest = read_manifest(pkg['manifest']) if pkg.get('manifest') else {}
+        src = ctx.source()
+        ctx.set_fact('partitions', [])
+        ctx.set_fact('offsets', [])
+        filesystems, local_times = [], 0
+        roots = pkg.get('roots') or [{'volume_id': 'pkg', 'path': '', 'os': None}]
+        for i, root in enumerate(roots):
+            ctx.progress(i / len(roots), root['volume_id'])
+            vid, prefix = root['volume_id'], root['path']
+            kind = {'windows': 'Windows', 'linux': 'Linux', 'macos': 'macOS'}.get(root.get('os'), 'files')
+            entries, events = [], []
+            files = 0
+            for e in src.walk(vid):
+                m = manifest.get(f'{prefix}/{e["path"].lstrip("/")}'.lstrip('/')) or {}
+                times = {k: datetime.fromisoformat(m[k]) for k in ('mtime', 'atime', 'ctime', 'crtime') if m.get(k)}
+                doc = dict(path=e['path'], name=e['path'].rsplit('/', 1)[-1], inode=e['inode'], mode='d/d' if e['is_dir'] else 'r/r',
+                           is_dir=e['is_dir'], is_virtual=False, fn_attr=False, deleted=False, deleted_status=None, size=e['size'],
+                           uid=None, gid=None, mtime=None, atime=None, ctime=None, crtime=None)
+                doc.update(times)
+                if m.get('mtime_local'):  # a plain ZIP time: local time of the computer the archive was made on
+                    doc['mtime'] = local_to_utc(datetime.fromisoformat(m['mtime_local']), self.zone)
+                    doc['time_basis'] = f'ZIP local time read in {self.zone}'
+                    local_times += 1
+                if m.get('sha256'):
+                    doc['package_sha256'] = m['sha256']
+                if not e['is_dir']:
+                    files += 1
+                doc.update(case_id=ctx.case_id, evidence_id=ctx.eid, partition_offset=0, volume_id=vid,
+                           filesystem_type=f'Logical package ({kind})', time_zone='UTC', logical=True)
+                entries.append(doc)
+                for ev in macb_events(doc, ctx.case_id, ctx.eid, 0):
+                    events.append(dict(ev, volume_id=vid, source='PACKAGE'))
+                if len(entries) >= BATCH:
+                    ctx.insert('fs_entries', entries)
+                    entries = []
+                    ctx.checkpoint()
+                if len(events) >= BATCH:
+                    ctx.insert('timeline_events', events)
+                    ctx.count('timeline_events', len(events))
+                    events = []
+            ctx.insert('fs_entries', entries)
+            ctx.insert('timeline_events', events)
+            ctx.count('timeline_events', len(events))
+            ctx.count('files', files)
+            filesystems.append({'partition_offset': 0, 'volume_id': vid, 'filesystem_type': f'Logical package ({kind})', 'fsstat_status': None,
+                                'local_time': False, 'time_zone': 'UTC', 'encryption': None, 'files': files, 'deleted_files': 0,
+                                'package_path': prefix, 'os': root.get('os')})
+        if local_times:
+            ctx.warn(f'{local_times:,} file times in the ZIP are local times without a zone; they were read in {self.zone}'
+                     + (' (the computer\'s time zone is unknown: set it on the evidence if you know it)' if self.zone_source == 'default' else ''))
+        ctx.set_fact('filesystems', filesystems)
+        for key in ('files', 'deleted_files', 'timeline_events', 'encrypted_volumes'):
+            ctx.count(key, 0)

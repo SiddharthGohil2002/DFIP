@@ -60,6 +60,10 @@ def parse_bodyfile_line(line: str) -> dict | None:
     if m:
         status = m.group(1)
         name = name[:m.start()]
+    # A symbolic link is listed as "name -> target".
+    link_target = None
+    if mode.startswith('l') and ' -> ' in name:
+        name, link_target = name.split(' -> ', 1)
     try:
         size_n = int(size)
     except ValueError:
@@ -82,6 +86,7 @@ def parse_bodyfile_line(line: str) -> dict | None:
         'mtime': _ts(mtime),
         'ctime': _ts(ctime),
         'crtime': _ts(crtime),
+        **({'link_target': link_target} if link_target is not None else {}),
     }
 
 

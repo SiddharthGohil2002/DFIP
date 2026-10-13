@@ -7,7 +7,6 @@ import shutil
 from pymongo import UpdateOne
 
 from .. import media as md
-from ..source import TskImageSource
 from .base import Module
 from .fileproc import _inode_order
 from .media import _ext, copy_out
@@ -41,7 +40,7 @@ class OcrModule(Module):
         if len(entries) > MAX_FILES:
             ctx.warn(f'Only the first {MAX_FILES:,} of {len(entries):,} pictures and PDFs were read by OCR')
             entries = entries[:MAX_FILES]
-        src = TskImageSource(ctx.image)
+        src = ctx.source()
         work = ctx.work / 'ocr'
         ops = []
         for n, e in enumerate(entries):

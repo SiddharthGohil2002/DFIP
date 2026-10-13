@@ -378,10 +378,84 @@ def volume_decrypt_task(self, job_id: str, evidence_id: str, created_by: str):
             raise
 
 
+MAX_IMPORTED_EVENTS = 5_000_000
+
+
+@celery_app.task(bind=True, name='dfip.timeline_import', max_retries=0,
+                 soft_time_limit=settings.analysis_time_limit, time_limit=settings.analysis_time_limit + 600)
+def timeline_import_task(self, job_id: str, _subject, created_by: str):
+    """Reads an uploaded Plaso timeline into the case timeline as PLASO_EVENT events (see forensic/plaso_import.py)."""
+    import hashlib
+    from collections import Counter
+    from .forensic.plaso_import import iter_events
+
+    job, _ = _claim(job_id)
+    if not job:
+        return {'job_id': job_id, 'status': 'DUPLICATE_IGNORED'}
+    db = get_db()
+    import_id = job['payload']['import_id']
+    doc = db['timeline_imports'].find_one({'import_id': import_id})
+    try:
+        if not doc:
+            raise ValueError('The import no longer exists')
+        db['timeline_imports'].update_one({'import_id': import_id}, {'$set': {'status': 'RUNNING'}})
+        db['timeline_events'].delete_many({'import_id': import_id})  # a redelivered job starts again
+        beat = _heartbeat(job_id)
+        parsers, errors = Counter(), []
+        batch, imported, untimed, first, last = [], 0, 0, None, None
+        for ev in iter_events(Path(doc['path']), doc['format']):
+            if ev.get('error'):
+                if len(errors) < 20:
+                    errors.append(ev['error'])
+                continue
+            if ev['timestamp'] is None:
+                untimed += 1
+                continue
+            if imported >= MAX_IMPORTED_EVENTS:
+                errors.append(f'Only the first {MAX_IMPORTED_EVENTS:,} events with a time were imported')
+                break
+            parsers[ev['parser'] or 'unknown'] += 1
+            first = ev['timestamp'] if first is None or ev['timestamp'] < first else first
+            last = ev['timestamp'] if last is None or ev['timestamp'] > last else last
+            what = ev['timestamp_desc'] or 'Time'
+            batch.append({'case_id': doc['case_id'], 'evidence_id': doc.get('evidence_id'), 'timestamp': ev['timestamp'], 'type': 'PLASO_EVENT',
+                          'description': f'[{what}] {ev["message"] or ev["source_name"] or ""}'[:2000], 'source': 'PLASO',
+                          'parser': ev['parser'], 'data_type': ev['data_type'], 'timestamp_desc': ev['timestamp_desc'],
+                          'source_name': ev['source_name'], 'path': ev['filename'], 'plaso_inode': ev['inode'], 'macb': ev.get('macb'),
+                          'import_id': import_id, 'import_line': ev['line'],
+                          'nk': hashlib.sha1(f'{import_id}|{ev["line"]}'.encode()).hexdigest()})
+            imported += 1
+            if len(batch) >= 5000:
+                db['timeline_events'].insert_many(batch, ordered=False)
+                batch = []
+                beat()
+                _set_job(job_id, progress=min(95, 5 + imported // 20000), stage=f'{imported:,} events')
+                if _is_cancelled(job_id):
+                    raise InterruptedError('Cancelled')
+        if batch:
+            db['timeline_events'].insert_many(batch, ordered=False)
+        result = {'import_id': import_id, 'events': imported, 'events_without_time': untimed, 'parsers': dict(parsers.most_common()),
+                  'first': first, 'last': last, 'errors': errors}
+        db['timeline_imports'].update_one({'import_id': import_id}, {'$set': dict(result, status='COMPLETED', imported_at=datetime.now(timezone.utc))})
+        _set_job(job_id, status='COMPLETED', progress=100, stage='complete', result=result, finished_at=datetime.now(timezone.utc))
+        _notify(created_by, 'Timeline imported', f'{imported:,} Plaso events from {doc["filename"]} are on the timeline of {doc["case_id"]}.')
+        return {k: (v.isoformat() if hasattr(v, 'isoformat') else v) for k, v in result.items()}
+    except Exception as exc:
+        db['timeline_events'].delete_many({'import_id': import_id})
+        cancelled = isinstance(exc, InterruptedError)
+        db['timeline_imports'].update_one({'import_id': import_id}, {'$set': {'status': 'CANCELLED' if cancelled else 'FAILED', 'error': str(exc)[:1000]}})
+        _set_job(job_id, status='CANCELLED' if cancelled else 'FAILED', stage='cancelled' if cancelled else 'failed', error=str(exc)[:2000],
+                 finished_at=datetime.now(timezone.utc))
+        if not cancelled:
+            _notify(created_by, 'Timeline import failed', str(exc)[:300], 'ERROR')
+            raise
+
+
 TASKS_BY_TYPE = {
     'HASH_VERIFY': hash_verify_task,
     'FORENSIC_ANALYSIS': forensic_analysis_task,
     'HASHSET_IMPORT': hashset_import_task,
     'CLAMAV_UPDATE': clamav_update_task,
     'VOLUME_DECRYPT': volume_decrypt_task,
+    'TIMELINE_IMPORT': timeline_import_task,
 }

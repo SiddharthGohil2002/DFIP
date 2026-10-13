@@ -171,6 +171,17 @@ class TskImageSource(EvidenceSource):
     def volumes(self) -> list[str]:
         if self._offsets is not None:
             return [volume_id(o) for o in self._offsets]
+        from . import apfs
+        out = []
+        for vid in self._partition_volumes():
+            off = offset_of(vid)
+            if apfs.is_container(self.image, off):  # an APFS container: its volumes, read through the Sleuth Kit's tools
+                out += [apfs.volume_id(off, v['apsb']) for v in apfs.volumes(self.image, off) if not v['encrypted']]
+            else:
+                out.append(vid)
+        return out
+
+    def _partition_volumes(self) -> list[str]:
         found = []
         try:
             vs = self._tsk.Volume_Info(self._img)
@@ -220,6 +231,9 @@ class TskImageSource(EvidenceSource):
 
     def find(self, vid: str, path: str) -> str | None:
         """Sleuth Kit's path lookup (case-insensitive on FAT and NTFS); allocated files only."""
+        from . import apfs
+        if apfs.parse(vid):
+            return apfs.find(self.image, vid, path)
         try:
             f = self._filesystem(vid).open(path)
         except OSError:
@@ -227,6 +241,9 @@ class TskImageSource(EvidenceSource):
         return str(f.info.meta.addr) if f.info.meta else None
 
     def open(self, ref: BlobRef) -> Blob:
+        from . import apfs
+        if apfs.parse(ref.volume_id):
+            return apfs.ApfsBlob(self.image, ref.volume_id, ref.inode)
         m = _INODE_RE.match(ref.inode or '')
         if not m:
             raise ValueError('Invalid inode address')
@@ -281,56 +298,93 @@ class _FileBlob(Blob):
 
 
 class DirectorySource(EvidenceSource):
-    """A folder of loose files (an unpacked logical package); paths are '/'-rooted and never leave the folder."""
+    """Folders of loose files (an unpacked logical package): one folder per volume ('pkg', 'pkg-d' ...). Paths are
+    '/'-rooted and never leave their folder; a file's path is also its handle (BlobRef.inode), as an inode number is
+    on a disk image, so modules open files the same way on both."""
 
     VOLUME = 'pkg'
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, volumes: dict[str, Path] | None = None):
         self.root = Path(root).resolve()
+        self._volumes = {k: Path(v).resolve() for k, v in (volumes or {self.VOLUME: self.root}).items()}
 
     def volumes(self) -> list[str]:
-        return [self.VOLUME]
+        return list(self._volumes)
 
-    def _local(self, path: str) -> Path:
-        local = (self.root / path.lstrip('/')).resolve()
-        if local != self.root and self.root not in local.parents:
+    def _base(self, vid: str | None) -> Path:
+        if vid in self._volumes:
+            return self._volumes[vid]
+        if vid in (None, 'p0') and len(self._volumes) == 1:
+            return next(iter(self._volumes.values()))
+        raise ValueError(f'No volume {vid!r} in this package')
+
+    def _local(self, path: str, vid: str | None = None) -> Path:
+        base = self._base(vid)
+        local = (base / (path or '').lstrip('/')).resolve()
+        if local != base and base not in local.parents:
             raise ValueError('Path is outside the package')
         return local
 
     def find(self, vid: str, path: str) -> str | None:
         try:
-            local = self._local(path)
+            local = self._local(path, vid)
         except ValueError:
             return None
         if local.is_file() and not local.is_symlink():
-            return path
+            return '/' + local.relative_to(self._base(vid)).as_posix()
         # Windows paths are case-insensitive: match each part regardless of case.
-        cur = self.root
+        base = self._base(vid)
+        cur = base
         for part in path.strip('/').split('/'):
             match = next((c for c in cur.iterdir() if c.name.lower() == part.lower()), None) if cur.is_dir() else None
             if match is None or match.is_symlink():
                 return None
             cur = match
-        return '/' + cur.relative_to(self.root).as_posix() if cur.is_file() else None
+        return '/' + cur.relative_to(base).as_posix() if cur.is_file() else None
 
     def open(self, ref: BlobRef) -> Blob:
-        local = self._local(ref.path or '')
+        local = self._local(ref.path or ref.inode or '', ref.volume_id)
         if not local.is_file() or local.is_symlink():
-            raise FileNotFoundError(ref.path)
+            raise FileNotFoundError(ref.path or ref.inode)
         return _FileBlob(local)
 
-    def walk(self, vid: str = VOLUME) -> Iterator[dict]:
-        for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
+    def walk(self, vid: str = VOLUME, times: bool = False) -> Iterator[dict]:
+        base = self._base(vid)
+        for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
             dirnames.sort()
-            rel = Path(dirpath).relative_to(self.root).as_posix()
+            rel = Path(dirpath).relative_to(base).as_posix()
             rel = '' if rel == '.' else '/' + rel
             for d in dirnames:
-                yield {'path': f'{rel}/{d}', 'inode': None, 'size': 0, 'is_dir': True, 'deleted': False}
+                path = f'{rel}/{d}'
+                yield {'path': path, 'inode': path, 'size': 0, 'is_dir': True, 'deleted': False, 'is_virtual': False}
             for name in sorted(filenames):
-                p = Path(dirpath) / name
-                if p.is_symlink():
+                local = Path(dirpath) / name
+                if local.is_symlink():
                     continue
-                yield {'path': f'{rel}/{name}', 'inode': None, 'size': p.stat().st_size, 'is_dir': False, 'deleted': False}
+                st = local.stat()
+                path = f'{rel}/{name}'
+                item = {'path': path, 'inode': path, 'size': st.st_size, 'is_dir': False, 'deleted': False, 'is_virtual': False}
+                if times:
+                    item.update(mtime=int(st.st_mtime) or None, atime=None, ctime=None, crtime=None)
+                yield item
+
+
+def package_source(evidence: dict, folder: Path) -> DirectorySource:
+    """The unpacked package of a logical evidence item, with a volume for each file system root found in it."""
+    roots = (evidence.get('package') or {}).get('roots') or [{'volume_id': DirectorySource.VOLUME, 'path': ''}]
+    return DirectorySource(folder, {r['volume_id']: Path(folder) / r['path'] for r in roots})
+
+
+def evidence_source(evidence: dict, image: Path) -> EvidenceSource:
+    """How an evidence item's content is read: its unpacked folder for a logical package, else the disk image (or its
+    working copy) through pytsk3."""
+    if str(evidence.get('format', '')).upper() == 'LOGICAL':
+        return package_source(evidence, image)
+    return TskImageSource(image)
+
+
+def is_logical(evidence: dict) -> bool:
+    return str(evidence.get('format', '')).upper() == 'LOGICAL'
 
 
 # --------------------------------------------------------------------------------------------- container members

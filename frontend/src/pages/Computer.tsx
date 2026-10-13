@@ -82,24 +82,29 @@ function ComputerCard({ entry }: { entry: ComputerEntry }) {
           </div>
         </Card>
       )}
-      <Card title="User accounts" subtitle="Local accounts from the SAM hive, joined with the user profiles in the SOFTWARE hive by SID." flush>
+      <Card title="User accounts" subtitle="Local accounts: on Windows the SAM hive joined with the user profiles in SOFTWARE by SID; on Linux /etc/passwd, /etc/group and /etc/shadow; on macOS the local directory." flush>
         {!entry.accounts.length ? (
           <Empty title="No user accounts" />
         ) : (
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>User</th><th>SID</th><th>Last logon</th><th className="right">Logons</th><th>Password set</th><th>Profile</th><th>Account</th></tr></thead>
+              <thead><tr><th>User</th><th>SID or UID</th><th>Last logon</th><th className="right">Logons</th><th>Password set</th><th>Profile</th><th>Account</th></tr></thead>
               <tbody>
                 {entry.accounts.map((a) => (
                   <tr key={a._id}>
                     <td><div className="strong">{a.username || '—'}</div>{a.full_name && <div className="small muted">{a.full_name}</div>}</td>
-                    <td className="mono tiny">{a.sid || '—'}</td>
+                    <td className="mono tiny">{a.sid || ((a as any).uid != null ? `UID ${(a as any).uid}` : '—')}{(a as any).shell && <div className="muted">{(a as any).shell}</div>}</td>
                     <td className="mono small nowrap">{time(a.last_logon)}</td>
                     <td className="right">{a.source === 'SAM' ? formatNumber(a.logon_count) : '—'}</td>
                     <td className="mono small nowrap">{time(a.password_last_set)}</td>
                     <td className="small">{a.profile_path || '—'}{a.profile_last_loaded && <div className="tiny muted">loaded {time(a.profile_last_loaded)}</div>}</td>
                     <td>
-                      {a.source === 'PROFILE_LIST' ? <Badge tone="info">Profile only</Badge>
+                      {(a as any).os_family ? (
+                        <>
+                          {(a as any).admin && <Badge tone="warn">ADMIN</Badge>} {(a as any).password_state === 'locked' && <Badge>Locked</Badge>}
+                          {((a as any).flags || []).map((f: any) => <div key={f.code}><Badge tone={f.severity === 'high' ? 'danger' : 'warn'}>{f.label}</Badge></div>)}
+                        </>
+                      ) : a.source === 'PROFILE_LIST' ? <Badge tone="info">Profile only</Badge>
                         : a.disabled ? <Badge>Disabled</Badge> : <Badge tone="ok">Enabled</Badge>}
                     </td>
                   </tr>

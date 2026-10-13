@@ -39,11 +39,12 @@ from .registry import RegistryModule
 from .reputation import ReputationModule
 from .shadow_copies import ShadowCopiesModule
 from .tz_probe import TzProbeModule
+from .unix import UnixModule
 from .unallocated import UnallocatedModule
 from .user_activity import UserActivityModule
 from .yara_scan import YaraModule
 
-MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), RegistryModule(), EventLogsModule(),
+MODULES: list[Module] = [TzProbeModule(), FsIndexModule(), ComputerModule(), ArtifactsModule(), RegistryModule(), UnixModule(), EventLogsModule(),
                          UserActivityModule(), NtfsModule(), ShadowCopiesModule(), BrowserDepthModule(), FileProcModule(), MembersModule(), EmailModule(),
                          ChatCloudModule(), MediaModule(), OcrModule(), ExecutablesModule(), ReputationModule(), ClamavModule(),
                          HashMatchModule(), YaraModule(), ContentModule(), UnallocatedModule(), FoundDataModule()]
@@ -51,10 +52,10 @@ REGISTRY: dict[str, Module] = {m.name: m for m in MODULES}
 ORDER = [m.name for m in MODULES]
 
 PROFILES = {
-    'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry'],
-    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies',
+    'quick': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix'],
+    'standard': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies',
                  'browser_depth', 'fileproc', 'email', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara'],
-    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth',
+    'full': ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth',
              'fileproc', 'containers', 'email', 'chat_cloud', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content',
              'unallocated', 'found_data'],
 }

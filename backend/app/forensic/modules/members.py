@@ -9,7 +9,7 @@ from __future__ import annotations
 import shutil
 
 from ..containers import MAX_DEPTH, Budget, kind_for, read_container
-from ..source import BlobRef, TskImageSource, members_root, open_entry
+from ..source import BlobRef, members_root, open_entry
 from .base import Module
 from .fileproc import _inode_order, process_blob
 
@@ -34,7 +34,7 @@ class MembersModule(Module):
         import magic
         self.mime_of, self.describe = magic.Magic(mime=True), magic.Magic()
         self.ctx = ctx
-        self.src = TskImageSource(ctx.image)
+        self.src = ctx.source()
         self.budget = Budget()
         self.out_dir = members_root() / ctx.eid / ctx.run_id
         self.counts = dict.fromkeys(('containers_opened', 'members_found', 'members_extracted', 'members_encrypted',

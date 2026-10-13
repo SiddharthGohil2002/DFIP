@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added — Collections, Linux and macOS, Plaso timelines
+- **Logical evidence**: a ZIP or TAR of collected files (KAPE, Velociraptor offline collections, CyLR, UAC) is uploaded as evidence and analysed like a disk. It is unpacked safely (names that climb out, links and archive bombs refused), every file hashed, the manifest in the chain of custody, and times taken from the archive. On the scenario laptop a KAPE collection gives the same results as the disk image.
+- **Linux and macOS** (new `unix` module and page): accounts (a second root account flagged), shell history with times (copies to other computers, wiping and privilege changes flagged), logins and log events from wtmp, btmp, auth.log and syslog (SSH, sudo, accounts created, USB devices), cron, systemd and launchd jobs (hidden or temporary programs flagged), recently used files, Safari history and downloads, download quarantine and Wi-Fi networks; Linux and macOS browser profiles; the time zone from the computer's own files.
+- **More file systems**: ext4 and HFS+ as before, and APFS volumes through the Sleuth Kit's tools.
+- **Plaso timelines**: a timeline made by Plaso (json_line or l2tcsv) is imported into a case from the Timeline page, its events shown next to DFIP's own and summarised in the report.
+- Symbolic links on disk images are indexed under their own names (with their targets).
+
 ### Added — Disk images, encrypted volumes and shadow copies
 - **More image formats**: VHD, VHDX, VMDK and QCOW2 virtual disks, read through a raw working copy made with libyal and hashed. Differencing disks and snapshots are uploaded with their parents; on their own they are refused, naming the parent.
 - **Images in several files**: EnCase segments (`.E01`, `.E02` ...) and raw images split into numbered parts upload together as one evidence item. Each file and the whole are hashed; a missing segment or part is refused before anything is registered, and an integrity check names the file that changed.

@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 
 from ..rulesets import clamav_databases, clamav_dir
-from ..source import TskImageSource, open_entry
+from ..source import open_entry
 from .base import Module
 from .fileproc import _inode_order
 
@@ -45,7 +45,7 @@ class ClamavModule(Module):
         if len(entries) > MAX_FILES:
             ctx.warn(f'Only the first {MAX_FILES:,} of {len(entries):,} files were scanned with ClamAV')
             entries = entries[:MAX_FILES]
-        src = TskImageSource(ctx.image)
+        src = ctx.source()
         work = ctx.work / 'clamav'
         hits, scanned = [], 0
         for start in range(0, len(entries), BATCH):

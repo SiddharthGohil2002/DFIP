@@ -122,7 +122,7 @@ function ProgramDetail({ id, onClose }: { id: string; onClose: () => void }) {
     }
   }
   const source: ViewSource | null = p ? (p.container ? { kind: 'member', entryId: p.entry_id, name: p.path }
-    : { kind: 'image', evidenceId: p.evidence_id, inode: p.inode, offset: p.partition_offset || 0, name: p.path }) : null;
+    : { kind: 'image', evidenceId: p.evidence_id, inode: p.inode, offset: p.partition_offset || 0, name: p.path, volumeId: p.volume_id }) : null;
 
   return (
     <Modal open wide title={p ? p.name : 'Program'} onClose={onClose}>

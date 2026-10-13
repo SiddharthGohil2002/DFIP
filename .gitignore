@@ -17,6 +17,10 @@ storage/analysis/**
 storage/reports/**
 storage/downloads/**
 storage/test-images/**
+storage/imports/**
+storage/hashsets/**
+storage/clamav/**
+storage/yara/**
 !storage/**/
 !storage/**/.gitkeep
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from ..source import BlobRef, TskImageSource
+from ..source import BlobRef
 from ..system_info import HIVE_PATHS, accounts, find_hive, parse_sam, parse_software, parse_system
 from .base import Module
 
@@ -20,7 +20,7 @@ class ComputerModule(Module):
     def run(self, ctx):
         ctx.count('user_accounts', 0)
         try:
-            src = TskImageSource(ctx.image)
+            src = ctx.source()
         except OSError:
             return
         hives, parsed = [], {}

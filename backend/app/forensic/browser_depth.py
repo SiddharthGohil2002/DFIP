@@ -38,6 +38,14 @@ PROFILES = [
     ('Opera GX', 'CHROMIUM', _USERS + r'/AppData/Roaming/Opera Software/Opera GX Stable(?:/(?P<profile>Default|Profile [0-9]+))?'),
     ('Opera', 'CHROMIUM', _USERS + r'/AppData/Roaming/Opera Software/Opera Stable(?:/(?P<profile>Default|Profile [0-9]+))?'),
     ('Firefox', 'FIREFOX', _USERS + r'/AppData/Roaming/Mozilla/Firefox/Profiles/(?P<profile>[^/]+)'),
+    # Linux and macOS profiles.
+    ('Chrome', 'CHROMIUM', r'^/(?:home/)?(?P<user>[^/]+)/\.config/google-chrome/(?P<profile>[^/]+)'),
+    ('Chromium', 'CHROMIUM', r'^/(?:home/)?(?P<user>[^/]+)/\.config/chromium/(?P<profile>[^/]+)'),
+    ('Edge', 'CHROMIUM', r'^/(?:home/)?(?P<user>[^/]+)/\.config/microsoft-edge/(?P<profile>[^/]+)'),
+    ('Firefox', 'FIREFOX', r'^/(?:home/)?(?P<user>[^/]+)/\.mozilla/firefox/(?P<profile>[^/]+)'),
+    ('Chrome', 'CHROMIUM', r'^/Users/(?P<user>[^/]+)/Library/Application Support/Google/Chrome/(?P<profile>[^/]+)'),
+    ('Edge', 'CHROMIUM', r'^/Users/(?P<user>[^/]+)/Library/Application Support/Microsoft Edge/(?P<profile>[^/]+)'),
+    ('Firefox', 'FIREFOX', r'^/Users/(?P<user>[^/]+)/Library/Application Support/Firefox/Profiles/(?P<profile>[^/]+)'),
 ]
 FILES = {
     'CHROMIUM': {'History': 'history', 'Cookies': 'cookies', 'Network/Cookies': 'cookies', 'Web Data': 'web_data',

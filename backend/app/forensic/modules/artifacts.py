@@ -52,7 +52,7 @@ class ArtifactsModule(Module):
             {'evidence_id': ctx.eid, 'pipeline': True, 'deleted': False, 'is_virtual': False,
              'path': {'$regex': _mongo_pattern(_CANDIDATES), '$options': 'i'}},
             {'path': 1, 'inode': 1, 'size': 1, 'is_dir': 1, 'deleted': 1, 'is_virtual': 1, 'mtime': 1, 'crtime': 1,
-             'partition_offset': 1}).sort([('partition_offset', 1), ('path', 1)])
+             'partition_offset': 1, 'volume_id': 1}).sort([('partition_offset', 1), ('path', 1)])
         for entry in cursor:
             collector.observe(entry, entry['partition_offset'])
         self._process(collector.resolved())
@@ -90,7 +90,7 @@ class ArtifactsModule(Module):
                         ctx.warn(f'Only the first {cap} {item["kind"]} files were analysed')
                     continue
             dest = ctx.work / 'extracted' / f'{n:03d}-{item["kind"].lower()}'
-            result = extract(ctx.image, item, dest)
+            result = extract(ctx.source(), ctx.eid, item, dest)
             if result.get('status') != 'COMPLETED':
                 ctx.warn(f'Could not extract {item["path"]}: {result.get("error")}')
                 continue

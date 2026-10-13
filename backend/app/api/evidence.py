@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, field_validator
 from pathlib import Path
 from datetime import datetime, timezone
 import hashlib
+import os
 import shutil
 from typing import Optional
 from ..security import current_user, require_write
@@ -237,6 +238,9 @@ async def upload(
         'acquisition_status': 'PRESERVED',
         'integrity_algorithm': 'SHA-256 + SHA-512'
     }
+    if fmt == 'LOGICAL':
+        from ..forensic.packages import archive_kind
+        doc['package'] = {'archive': archive_kind(primary)}
     if len(order) > 1:
         doc['image_set'] = {'kind': image_set['kind'], 'count': len(order), 'label': LABELS.get(image_set['format'], image_set['format'])}
         doc['image_files'] = [{'name': p.name, 'path': str(p.resolve()), 'size': p.stat().st_size, 'sha256': hashes[p][0],
@@ -372,8 +376,11 @@ def _remove(path: Path, storage: Path, removed: list, problems: list):
         if storage not in p.parents or not p.exists():
             return
         if p.is_dir():
-            shutil.rmtree(p)
+            from ..forensic.packages import remove_tree
+            remove_tree(p)  # clears read-only flags where the storage needs it
         else:
+            if not os.access(p, os.W_OK):
+                p.chmod(0o600)
             p.unlink()
         removed.append(str(p))
     except OSError as e:
@@ -430,6 +437,11 @@ def _delete_one(db, x: dict, u, reason: str) -> dict:
     counts['jobs'] = db['jobs'].delete_many({'payload.evidence_id': eid}).deleted_count
     counts['tags'] = db['tags'].delete_many({'evidence_id': eid}).deleted_count
     counts['volume_keys'] = db['volume_keys'].delete_many(q).deleted_count
+    from .timeline_imports import remove_import
+    counts['timeline_imports'] = 0
+    for imp in db['timeline_imports'].find({'evidence_id': eid}):  # Plaso timelines made from this evidence
+        remove_import(db, imp)
+        counts['timeline_imports'] += 1
     for col in ('analysis_facts', 'pipeline_warnings'):  # module bookkeeping, not counted as results
         db[col].delete_many(q)
     unlinked = db['findings'].update_many({'case_id': case_id, 'evidence_ids': eid},
@@ -447,8 +459,10 @@ def _delete_one(db, x: dict, u, reason: str) -> dict:
             _remove(folder, storage, removed, problems)
     for p in (analysis / 'working').glob(f'{eid}.*'):
         _remove(p, storage, removed, problems)
-    for area in ('recovered', 'carved', 'pipeline', 'members', 'members/mail', 'thumbs', 'media', 'derived'):
+    for area in ('recovered', 'carved', 'pipeline', 'members', 'members/mail', 'thumbs', 'media', 'derived', 'package'):
         _remove(analysis / area / eid, storage, removed, problems)
+    for p in (analysis / 'package').glob(f'{eid}.*'):  # the package's manifest (and an unfinished unpack)
+        _remove(p, storage, removed, problems)
     for p in (analysis / 'text').glob(f'{eid}.*'):  # the content index (and an unfinished rebuild)
         _remove(p, storage, removed, problems)
     db['evidence'].delete_one({'_id': x['_id']})

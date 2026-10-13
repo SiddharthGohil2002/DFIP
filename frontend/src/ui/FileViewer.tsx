@@ -7,7 +7,7 @@ import { Banner, Button, Loading, Modal, Tabs } from './index';
 /** A file inside an evidence image (by inode), a file DFIP stored (recovered, carved, extracted), a file taken out
  * of an archive or document (by its file-index record), or the raw bytes of a volume (unallocated space). */
 export type ViewSource =
-  | { kind: 'image'; evidenceId: string; inode: string; offset: number; name: string }
+  | { kind: 'image'; evidenceId: string; inode: string; offset: number; name: string; volumeId?: string }
   | { kind: 'artifact'; artifactId: string; name: string }
   | { kind: 'member'; entryId: string; name: string }
   | { kind: 'volume'; evidenceId: string; volumeId: string; name: string }
@@ -41,7 +41,7 @@ export function locate(h: { evidence_id: string; path: string; inode: string | n
   if (h.unallocated || h.method === 'unallocated') return { kind: 'volume', evidenceId: h.evidence_id, volumeId: h.volume_id, name: `Unallocated space (${h.volume_id})` };
   if (h.member) return h.entry_id ? { kind: 'member', entryId: h.entry_id, name: h.path } : null;
   if (h.partition_offset === null || !h.inode) return null;
-  return { kind: 'image', evidenceId: h.evidence_id, inode: h.inode, offset: h.partition_offset, name: h.path };
+  return { kind: 'image', evidenceId: h.evidence_id, inode: h.inode, offset: h.partition_offset, name: h.path, volumeId: (h as any).volume_id };
 }
 
 /** Bytes to show highlighted when the viewer opens at a search hit. */
@@ -55,7 +55,7 @@ function endpoint(src: ViewSource, what: 'content' | 'preview' | 'raw', extra = 
   if (src.kind === 'member') return `/forensics/members/${encodeURIComponent(src.entryId)}/${what}${extra ? `?${extra}` : ''}`;
   if (src.kind === 'shadow') return `/forensics/shadow-copies/${what}?evidence_id=${encodeURIComponent(src.evidenceId)}&volume_id=${encodeURIComponent(src.volumeId)}&inode=${encodeURIComponent(src.inode)}${extra ? `&${extra}` : ''}`;
   if (src.kind === 'volume') return `/forensics/evidence/${encodeURIComponent(src.evidenceId)}/volume?volume_id=${encodeURIComponent(src.volumeId)}${extra ? `&${extra}` : ''}`;
-  return `/forensics/evidence/${encodeURIComponent(src.evidenceId)}/${what}?inode=${encodeURIComponent(src.inode)}&offset=${src.offset}${extra ? `&${extra}` : ''}`;
+  return `/forensics/evidence/${encodeURIComponent(src.evidenceId)}/${what}?inode=${encodeURIComponent(src.inode)}&offset=${src.offset}${src.volumeId ? `&volume_id=${encodeURIComponent(src.volumeId)}` : ''}${extra ? `&${extra}` : ''}`;
 }
 
 const hex2 = (b: number) => b.toString(16).padStart(2, '0');

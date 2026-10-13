@@ -34,7 +34,7 @@ ITEM_COLLECTIONS = {
     'FILE': 'fs_entries', 'TIMELINE_EVENT': 'timeline_events', 'BROWSER': 'forensic_artifacts',
     'USB': 'usb_artifacts', 'ACTIVITY': 'forensic_artifacts', 'ARTIFACT': 'forensic_artifacts', 'ENTITY': 'entities',
     'REGISTRY': 'forensic_artifacts', 'EVENT': 'event_records', 'WINDOWS': 'forensic_artifacts', 'USN': 'usn_records',
-    'EMAIL': 'email_messages', 'CHAT_CLOUD': 'forensic_artifacts', 'PROGRAM': 'forensic_artifacts', 'SHADOW_FILE': 'shadow_files',
+    'EMAIL': 'email_messages', 'CHAT_CLOUD': 'forensic_artifacts', 'PROGRAM': 'forensic_artifacts', 'SHADOW_FILE': 'shadow_files', 'UNIX': 'forensic_artifacts',
 }
 LABELS = ('EVIDENCE', 'NOTABLE', 'FOLLOW_UP')
 _ARTIFACT_TYPES = {
@@ -42,6 +42,7 @@ _ARTIFACT_TYPES = {
                 'BROWSER_LOGIN', 'BROWSER_RECOVERED'},
     'CHAT_CLOUD': set(CHAT_CLOUD_LABELS),
     'PROGRAM': {'EXECUTABLE'},
+    'UNIX': {'SHELL_COMMAND', 'UNIX_EVENT', 'SCHEDULED_JOB', 'RECENT_DOCUMENT', 'WIFI_NETWORK', 'QUARANTINE_EVENT'},
     'ACTIVITY': {'PROGRAM_RUN', 'RECENT_FILE', 'RECYCLE_BIN_ITEM'},
     'ARTIFACT': {'RECOVERED_FILE', 'CARVED_FILE', 'EXTRACTED_FILE', 'MALWARE_INDICATOR'},
     'REGISTRY': {'USERASSIST', 'SHELLBAG', 'TYPED_PATH', 'TYPED_URL', 'EXPLORER_SEARCH', 'RECENT_DOC', 'RUN_MRU', 'PERSISTENCE',
@@ -86,7 +87,7 @@ def natural_key(item_type: str, doc) -> dict:
         return {'evidence_id': e, 'type': t, 'source_path': doc.get('source_path'), 'row_id': doc.get('row_id')}
     if item_type == 'EMAIL':
         return {'evidence_id': e, 'nk': doc.get('nk')}
-    if item_type in ('CHAT_CLOUD', 'PROGRAM'):
+    if item_type in ('CHAT_CLOUD', 'PROGRAM', 'UNIX'):
         return {'evidence_id': e, 'type': t, 'nk': doc.get('nk')}
     if item_type == 'USB':
         return {'evidence_id': e, 'instance_id': doc.get('instance_id')}
@@ -198,6 +199,17 @@ def snapshot(item_type: str, doc) -> dict:
             title, when = doc.get('app'), doc.get('time')
         detail = f'{label}{" · " + doc["user"] if doc.get("user") else ""} · {doc.get("source_path")}'
         return {'title': title, 'detail': detail, 'timestamp': _iso(when), 'source': doc.get('source_path')}
+    elif item_type == 'UNIX':
+        t = doc.get('type')
+        title = {'SHELL_COMMAND': doc.get('command'), 'UNIX_EVENT': f'{doc.get("label")}: {doc.get("summary") or doc.get("user") or ""}',
+                 'SCHEDULED_JOB': doc.get('command'), 'RECENT_DOCUMENT': doc.get('path'), 'WIFI_NETWORK': doc.get('ssid'),
+                 'QUARANTINE_EVENT': doc.get('url') or doc.get('sender')}.get(t)
+        when = doc.get('time') or doc.get('visited') or doc.get('last_joined')
+        label = {'SHELL_COMMAND': 'Shell command', 'UNIX_EVENT': 'Log event', 'SCHEDULED_JOB': 'Scheduled job', 'RECENT_DOCUMENT': 'Recent file',
+                 'WIFI_NETWORK': 'Wi-Fi network', 'QUARANTINE_EVENT': 'Quarantined download'}.get(t, t)
+        who = doc.get('user')
+        return {'title': (title or '')[:300], 'detail': f'{doc.get("os_family") or "Unix"} · {label}' + (f' · {who}' if who else ''),
+                'timestamp': _iso(when), 'source': doc.get('source_path') or doc.get('log_path')}
     elif item_type == 'SHADOW_FILE':
         change = {'DELETED_SINCE': 'deleted since', 'CHANGED_SINCE': 'changed since', 'ADDED_SINCE': 'added since'}.get(doc.get('change'), '')
         created = doc.get('store_created')

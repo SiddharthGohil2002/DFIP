@@ -155,6 +155,16 @@ export function SearchPage() {
               </tr>
             ))}
           </Group>
+          <Group title="Linux and macOS" total={res.totals.unix ?? 0} shown={(res.results.unix || []).length} link={{ to: '/app/unix', label: 'Open Linux and macOS' }}>
+            {(res.results.unix || []).map((x) => (
+              <tr key={x._id}>
+                <td className="cell-path small mono">{x.command || x.path || x.url || x.ssid || x.summary || x.name}</td>
+                <td className="small">{({ SHELL_COMMAND: 'shell command', UNIX_EVENT: x.label, SCHEDULED_JOB: `${x.mechanism} job`, RECENT_DOCUMENT: 'file opened',
+                  QUARANTINE_EVENT: 'download', WIFI_NETWORK: 'Wi-Fi network' } as Record<string, string>)[x.type]}</td>
+                <td className="small" colSpan={2}>{x.user || ''} <span className="muted">{x.evidence_id}</span></td>
+              </tr>
+            ))}
+          </Group>
           <Group title="Shadow copies" total={res.totals.shadow ?? 0} shown={(res.results.shadow || []).length} link={{ to: '/app/shadow-copies', label: 'Open shadow copies' }}>
             {(res.results.shadow || []).map((x) => (
               <tr key={x._id}>

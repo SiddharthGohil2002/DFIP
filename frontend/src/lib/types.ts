@@ -74,6 +74,9 @@ export interface Evidence {
   image_files?: { name: string; size: number; sha256: string; sha512?: string; role: string }[];
   /** The raw copy every tool reads, for images that are not a single raw file. */
   working_copy?: { format: string; size: number; sha256: string; md5?: string; method?: string; created_at?: string; stored_md5_match?: boolean };
+  /** A logical package (ZIP or TAR of collected files): how it was unpacked and the file systems found in it. */
+  package?: { archive: string; files?: number; links?: number; skipped?: number; bytes?: number; manifest_sha256?: string; unpacked_at?: string;
+    roots?: { volume_id: string; path: string; os: string | null; label: string | null }[] };
   /** A decrypted volume: the evidence and volume it was decrypted from. */
   derived_from?: { evidence_id: string; volume_id: string; kind: string; method: string; key_id: string; source_sha256?: string };
   /** Each analysis module's latest run on this evidence. */
@@ -84,7 +87,7 @@ export interface Evidence {
 
 export interface EvidenceTimeZone {
   zone: string;
-  source: 'registry' | 'override' | 'default';
+  source: 'registry' | 'override' | 'system' | 'default';
   detected?: { key_name?: string | null; iana?: string | null; posix?: string; zone?: string; bias?: number } | null;
   override?: { zone: string; reason: string; set_by_name?: string; set_at?: string } | null;
 }
@@ -195,6 +198,17 @@ export interface CaseCounts {
   shadow_files?: number;
   shadow_deleted?: number;
   decrypted_volumes?: number;
+  unix_systems?: number;
+  shell_commands?: number;
+  shell_commands_flagged?: number;
+  unix_events?: number;
+  scheduled_jobs?: number;
+  scheduled_jobs_flagged?: number;
+  recent_documents?: number;
+  quarantine_events?: number;
+  wifi_networks?: number;
+  timeline_imports?: number;
+  plaso_events?: number;
   browser_searches?: number;
   browser_cookies?: number;
   browser_bookmarks?: number;

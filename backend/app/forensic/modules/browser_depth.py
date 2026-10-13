@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .. import browser_depth as bd
-from ..source import BlobRef, TskImageSource
+from ..source import BlobRef
 from ..timeline import _with_nk
 from .base import Module
 
@@ -51,7 +51,7 @@ class BrowserDepthModule(Module):
             info = bd.classify(e['path'])
             if info and e.get('size'):
                 found.append((e, info))
-        self.src = TskImageSource(ctx.image)
+        self.src = ctx.source()
         self.rows, self.events, files, profiles = [], [], [], {}
         for n, (e, info) in enumerate(found):
             ctx.progress(n / max(1, len(found)), f'{info["browser"]} {info["file"]}')

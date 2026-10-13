@@ -1,16 +1,15 @@
 """Finds well-known Windows artifacts in a filesystem listing and extracts them.
 
-Paths are matched against the Sleuth Kit listing (allocated entries only), then
-each file is copied out with `icat` into DFIP's analysis directory under its
-original name, so parsers that key on filenames (and SQLite journal/WAL
-sidecars) keep working. The source image is only ever read.
+Paths are matched against the file index (allocated entries only), then each
+file is copied out of the evidence (the disk image through pytsk3, or a logical
+package's folders) into DFIP's analysis directory under its original name, so
+parsers that key on filenames (and SQLite journal/WAL sidecars) keep working.
+The evidence is only ever read.
 """
 from __future__ import annotations
-import hashlib
 import re
 from pathlib import Path
 
-from .tools import recover_file
 
 _USERS = r'/(?:Users|Documents and Settings)/[^/]+'
 TARGETS = [
@@ -19,6 +18,13 @@ TARGETS = [
                  r'/User Data/[^/]+|Roaming/Opera Software/(?P<opera>Opera Stable|Opera GX Stable)(?:/(?:Default|Profile [0-9]+))?)'
                  r'/History$', re.I)),
     ('FIREFOX_PLACES', re.compile(_USERS + r'/AppData/Roaming/Mozilla/Firefox/Profiles/[^/]+/places\.sqlite$', re.I)),
+    # Linux (~/.config, ~/.mozilla) and macOS (~/Library/Application Support) profiles.
+    ('CHROMIUM_HISTORY', re.compile(r'^/(?:home/[^/]+|root)/\.config/(?P<browser>google-chrome|chromium|microsoft-edge|BraveSoftware/Brave-Browser|vivaldi)'
+                                    r'/[^/]+/History$', re.I)),
+    ('CHROMIUM_HISTORY', re.compile(r'^/Users/[^/]+/Library/Application Support/(?P<browser>Google/Chrome|Microsoft Edge|BraveSoftware/Brave-Browser|Chromium|Vivaldi)'
+                                    r'/[^/]+/History$', re.I)),
+    ('FIREFOX_PLACES', re.compile(r'^/(?:home/[^/]+|root)/\.mozilla/firefox/[^/]+/places\.sqlite$', re.I)),
+    ('FIREFOX_PLACES', re.compile(r'^/Users/[^/]+/Library/Application Support/Firefox/Profiles/[^/]+/places\.sqlite$', re.I)),
     ('SYSTEM_HIVE', re.compile(r'^/Windows/System32/config/SYSTEM$', re.I)),
     ('SETUPAPI_LOG', re.compile(r'^/Windows/INF/setupapi\.dev(?:\.\d{8}_\d{6})?\.log$', re.I)),
     # Windows activity: files moved to the Recycle Bin, files opened (Recent shortcuts), programs run.
@@ -30,7 +36,7 @@ TARGETS = [
 RECYCLE_DATA = re.compile(r'^/\$Recycle\.Bin/(?P<sid>[^/]+)/\$R(?P<suffix>[^/]+)$', re.I)
 SQLITE_SIDECARS = ('-journal', '-wal')
 BROWSER_NAMES = {
-    'google/chrome': 'Chrome', 'microsoft/edge': 'Edge',
+    'google/chrome': 'Chrome', 'microsoft/edge': 'Edge', 'google-chrome': 'Chrome', 'microsoft-edge': 'Edge', 'microsoft edge': 'Edge',
     'bravesoftware/brave-browser': 'Brave', 'chromium': 'Chromium', 'vivaldi': 'Vivaldi',
 }
 
@@ -41,7 +47,7 @@ def classify(path: str) -> tuple[str, dict] | None:
         m = rx.search(path)
         if m:
             details = {}
-            if kind == 'CHROMIUM_HISTORY' and m.group('opera'):
+            if kind == 'CHROMIUM_HISTORY' and m.groupdict().get('opera'):
                 details['browser'] = 'Opera GX' if 'GX' in m.group('opera') else 'Opera'
             elif kind == 'CHROMIUM_HISTORY':
                 details['browser'] = BROWSER_NAMES.get(m.group('browser').lower(), 'Chromium')
@@ -77,7 +83,7 @@ class ArtifactCollector:
             kind, details = hit
             # The file's own times matter for some kinds: a Recent shortcut is written when its target is opened.
             item = {'kind': kind, 'path': path, 'inode': entry['inode'], 'size': entry.get('size'),
-                    'partition_offset': partition_offset, 'sidecars': [],
+                    'partition_offset': partition_offset, 'volume_id': entry.get('volume_id'), 'sidecars': [],
                     'fs_mtime': entry.get('mtime'), 'fs_crtime': entry.get('crtime'), **details}
             self.matches.append(item)
             self._by_path[path.lower()] = item
@@ -104,27 +110,22 @@ class ArtifactCollector:
         return self.matches
 
 
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open('rb') as f:
-        while chunk := f.read(1024 * 1024):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def extract(image: Path, item: dict, dest_dir: Path) -> dict:
-    """icat-extracts an artifact (and its sidecars) into dest_dir, keeping basenames."""
+def extract(src, evidence_id: str, item: dict, dest_dir: Path) -> dict:
+    """Copies an artifact (and its sidecars) out of the evidence (disk image or package) into dest_dir, keeping basenames."""
+    from .source import BlobRef, volume_id
+    vid = item.get('volume_id') or volume_id(item['partition_offset'])
     dest_dir.mkdir(parents=True, exist_ok=True)
-    name = item['path'].rsplit('/', 1)[-1]
-    target = dest_dir / name
-    r = recover_file(image, item['inode'], target, item['partition_offset'])
-    if r.get('status') != 'COMPLETED':
-        return {'status': r.get('status', 'FAILED'), 'error': r.get('stderr') or r.get('status')}
-    out = {'status': 'COMPLETED', 'local_path': str(target), 'sha256': _sha256(target), 'size': target.stat().st_size,
-           'sidecars': []}
+    target = dest_dir / item['path'].rsplit('/', 1)[-1]
+    try:
+        size, digest = src.copy_to(BlobRef(evidence_id, vid, inode=item['inode']), target)
+    except (OSError, ValueError) as exc:
+        return {'status': 'FAILED', 'error': str(exc)}
+    out = {'status': 'COMPLETED', 'local_path': str(target), 'sha256': digest, 'size': size, 'sidecars': []}
     for side in item.get('sidecars', []):
         side_target = dest_dir / side['path'].rsplit('/', 1)[-1]
-        sr = recover_file(image, side['inode'], side_target, item['partition_offset'])
-        if sr.get('status') == 'COMPLETED':
-            out['sidecars'].append({'path': side['path'], 'local_path': str(side_target), 'sha256': _sha256(side_target)})
+        try:
+            _, side_digest = src.copy_to(BlobRef(evidence_id, vid, inode=side['inode']), side_target)
+        except (OSError, ValueError):
+            continue
+        out['sidecars'].append({'path': side['path'], 'local_path': str(side_target), 'sha256': side_digest})
     return out

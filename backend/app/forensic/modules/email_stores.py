@@ -12,7 +12,7 @@ import shutil
 from datetime import datetime, timezone
 
 from .. import mail
-from ..source import BlobRef, TskImageSource, members_root, open_entry
+from ..source import BlobRef, members_root, open_entry
 from ..timeline import _with_nk
 from .base import Module
 from .fileproc import process_blob
@@ -71,7 +71,7 @@ class EmailModule(Module):
         import magic
         self.mime_of, self.describe = magic.Magic(mime=True), magic.Magic()
         self.ctx = ctx
-        self.src = TskImageSource(ctx.image)
+        self.src = ctx.source()
         self.out = mail_root() / ctx.eid / ctx.run_id
         self.out.mkdir(parents=True, exist_ok=True)
         self.events = 0

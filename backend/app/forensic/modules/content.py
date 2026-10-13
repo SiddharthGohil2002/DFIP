@@ -6,7 +6,7 @@ built into a temporary file and renamed over the previous one when complete.
 """
 from __future__ import annotations
 
-from ..source import TskImageSource, open_entry
+from ..source import open_entry
 from ..text_index import Writer, index_path
 from ..textextract import MAX_READ, Extracted, extract, method_for
 from .base import Module
@@ -34,7 +34,7 @@ class ContentModule(Module):
         entries.sort(key=_inode_order)
         final = index_path(ctx.eid)
         writer = Writer(final.with_name(f'{final.stem}.{ctx.run_id}.tmp'))
-        src = TskImageSource(ctx.image)
+        src = ctx.source()
         counts = {'files_text_indexed': 0, 'files_text_failed': 0, 'files_text_truncated': 0}
         methods: dict[str, int] = {}
         chars = 0

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..core.config import settings
-from .disk_formats import EWF, LABELS, VIRTUAL, ConcatenatedParts, ensure_space, open_media, write_raw
+from .disk_formats import EWF, LABELS, LOGICAL, VIRTUAL, ConcatenatedParts, ensure_space, open_media, write_raw
 
 EWF_FORMATS = set(EWF)
 _METHOD = {'VHD': 'libvhdi', 'VHDX': 'libvhdi', 'VMDK': 'libvmdk', 'QCOW2': 'libqcow'}
@@ -67,11 +67,15 @@ def changed_files(evidence: dict) -> list[str]:
 
 def needs_working_copy(evidence: dict) -> bool:
     fmt = str(evidence.get('format', '')).upper()
-    return fmt in EWF_FORMATS or fmt in VIRTUAL or (evidence.get('image_set') or {}).get('kind') == 'split'
+    return fmt in EWF_FORMATS or fmt in VIRTUAL or fmt == LOGICAL or (evidence.get('image_set') or {}).get('kind') == 'split'
 
 
 def working_copy_path(evidence: dict) -> Path:
-    return Path(settings.storage_path).resolve() / 'analysis' / 'working' / f"{evidence['evidence_id']}.raw"
+    """The raw working copy, or for a logical package the folder it is unpacked into."""
+    analysis = Path(settings.storage_path).resolve() / 'analysis'
+    if str(evidence.get('format', '')).upper() == LOGICAL:
+        return analysis / 'package' / evidence['evidence_id']
+    return analysis / 'working' / f"{evidence['evidence_id']}.raw"
 
 
 def analysis_image(evidence: dict, create: bool = False, db=None, actor: str = 'system') -> Path:
@@ -82,7 +86,9 @@ def analysis_image(evidence: dict, create: bool = False, db=None, actor: str = '
     if not needs_working_copy(evidence):
         return Path(evidence['storage_path'])
     target = working_copy_path(evidence)
-    if target.exists():
+    # A package is ready once its manifest is written (the folder exists while it is being unpacked).
+    ready = target.with_name(f'{target.name}.manifest.jsonl').exists() if str(evidence.get('format', '')).upper() == LOGICAL else target.exists()
+    if ready:
         return target
     if not create:
         what = LABELS.get(str(evidence.get('format', '')).upper(), evidence.get('format'))
@@ -94,6 +100,8 @@ def prepare_working_copy(evidence: dict, db=None, actor: str = 'system', timeout
     target = working_copy_path(evidence)
     partial = target.with_suffix('.partial')
     fmt = str(evidence.get('format', '')).upper()
+    if fmt == LOGICAL:
+        return _unpack(evidence, db, actor)
     if fmt in EWF_FORMATS:
         info = _export_ewf(evidence, partial, timeout)
     elif fmt in VIRTUAL:
@@ -169,3 +177,43 @@ def _export_ewf(evidence: dict, partial: Path, timeout: int) -> dict:
     return {'size': media_size, 'md5': md5.hexdigest(), 'sha256': sha256.hexdigest(), 'method': 'ewfexport', 'ewfverify': 'SUCCESS',
             'stored_md5_match': bool(stored_md5),
             'detail': f'E01 ({segments} segment{"s" if segments > 1 else ""}) checked with ewfverify and exported to a raw working copy ({md5_note})'}
+
+
+def _unpack(evidence: dict, db=None, actor: str = 'system') -> Path:
+    """Unpacks a logical package (ZIP or TAR) into the analysis area, read-only, with its manifest (packages.py)."""
+    from .packages import archive_kind, remove_tree, unpack
+    target = working_copy_path(evidence)
+    manifest = target.with_name(f'{target.name}.manifest.jsonl')
+    partial_manifest = target.with_name(f'{target.name}.manifest.partial')
+    # Unpacked in place (folders are not renamed: Windows-backed storage refuses that); the manifest, renamed last, marks it complete.
+    if target.exists():
+        remove_tree(target)  # an unpack that was interrupted
+    partial_manifest.unlink(missing_ok=True)
+    original = Path(evidence['storage_path'])
+    kind = archive_kind(original)
+    if not kind:
+        raise ValueError('The package is not a ZIP or TAR archive')
+    try:
+        info = unpack(original, target, kind, ensure_space=lambda n: ensure_space(target.parent, n, 'the unpacked package'),
+                      manifest_path=partial_manifest)
+    except BaseException:
+        if target.exists():
+            remove_tree(target)
+        partial_manifest.unlink(missing_ok=True)
+        raise
+    partial_manifest.replace(manifest)
+    roots = info['roots']
+    package = {'archive': kind, 'files': info['files'], 'folders': info['folders'], 'links': info['links'], 'skipped': info['skipped'],
+               'bytes': info['bytes'], 'roots': roots, 'manifest': str(manifest), 'manifest_sha256': info['manifest_sha256'],
+               'zip_local_times': info['zip_local_times'], 'unpacked_at': datetime.now(timezone.utc)}
+    evidence['package'] = package
+    if db is not None:
+        db['evidence'].update_one({'evidence_id': evidence['evidence_id']}, {'$set': {'package': package}})
+        where = ', '.join(f'{r["volume_id"]} = {r["path"] or "(top)"} ({r["os"] or "unknown system"})' for r in roots)
+        db['chain_of_custody'].insert_one({
+            'evidence_id': evidence['evidence_id'], 'case_id': evidence['case_id'], 'timestamp': package['unpacked_at'],
+            'user_id': 'system', 'user_name': actor, 'action': 'PACKAGE_UNPACKED', 'sha256': info['manifest_sha256'], 'status': 'VERIFIED',
+            'detail': f'{info["files"]:,} files ({info["bytes"]:,} bytes) unpacked read-only from the {kind} package; {info["links"]} links and '
+                      f'{info["skipped"]} unsafe or duplicate entries recorded but not written; the SHA-256 is that of the manifest. '
+                      f'File systems: {where}. The package is unchanged'})
+    return target

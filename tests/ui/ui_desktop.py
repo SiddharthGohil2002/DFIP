@@ -46,7 +46,7 @@ with sync_playwright() as p:
     analysed = page.evaluate("""async () => {
         const r = await fetch('http://host.docker.internal:8000/api/evidence',
                               { headers: { Authorization: 'Bearer ' + sessionStorage.getItem('dfip_token') } });
-        const e = (await r.json()).data.find((x) => x.analysis_status === 'COMPLETED' && !/ntfs/i.test(x.filename || ''));  // the laptop, not the NTFS desktop
+        const e = (await r.json()).data.find((x) => x.analysis_status === 'COMPLETED' && x.filename === 'dfip-test-disk.dd');  // the laptop
         return e && e.case_id;
     }""")
     page.get_by_label('Active case').select_option(analysed)

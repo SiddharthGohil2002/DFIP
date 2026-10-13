@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 
 from .. import vss
-from ..source import TskImageSource, shadow_volume_id
+from ..source import shadow_volume_id
 from .base import Module
 
 MAX_STORES = 32             # Windows keeps up to 64; the newest are compared first
@@ -33,7 +33,7 @@ class ShadowCopiesModule(Module):
         volumes = [f for f in ctx.fact('fs_index', 'filesystems', []) or []
                    if (f.get('filesystem_type') or '').upper().startswith('NTFS') and not f.get('error')]
         found = []
-        src = TskImageSource(ctx.image)
+        src = ctx.source()
         for i, fs in enumerate(volumes):
             offset = fs['partition_offset']
             try:

@@ -505,14 +505,14 @@ def t_analysis():
           and j2['result']['summary']['counts'] == counts, (counts, j2.get('result', {}).get('summary', {}).get('counts')))
 
 
-STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc',
+STANDARD_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc',
                     'email', 'chat_cloud', 'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
 # The full profile adds archive members, file contents, unallocated space and found data.
-ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc', 'containers',
+ALL_MODULES = ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc', 'containers',
                'email', 'chat_cloud', 'media', 'ocr', 'executables', 'reputation', 'clamav', 'hash_match', 'yara', 'content', 'unallocated',
                'found_data']
 # What re-reading the file system index refreshes on evidence analysed with the standard profile.
-AFTER_FS_INDEX = ['fs_index', 'artifacts', 'registry', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc', 'email', 'chat_cloud',
+AFTER_FS_INDEX = ['fs_index', 'artifacts', 'registry', 'unix', 'eventlogs', 'user_activity', 'ntfs', 'shadow_copies', 'browser_depth', 'fileproc', 'email', 'chat_cloud',
                   'media', 'executables', 'reputation', 'clamav', 'hash_match', 'yara']
 
 
@@ -603,7 +603,7 @@ def t_modules():
     s = j['result']['summary']
     same = lambda counts: all(counts.get(k) == C['COUNTS'][k] for k in ('files', 'deleted_files', 'browser_history', 'usb_devices', 'programs_run'))
     check('the quick profile runs the file system index and artifacts only (no file hashing or YARA)',
-          s['plan'] == ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry'] and 'yara_matches' not in s['counts']
+          s['plan'] == ['tz_probe', 'fs_index', 'computer', 'artifacts', 'registry', 'unix'] and 'yara_matches' not in s['counts']
           and 'files_hashed' not in s['counts'] and same(s['counts']),
           (s.get('plan'), s.get('counts')))
     j = _analyse(inv, qe, {'modules': ['yara']})
@@ -3648,6 +3648,320 @@ def t_shadow_copies():
     C['VSS_CASE'], C['VSS_E'] = case, ev
 
 
+# Phase 13: logical packages, Linux and macOS, more file systems, Plaso timelines.
+KAPE_ZIP, VELO_ZIP = Path('/testdata/dfip-test-kape.zip'), Path('/testdata/dfip-test-velociraptor.zip')
+MAC_TAR, LINUX_IMG = Path('/testdata/dfip-test-macos.tar'), Path('/testdata/dfip-linux-disk.dd')
+UNIX_EXPECTED, DISK_MANIFEST = Path('/testdata/unix-expected.json'), Path('/testdata/dfip-test-disk.manifest.json')
+PLASO_JSON, PLASO_CSV = Path('/testdata/dfip-test-disk.plaso.jsonl'), Path('/testdata/dfip-test-disk.plaso.csv')
+# Records made by investigators' actions on the disk evidence (recovery, carving, scans), not by its analysis.
+ACTION_TYPES = {'RECOVERED_FILE', 'CARVED_FILE', 'YARA_SCAN'}
+
+
+def _dt(v):
+    if isinstance(v, str):
+        return iso(v)
+    return v.replace(tzinfo=timezone.utc) if isinstance(v, datetime) and v.tzinfo is None else v
+
+
+def _type_counts(db, eid):
+    """Records the analysis wrote (not investigators' actions), about files that exist (a collection has no deleted files)."""
+    return {x['_id']: x['n'] for x in db.forensic_artifacts.aggregate([
+        {'$match': {'evidence_id': eid, 'pipeline': True, 'deleted': {'$ne': True}, 'type': {'$nin': list(ACTION_TYPES)}}},
+        {'$group': {'_id': '$type', 'n': {'$sum': 1}}}])}
+
+
+@section('12v Logical packages (KAPE and Velociraptor collections vs the disk image they were taken from, and the generator manifest)')
+def t_packages():
+    inv = C['INVESTIGATOR']
+    db = mongo()
+    if not KAPE_ZIP.exists():
+        note('logical packages', 'make-test-image.sh has not made the packages; skipped')
+        return
+    truth = {f['path']: f for f in json.loads(DISK_MANIFEST.read_text())['files'] if not f['deleted']}
+    case = C['PKG_CASE'] = post('/api/cases', inv, {'name': 'Logical collections', 'priority': 'LOW'}).json['case_id']
+    data = KAPE_ZIP.read_bytes()
+    r = upload(inv, case, data, KAPE_ZIP.name)
+    check('a ZIP collection uploads as one logical evidence item, hashed as uploaded',
+          r.status == 200 and r.json['format'] == 'LOGICAL' and r.json['package']['archive'] == 'ZIP' and r.json['sha256'] == _sha(data), r)
+    ev = r.json['evidence_id']
+    j = _analyse(inv, ev, {'profile': 'full'})  # as the disk image was analysed
+    e = db.evidence.find_one({'evidence_id': ev})
+    pkg = e.get('package') or {}
+    cust = db.chain_of_custody.find_one({'evidence_id': ev, 'action': 'PACKAGE_UNPACKED'}) or {}
+    check('unpacked once, read-only: the system drive found under the collection folder, the manifest hashed into the chain of custody',
+          j['status'] == 'COMPLETED' and [(x['path'], x['os'], x['volume_id']) for x in pkg.get('roots', [])] == [('2026-09-01T190512_LAPTOP-07/C', 'windows', 'pkg')]
+          and cust.get('sha256') == _sha(Path(pkg['manifest']).read_bytes()) and pkg.get('files') == len(truth) + 1, (j.get('error'), pkg, cust))
+    files = {x['path']: x for x in db.fs_entries.find({'evidence_id': ev, 'is_dir': False, 'logical': True})}
+    bad = [p for p, t in truth.items() if not files.get(p) or files[p].get('sha256') != t['sha256'] or files[p].get('size') != t['size']
+           or _dt(files[p].get('mtime')) != iso(t['mtime'])]
+    check('every collected file is indexed at its path on the computer, with the size, SHA-256 and modification time the generator gave it '
+          '(times from the NTFS extra field, in UTC)', set(files) == set(truth) and not bad, (sorted(set(files) ^ set(truth))[:5], bad[:5]))
+    disk, package = _type_counts(db, C['E']), _type_counts(db, ev)
+    diff = {t: (disk.get(t), package.get(t)) for t in set(disk) | set(package) if disk.get(t) != package.get(t)}
+    same = {c: (db[c].count_documents({'evidence_id': C['E']}), db[c].count_documents({'evidence_id': ev})) for c in ('event_records', 'email_messages', 'usb_artifacts')}
+    check('the collection gives the same results as the disk image: every kind of record in the same number (registry, event logs, browsers, '
+          'email, chat, Windows activity, programs, indicators ...), as many event records, emails and USB devices',
+          not diff and all(a == b and a for a, b in same.values()), (diff, same))
+    import base64
+    pn = files['/Users/alice/Documents/project-notes.txt']
+    pg = get(f"/api/forensics/evidence/{ev}/content?inode={urllib.parse.quote(pn['inode'])}&offset=0", inv).json
+    rec = post(f"/api/forensics/evidence/{ev}/recover?inode={urllib.parse.quote(pn['inode'])}", inv)
+    check('the file viewer and recovery read collected files (recovered with the SHA-256 the generator gave it)',
+          base64.b64decode(pg.get('data_b64') or '') == icat_bytes('/Users/alice/Documents/project-notes.txt')
+          and rec.status == 200 and rec.json['sha256'] == truth['/Users/alice/Documents/project-notes.txt']['sha256'], (pg.get('size'), rec))
+    check('disk-only views refuse a collection clearly (409): partitions, carving', get(f'/api/forensics/evidence/{ev}/partitions', inv).status == 409
+          and post(f'/api/forensics/evidence/{ev}/carve?engine=photorec', inv).status == 409)
+    C['KAPE_E'] = ev
+
+    # Velociraptor: the drive under uploads/auto/C%3A, URL-decoded; times from the extended timestamp field.
+    data = VELO_ZIP.read_bytes()
+    ev2 = upload(inv, case, data, VELO_ZIP.name).json['evidence_id']
+    j = _analyse(inv, ev2, {'profile': 'quick'})
+    pkg = db.evidence.find_one({'evidence_id': ev2}).get('package') or {}
+    files = {x['path']: x for x in db.fs_entries.find({'evidence_id': ev2, 'is_dir': False, 'logical': True})}
+    reg = lambda eid: {t: n for t, n in _type_counts(db, eid).items() if t in ('USERASSIST', 'SHELLBAG', 'BAM_ENTRY', 'AMCACHE_FILE', 'BROWSER_HISTORY',
+                                                                                'PROGRAM_RUN', 'RECYCLE_BIN_ITEM', 'USER_ACCOUNT')}
+    check('a Velociraptor collection: the URL-encoded drive (C%3A) decoded and found, every file with its time, the same registry, browser and '
+          'activity records as the disk', j['status'] == 'COMPLETED' and [x['path'] for x in pkg.get('roots', [])] == ['uploads/auto/C:']
+          and set(files) == set(truth) and all(_dt(files[p].get('mtime')) == iso(t['mtime']) for p, t in truth.items()) and reg(ev2) == reg(C['E']),
+          (pkg.get('roots'), sorted(set(files) ^ set(truth))[:4], reg(ev2), reg(C['E'])))
+
+    # A hostile package: names that climb out, absolute names, a link; and an archive bomb.
+    import io
+    import stat as stat_mod
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as z:
+        z.writestr('C/Users/bob/ok.txt', 'fine')
+        z.writestr('../../escaped.txt', 'out')
+        z.writestr('/abs/escaped2.txt', 'out')
+        z.writestr('C/Users/bob/../../../escaped3.txt', 'out')
+        link = zipfile.ZipInfo('C/Users/bob/link')
+        link.external_attr = (stat_mod.S_IFLNK | 0o777) << 16
+        z.writestr(link, '/etc/passwd')
+    ev3 = upload(inv, case, buf.getvalue(), 'hostile.zip').json['evidence_id']
+    j = _analyse(inv, ev3, {'profile': 'quick'})
+    pkg = db.evidence.find_one({'evidence_id': ev3}).get('package') or {}
+    import glob
+    escaped = [p for p in glob.glob('/app/storage/**/escaped*.txt', recursive=True) if not p.startswith(f'/app/storage/analysis/package/{ev3}/')]
+    listed = sorted(x['path'] for x in db.fs_entries.find({'evidence_id': ev3, 'is_dir': False}))
+    manifest = [json.loads(x) for x in Path(pkg.get('manifest', '/dev/null')).read_text().splitlines()] if pkg.get('manifest') else []
+    check('names that climb out of the package are refused (an absolute name stays inside it), a link is recorded but not followed: '
+          'nothing lands outside, and only the file under the drive is indexed',
+          j['status'] == 'COMPLETED' and not escaped and listed == ['/Users/bob/ok.txt'] and pkg.get('skipped') == 2 and pkg.get('links') == 1
+          and {m.get('reason') for m in manifest if m['kind'] == 'skipped'} == {'unsafe name'}, (j.get('error'), escaped, listed, pkg))
+    bomb = Path(tempfile.mkdtemp()) / 'bomb.zip'
+    with zipfile.ZipFile(bomb, 'w', zipfile.ZIP_DEFLATED) as z:
+        zinfo = zipfile.ZipInfo('C/Windows/zeros.bin')
+        zinfo.compress_type = zipfile.ZIP_DEFLATED
+        with z.open(zinfo, 'w', force_zip64=True) as f:
+            for _ in range(1100):
+                f.write(bytes(1 << 20))
+    ev4 = upload(inv, case, bomb.read_bytes(), 'bomb.zip').json['evidence_id']
+    j = _analyse(inv, ev4, {'profile': 'quick'})
+    check('an archive bomb (1.1 GiB of zeros in a ~1 MiB ZIP) is refused before anything is written', j['status'] == 'FAILED'
+          and 'archive bomb' in (j.get('error') or '') and not Path(f'/app/storage/analysis/package/{ev4}').exists(), (j['status'], j.get('error')))
+    folder = Path(f'/app/storage/analysis/package/{ev2}')
+    had = folder.is_dir() and Path(f'/app/storage/analysis/package/{ev2}.manifest.jsonl').exists()
+    d = req('DELETE', f'/api/evidence/{ev2}', inv, {'reason': 'Velociraptor test finished'})
+    check('deleting a collection removes its unpacked files and manifest', had and d.status == 200 and not folder.exists()
+          and not Path(f'/app/storage/analysis/package/{ev2}.manifest.jsonl').exists(), d)
+
+
+@section('12w Linux and macOS (an ext4 disk of a Linux server and a TAR collection of a Mac, vs the generator)')
+def t_unix():
+    inv = C['INVESTIGATOR']
+    db = mongo()
+    if not LINUX_IMG.exists() or not UNIX_EXPECTED.exists():
+        note('Linux and macOS', 'make-test-image.sh has not made them; skipped')
+        return
+    want = json.loads(UNIX_EXPECTED.read_text())
+    L, M = want['linux'], want['macos']
+    case = C['UNIX_CASE'] = post('/api/cases', inv, {'name': 'Linux server and Mac', 'priority': 'LOW'}).json['case_id']
+    ev = upload(inv, case, LINUX_IMG.read_bytes(), 'build-01.dd').json['evidence_id']
+    j = _analyse(inv, ev, {'profile': 'standard'})
+    docs = lambda t, eid=ev: list(db.forensic_artifacts.find({'evidence_id': eid, 'type': t}))
+    tz = (db.analysis_facts.find_one({'evidence_id': ev}) or {}).get('tz_probe') or {}
+    comp = (docs('COMPUTER_INFO') or [{}])[0]
+    fs = (db.analysis_facts.find_one({'evidence_id': ev}) or {}).get('fs_index', {}).get('filesystems') or [{}]
+    check('Linux: an ext4 file system; the time zone from /etc/timezone; host name and release from /etc',
+          j['status'] == 'COMPLETED' and (fs[0].get('filesystem_type') or '').lower().startswith('ext4') and (tz.get('zone'), tz.get('source')) == (L['zone'], 'system')
+          and (comp.get('hostname'), (comp.get('os') or {}).get('product_name'), comp.get('os_family')) == (L['hostname'], L['os'], 'Linux'),
+          (j.get('error'), fs[0].get('filesystem_type'), tz, comp.get('hostname'), comp.get('os')))
+    users = {u['username']: u for u in docs('USER_ACCOUNT')}
+    check('accounts from /etc/passwd, /etc/group and /etc/shadow (never the hash): the second root account flagged; sudo members are admins',
+          {k: v['uid'] for k, v in users.items() if k in L['accounts']} == L['accounts'] and [k for k, v in users.items() if any(f['code'] == 'UID0' for f in v['flags'])] == L['uid0_extra']
+          and users['alice']['admin'] and users['alice'].get('password_state') == 'set' and 'notarealhash' not in json.dumps([dict(u, _id=0) for u in users.values()], default=str),
+          {k: (v['uid'], [f['code'] for f in v['flags']], v.get('admin')) for k, v in users.items()})
+    hist = sorted(docs('SHELL_COMMAND'), key=lambda c: (c['user'] != 'alice', c['order']))
+    alice = [c for c in hist if c['user'] == 'alice']
+    check("alice's bash history with each command's time (HISTTIMEFORMAT); the copy to another computer, wiping and the new root account flagged",
+          [c['command'] for c in alice] == L['history'] and all(c['time'] for c in alice)
+          and {c['command']: c['flags'][0]['code'] for c in alice if c['flags']} == L['flagged_commands'], [(c['command'], [f['code'] for f in c['flags']]) for c in alice])
+    ev_ = docs('UNIX_EVENT')
+    kind = lambda k: [x for x in ev_ if x['kind'] == k]
+    ssh = kind('ssh_login')
+    check('logins: the SSH login with its key and address (auth.log, in local time, made UTC), the earlier login in a rotated .gz log, three failed '
+          'root logins (auth.log and btmp), the session in wtmp with its length',
+          sorted(_dt(x['time']).isoformat() for x in ssh) == sorted([L['old_login'], L['ssh_login']['time']])
+          and any(x.get('ip') == L['ssh_login']['ip'] and x.get('user') == 'alice' for x in ssh)
+          and sorted(_dt(x['time']).isoformat() for x in kind('ssh_failed')) == L['ssh_failed']
+          and sorted(_dt(x['time']).isoformat() for x in kind('failed_login')) == L['ssh_failed']
+          and any(_dt(x['time']).isoformat() == L['session']['login'] and _dt(x.get('logout')).isoformat() == L['session']['logout']
+                  and x.get('host') == L['session']['host'] for x in kind('login')), [(x['kind'], _dt(x['time'])) for x in ev_][:20])
+    usb = kind('usb_connected')
+    check('sudo, the account it added, the SanDisk stick plugged in (with the serial number the laptop saw), the hidden cron job running',
+          [_dt(x['time']).isoformat() for x in kind('sudo')] == [L['sudo_time']] and [x['fields'].get('user') for x in kind('user_added')] == ['sysupdate']
+          and [(_dt(x['time']).isoformat(), x['fields'].get('serial'), x['fields'].get('vid')) for x in usb] == [(L['usb_time'], L['usb_serial'], '0781')]
+          and len(kind('cron_run')) == 2 and len(kind('boot')) == 1, [(x['kind'], x.get('fields')) for x in ev_ if x['kind'] in ('sudo', 'user_added', 'usb_connected')])
+    jobs = {j_['command']: j_ for j_ in docs('SCHEDULED_JOB')}
+    flagged = sorted(c for c, x in jobs.items() if any(f['code'] == 'SUSPICIOUS_COMMAND' for f in x['flags']))
+    check('scheduled jobs and services: the cron job and the enabled service running hidden or temporary programs are flagged; the backup service is not',
+          flagged == sorted(L['jobs_flagged']) and jobs['/tmp/.x/update --daemon']['enabled'] is True and '/usr/local/bin/backup.sh' in jobs
+          and not jobs['/usr/local/bin/backup.sh']['flags'] and any(x['mechanism'] == 'ssh key' for x in jobs.values()), {c: [f['code'] for f in x['flags']] for c, x in jobs.items()})
+    recent = docs('RECENT_DOCUMENT')
+    ff = [b for b in docs('BROWSER_HISTORY') if b.get('browser') == 'Firefox']
+    check('recently used files (GNOME): payroll.csv opened in LibreOffice Calc; Firefox history found in the Linux profile folder',
+          [(x['path'], x['application'], _dt(x['visited']).isoformat()) for x in recent] == [(L['recent']['path'], L['recent']['app'], L['recent']['time'])]
+          and [(b['url'], iso(b['last_visit_time']).isoformat()) for b in ff] == [(L['firefox']['url'], L['firefox']['time'])], (recent, ff))
+    tl = {e['type'] for e in db.timeline_events.find({'evidence_id': ev})}
+    check('the timeline has the shell commands, logins, log events and recent files', {'SHELL_COMMAND', 'UNIX_EVENT', 'RECENT_DOCUMENT', 'FILE_MACB'} <= tl, tl)
+
+    # macOS: a TAR collection.
+    data = MAC_TAR.read_bytes()
+    r = upload(inv, case, data, MAC_TAR.name)
+    ev2 = r.json['evidence_id']
+    j = _analyse(inv, ev2, {'profile': 'standard'})
+    pkg = db.evidence.find_one({'evidence_id': ev2}).get('package') or {}
+    tz = (db.analysis_facts.find_one({'evidence_id': ev2}) or {}).get('tz_probe') or {}
+    comp = (docs('COMPUTER_INFO', ev2) or [{}])[0]
+    check('macOS (TAR collection): the root found, the time zone from the /etc/localtime link the archive recorded, computer name and version',
+          j['status'] == 'COMPLETED' and r.json['package']['archive'] == 'TAR' and [x['os'] for x in pkg.get('roots', [])] == ['macos']
+          and tz.get('zone') == M['zone'] and (comp.get('computer_name'), comp.get('os', {}).get('product_name'), comp.get('os', {}).get('build')) == (M['computer_name'], M['os'], M['build']),
+          (j.get('error'), pkg.get('roots'), tz, comp.get('computer_name'), comp.get('os')))
+    users = {u['username']: u for u in docs('USER_ACCOUNT', ev2)}
+    zsh = [c for c in docs('SHELL_COMMAND', ev2)]
+    check('macOS accounts from the local directory (system accounts left out; alice an admin), zsh history with times, the upload and the wiped sessions flagged',
+          {k: v['uid'] for k, v in users.items()} == M['accounts'] and users['alice']['admin']
+          and [c['command'] for c in sorted(zsh, key=lambda c: c['order'])] == M['zsh'] and all(c['time'] for c in zsh)
+          and {c['command'] for c in zsh if c['flags']} == {M['zsh'][1], M['zsh'][2]}, (users, [(c['command'], c['flags']) for c in zsh]))
+    hist = {b['url']: b for b in docs('BROWSER_HISTORY', ev2) if b.get('browser') == 'Safari'}
+    dl = [b for b in docs('BROWSER_DOWNLOAD', ev2) if b.get('browser') == 'Safari']
+    check('Safari: each address with its last visit (Mac absolute time made UTC), and the download',
+          {u: iso(b['last_visit_time']).isoformat() for u, b in hist.items()} == M['history']
+          and [(d['url'], iso(d['start_time']).isoformat()) for d in dl] == [(M['download']['url'], M['download']['start'])], (hist, dl))
+    q = sorted(docs('QUARANTINE_EVENT', ev2), key=lambda x: x['time'])
+    wifi = {w['ssid']: _dt(w['last_joined']).isoformat() for w in docs('WIFI_NETWORK', ev2)}
+    agents = {j_['name']: j_ for j_ in docs('SCHEDULED_JOB', ev2)}
+    check('quarantined downloads (Safari and a Mail attachment from dmitri), Wi-Fi networks joined (the competitor\'s guest network), the hidden LaunchAgent flagged',
+          [{'time': _dt(x['time']).isoformat(), 'agent': x['agent'], 'url': x['url'], 'sender': x['sender']} for x in q] == M['quarantine']
+          and wifi == M['wifi'] and agents['com.sync.helper']['command'] == M['agent']
+          and any(f['code'] == 'SUSPICIOUS_COMMAND' for f in agents['com.sync.helper']['flags'])
+          and not agents['com.google.keystone.user.agent']['flags'], (q, wifi, {k: (v['command'], v['flags']) for k, v in agents.items()}))
+    check('another investigator sees none of it (404)', get(f'/api/forensics/unix?case_id={case}&type=SHELL_COMMAND', C['INV2']).status == 404)
+    res = get(f'/api/forensics/unix?case_id={case}&type=SHELL_COMMAND&flagged=true', inv).json
+    # alice's four on build-01, root's systemctl enable, and the two on the Mac ('crontab -l' only lists jobs).
+    check('the Linux and macOS records are listed by type, flagged ones on request', res['total'] == 7 and all(x['flags'] for x in res['data']),
+          [(x['user'], x['command']) for x in res.get('data', [])])
+    s = get(f'/api/forensics/search?case_id={case}&q=payroll', inv).json
+    check('keyword search finds the Linux and macOS records (the scp, the shred, the Mac upload, the file opened)', s['totals'].get('unix', 0) >= 4, s['totals'])
+    C['LINUX_E'], C['MAC_E'] = ev, ev2
+
+
+@section('12x More file systems: ext4, HFS+ and APFS (vs fls on the same images)')
+def t_more_filesystems():
+    inv = C['INVESTIGATOR']
+    db = mongo()
+    case = post('/api/cases', inv, {'name': 'File systems', 'priority': 'LOW'}).json['case_id']
+    for name, image in (('ext4 (build-01)', LINUX_IMG), ('HFS+', sample('dfvfs', 'hfsplus.raw')), ('APFS', sample('dfvfs', 'apfs.raw'))):
+        if not image or not Path(image).exists():
+            note(name, 'image not available; skipped')
+            continue
+        ev = upload(inv, case, Path(image).read_bytes(), f'{name.split()[0]}.dd').json['evidence_id']
+        j = _analyse(inv, ev, {'profile': 'quick'})
+        fs = (db.analysis_facts.find_one({'evidence_id': ev}) or {}).get('fs_index', {}).get('filesystems') or []
+        if name == 'APFS':
+            apsb = sh('pstat', str(image)).stdout.decode()
+            block = re.search(r'APSB Block Number:\s*(\d+)', apsb).group(1)
+            truth = sh('fls', '-P', 'apfs', '-B', block, '-r', '-p', str(image)).stdout.decode()
+        else:
+            truth = sh('fls', '-r', '-p', str(image)).stdout.decode()
+        want = {'/' + x.split(':\t', 1)[1] for x in truth.splitlines() if ':\t' in x and '*' not in x.split(':\t')[0] and not x.lower().startswith(('v/v', '-/'))}
+        got = {x['path'] for x in db.fs_entries.find({'evidence_id': ev, 'deleted': False, 'is_virtual': False})}
+        check(f'{name}: every allocated file and folder fls lists is indexed', j['status'] == 'COMPLETED' and want and want <= got,
+              (j.get('error'), [f.get('filesystem_type') for f in fs], sorted(want - got)[:5]))
+        if name == 'APFS':
+            pw = db.fs_entries.find_one({'evidence_id': ev, 'path': '/passwords.txt'})
+            import base64
+            vid = pw['volume_id']
+            pg = get(f"/api/forensics/evidence/{ev}/content?inode={pw['inode']}&offset=0&volume_id={urllib.parse.quote(vid)}", inv).json
+            truth_bytes = sh('icat', '-P', 'apfs', '-B', block, str(image), pw['inode']).stdout
+            check('APFS: the volume is p0/apfs<block>, and the file viewer reads a file as icat does',
+                  vid == f'p0/apfs{block}' and base64.b64decode(pg.get('data_b64') or '') == truth_bytes[:4096] and truth_bytes, (vid, pg.get('size')))
+
+
+@section('12y Plaso timelines (json_line and l2tcsv of the scenario disk made by the pinned Plaso image, vs the files and DFIP\'s own event logs)')
+def t_plaso():
+    import csv as csv_mod
+    inv = C['INVESTIGATOR']
+    db = mongo()
+    if not PLASO_JSON.exists():
+        note('Plaso', 'make-plaso-timeline.sh has not been run; skipped')
+        return
+    A, E = C['A'], C['E']
+    path = f'/api/cases/{A}/timeline-imports'
+    up = lambda token, name, data, ev=None: form('POST', path, token, {'evidence_id': ev} if ev else {}, name, data)
+    check('importing needs ANALYSIS_RUN (viewer 403), case access (404), evidence of the case (400) and a Plaso file (400)',
+          up(C['VIEWER'], 'x.jsonl', PLASO_JSON.read_bytes()).status == 403
+          and form('POST', f'/api/cases/{A}/timeline-imports', C['INV2'], {}, 'x.jsonl', b'{}').status == 404
+          and up(inv, 'x.jsonl', PLASO_JSON.read_bytes(), 'EVID-999').status == 400 and up(inv, 'notes.txt', b'hello\n').status == 400)
+    rows = [json.loads(x) for x in PLASO_JSON.read_text(encoding='utf-8').splitlines() if x.strip()]
+    timed = [x for x in rows if x.get('timestamp')]
+    r = up(inv, PLASO_JSON.name, PLASO_JSON.read_bytes(), E)
+    jb = wait_job(inv, r.json['job_id']) if r.status == 200 else {}
+    imp = next((x for x in get(path, inv).json['data'] if x['import_id'] == r.json.get('import_id')), {})
+    from collections import Counter
+    parsers = Counter(x['parser'] for x in timed)
+    check('json_line: every event with a time imported (those without counted), per parser as in the file; the file kept with its SHA-256',
+          jb.get('status') == 'COMPLETED' and imp.get('events') == len(timed) and imp.get('events_without_time') == len(rows) - len(timed)
+          and imp.get('parsers') == dict(parsers) and imp.get('sha256') == _sha(PLASO_JSON.read_bytes()), (jb.get('error'), imp, len(timed)))
+    events = list(db.timeline_events.find({'import_id': r.json.get('import_id')}))
+    by_line = {e['import_line']: e for e in events}
+    in_file = {n: json.loads(x) for n, x in enumerate(PLASO_JSON.read_text(encoding='utf-8').splitlines(), 1) if x.strip()}
+    sample_ok = all(n in by_line and by_line[n]['timestamp'].replace(tzinfo=timezone.utc) == datetime(1970, 1, 1, tzinfo=timezone.utc)
+                    + timedelta(milliseconds=d['timestamp'] // 1000) and by_line[n]['parser'] == d['parser']  # MongoDB keeps milliseconds
+                    for n, d in in_file.items() if d.get('timestamp'))
+    tl = get(f'/api/forensics/timeline?case_id={A}&type=PLASO_EVENT&limit=1', inv).json
+    check('each imported event keeps Plaso\'s time, parser and description, and is on the case timeline as PLASO_EVENT',
+          sample_ok and tl['total'] == len(timed) and all(e['parser'] and e['description'] for e in events), (tl.get('total'), events[:1]))
+    # Cross-check: Plaso and DFIP read the same event log records at the same times (EVTX keeps UTC FILETIMEs).
+    plaso_evtx = {(x.get('record_number'), datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=x['timestamp']))
+                  for x in timed if x['parser'] == 'winevtx' and x.get('timestamp_desc') == 'Creation Time'}
+    dfip_evtx = {(x['record_id'], x['time'].replace(tzinfo=timezone.utc)) for x in db.event_records.find({'evidence_id': E}, {'record_id': 1, 'time': 1})}
+    check('Plaso\'s event log records are DFIP\'s own, record for record, at the same times', plaso_evtx and plaso_evtx <= dfip_evtx,
+          (len(plaso_evtx), sorted(plaso_evtx - dfip_evtx)[:3]))
+    fat = next((x for x in timed if x['parser'] == 'filestat' and (x.get('display_name') or '').endswith('project-notes.txt')
+                and x['timestamp_desc'] == 'Content Modification Time'), None)
+    if fat:
+        note('Plaso and FAT times', f"Plaso reads project-notes.txt as modified "
+             f"{datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=fat['timestamp'])}; the file was modified 2026-08-28 16:04:10 UTC "
+             '(the generator and the Sleuth Kit agree): this Plaso version reads FAT dates a month late and without the computer\'s time zone')
+    # l2tcsv: MACB rows (one row can stand for several times of an event).
+    with PLASO_CSV.open(encoding='utf-8', newline='') as f:
+        csv_rows = list(csv_mod.DictReader(f))
+    csv_timed = [x for x in csv_rows if x['date'] != '00/00/0000']
+    r2 = up(inv, PLASO_CSV.name, PLASO_CSV.read_bytes(), E)
+    jb2 = wait_job(inv, r2.json['job_id']) if r2.status == 200 else {}
+    imp2 = next((x for x in get(path, inv).json['data'] if x['import_id'] == r2.json.get('import_id')), {})
+    check('l2tcsv: every row with a date imported, with its MACB letters', jb2.get('status') == 'COMPLETED' and imp2.get('events') == len(csv_timed)
+          and db.timeline_events.count_documents({'import_id': imp2.get('import_id'), 'macb': {'$ne': None}}) == len(csv_timed), (jb2.get('error'), imp2.get('events'), len(csv_timed)))
+    d = req('DELETE', f"{path}/{imp2['import_id']}", inv)
+    check('deleting an import removes its events; imports and deletions are audited', d.status == 200 and d.json['events_removed'] == len(csv_timed)
+          and not db.timeline_events.count_documents({'import_id': imp2['import_id']})
+          and {a['action'] for a in db.audit_logs.find({'action': {'$in': ['TIMELINE_IMPORTED', 'TIMELINE_IMPORT_DELETED']}})} == {'TIMELINE_IMPORTED', 'TIMELINE_IMPORT_DELETED'}, d)
+    C['PLASO_IMPORT'] = r.json.get('import_id')
+
+
 @section('13 Indicators, patterns and anomalies')
 def t_indicators():
     inv, A = C['INVESTIGATOR'], C['A']
@@ -4462,7 +4776,8 @@ PHASES = {
     'main': [t_platform, t_samples, t_auth, t_register, t_cases, t_rbac, t_evidence, t_analysis, t_modules, t_filesystem, t_source,
              t_recovery, t_viewer, t_timeline,
              t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_email, t_chat_cloud, t_browser_depth,
-             t_comms_samples, t_media, t_malware, t_disk_formats, t_encrypted_volumes, t_shadow_copies, t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
+             t_comms_samples, t_media, t_malware, t_disk_formats, t_encrypted_volumes, t_shadow_copies, t_packages, t_unix, t_more_filesystems, t_plaso,
+             t_indicators, t_carving, t_search, t_findings, t_tags, t_analyst, t_reports, t_audit, t_notifications,
              t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],

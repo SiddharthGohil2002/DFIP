@@ -12,7 +12,7 @@ import shutil
 from pymongo import UpdateOne
 
 from .. import media as md
-from ..source import TskImageSource, open_entry
+from ..source import open_entry
 from ..timeline import _with_nk
 from .base import Module
 from .fileproc import _inode_order
@@ -79,7 +79,7 @@ class MediaModule(Module):
                 ctx.warn(f'Only the first {cap:,} of {n:,} {kind} were processed')
         tz = ctx.fact('tz_probe', 'zone') if ctx.fact('tz_probe', 'source') in ('registry', 'override') else None
         self.out = media_root() / ctx.eid
-        self.src = TskImageSource(ctx.image)
+        self.src = ctx.source()
         work = ctx.work / 'media'
         todo = pictures + videos
         events = []

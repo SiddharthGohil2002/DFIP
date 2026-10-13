@@ -12,7 +12,6 @@ import bisect
 import re
 import shutil
 
-from ..source import TskImageSource
 from ..text_index import Writer, unallocated_index_path
 from ..textextract import Extracted
 from ..tools import TOOLS
@@ -82,7 +81,7 @@ class UnallocatedModule(Module):
 
     def run(self, ctx):
         filesystems = [f for f in (ctx.fact('fs_index', 'filesystems') or []) if f.get('fls_status') == 'COMPLETED']
-        src = TskImageSource(ctx.image)
+        src = ctx.source()
         final = unallocated_index_path(ctx.eid)
         self.writer = Writer(final.with_name(f'{final.stem}.{ctx.run_id}.tmp'))
         self.ctx, self.chars, self.scanned, self.docs = ctx, 0, 0, 0

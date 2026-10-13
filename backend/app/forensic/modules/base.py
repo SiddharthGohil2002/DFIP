@@ -72,6 +72,21 @@ class ModuleContext:
         self._last_pct = band[0]
         self._last_poll = 0.0
         self._deadline = deadline
+        self._source = None
+
+    # -- evidence content -----------------------------------------------------------
+    @property
+    def logical(self) -> bool:
+        """A package of collected files (no partitions, no unallocated space, no deleted entries)."""
+        from ..source import is_logical
+        return is_logical(self.evidence)
+
+    def source(self):
+        """Where files are read from: the disk image through pytsk3, or the unpacked package's folders."""
+        if self._source is None:
+            from ..source import evidence_source
+            self._source = evidence_source(self.evidence, self.image)
+        return self._source
 
     # -- output ----------------------------------------------------------------
     def tag(self, doc: dict) -> dict:

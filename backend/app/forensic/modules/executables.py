@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .. import pe
-from ..source import TskImageSource, open_entry
+from ..source import open_entry
 from .base import Module
 from .fileproc import _inode_order
 
@@ -44,7 +44,7 @@ class ExecutablesModule(Module):
         if len(entries) > MAX_PROGRAMS:
             ctx.warn(f'Only the first {MAX_PROGRAMS:,} of {len(entries):,} programs were analysed')
             entries = entries[:MAX_PROGRAMS]
-        src = TskImageSource(ctx.image)
+        src = ctx.source()
         docs = []
         for n, e in enumerate(entries):
             ctx.progress(n / max(1, len(entries)) * 0.7, e['path'][-60:])

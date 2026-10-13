@@ -19,7 +19,7 @@ from .. import jumplists as jl
 from .. import srum as sr
 from .. import thumbcache as tc
 from .. import winsearch as ws
-from ..source import BlobRef, TskImageSource
+from ..source import BlobRef
 from ..timeline import _with_nk
 from .base import Module
 
@@ -83,7 +83,7 @@ class UserActivityModule(Module):
              'container': {'$exists': False}, 'path': {'$regex': _CANDIDATES, '$options': 'i'}},
             {'path': 1, 'inode': 1, 'volume_id': 1, 'size': 1}))
         by_path = {e['path'].lower(): e for e in entries}
-        self.src = TskImageSource(ctx.image)
+        self.src = ctx.source()
         accounts = dict(ctx.fact('computer', 'accounts', {}) or {})
         self.sid_names = dict(WELL_KNOWN_SIDS, **accounts)
         self.rows, self.events, self.files = [], [], []

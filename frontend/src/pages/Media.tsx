@@ -20,7 +20,7 @@ type Point = { _id: string; path: string; lat: number; lon: number; taken?: stri
 const fileName = (p: string) => p.split('!/').pop()!.split('/').pop()!;
 const osm = (lat: number, lon: number) => `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`;
 const source = (it: Item): ViewSource => (it.container ? { kind: 'member', entryId: it._id, name: it.path }
-  : { kind: 'image', evidenceId: it.evidence_id, inode: it.inode!, offset: it.partition_offset || 0, name: it.path });
+  : { kind: 'image', evidenceId: it.evidence_id, inode: it.inode!, offset: it.partition_offset || 0, name: it.path, volumeId: (it as any).volume_id });
 
 export function MediaPage() {
   const { caseId, overview } = useCase();

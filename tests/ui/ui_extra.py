@@ -72,6 +72,29 @@ def volumes_case():
 VOL_CASE, (BDE_EV, VSS_EV) = volumes_case()
 
 
+def unix_case():
+    """The Linux server's disk, the Mac collection and the laptop's KAPE collection, analysed (quick)."""
+    token = api('POST', '/auth/login', body={'email': 'investigator@dfip.local', 'password': PW})['access_token']
+    case_id = api('POST', '/cases', token, {'name': f'UI extra — Linux, Mac, collections {uuid.uuid4().hex[:4]}', 'priority': 'LOW'})['case_id']
+    ids = []
+    for path in ('/img/dfip-linux-disk.dd', '/img/dfip-test-macos.tar', '/img/dfip-test-kape.zip'):
+        b = uuid.uuid4().hex
+        data = (f'--{b}\r\nContent-Disposition: form-data; name="case_id"\r\n\r\n{case_id}\r\n'
+                f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{path.rsplit("/", 1)[-1]}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() \
+            + open(path, 'rb').read() + f'\r\n--{b}--\r\n'.encode()
+        eid = api('POST', '/evidence/upload', token, raw=data, ctype=f'multipart/form-data; boundary={b}')['evidence_id']
+        job = api('POST', f'/jobs/analysis/{eid}', token, {'profile': 'quick'})['job_id']
+        for _ in range(300):
+            if api('GET', f'/jobs/{job}', token)['status'] in ('COMPLETED', 'FAILED'):
+                break
+            time.sleep(1)
+        ids.append(eid)
+    return case_id, ids
+
+
+UNIX_CASE, (LINUX_EV, MAC_EV, KAPE_EV) = unix_case()
+
+
 def check(name, cond, detail=''):
     results.append(bool(cond))
     print(('  PASS ' if cond else '  FAIL ') + name + ('' if cond else f'  ::  {detail}'), flush=True)
@@ -318,6 +341,39 @@ with sync_playwright() as p:
     page.keyboard.press('Escape')
     page.keyboard.press('Escape')
 
+    print('== Linux and macOS, collections, Plaso timelines')
+    page.get_by_label('Active case').select_option(UNIX_CASE)
+    page.get_by_role('link', name='Linux and macOS').first.click()
+    row = page.locator('tr', has_text='scp ~/exports/payroll.csv')
+    expect(row.get_by_text('Copies data to another computer')).to_be_visible()
+    page.get_by_label('Only what stands out').check()
+    expect(page.locator('tbody tr')).to_have_count(7)
+    check('shell history: commands with their times, the copy to another computer flagged; "only what stands out" leaves the seven', True)
+    page.screenshot(path=f'{OUT}/x16-unix-history.png', full_page=True)
+    page.get_by_role('tab', name=re.compile(r'^Logins and logs')).click()
+    expect(page.locator('tr', has_text='Logged in over SSH').filter(has_text='198.51.100.23').first).to_be_visible()
+    page.get_by_role('tab', name=re.compile(r'^Jobs and services')).click()
+    expect(page.locator('tr', has_text='/tmp/.x/update --daemon').get_by_text(re.compile('temporary or hidden folder'))).to_be_visible()
+    page.get_by_role('tab', name=re.compile(r'^Wi-Fi networks')).click()
+    expect(page.locator('tr', has_text='Rival-Guest')).to_be_visible()
+    check('logins, flagged services and the Mac\'s Wi-Fi networks are listed', True)
+    page.goto(f'{BASE}/app/evidence/{KAPE_EV}')
+    coll = page.locator('.card', has=page.get_by_role('heading', name='Collection'))
+    expect(coll).to_contain_text('ZIP of collected files: 67 files unpacked read-only')
+    expect(coll).to_contain_text('2026-09-01T190512_LAPTOP-07/C')
+    check('a KAPE collection shows how it was unpacked and the drive found in it', True)
+    page.get_by_role('link', name='Timeline').first.click()
+    page.get_by_role('button', name='Import a Plaso timeline').click()
+    d = page.get_by_role('dialog')
+    d.get_by_label('Timeline file').set_input_files('/img/dfip-test-disk.plaso.jsonl')
+    d.get_by_role('button', name='Import').click()
+    imp = page.locator('.card', has=page.get_by_role('heading', name='Imported timelines'))
+    expect(imp.get_by_text('COMPLETED')).to_be_visible(timeout=60000)
+    page.get_by_label('Event type').select_option('plaso')
+    expect(page.get_by_text('Plaso', exact=True).first).to_be_visible()
+    check('a Plaso timeline is imported from the Timeline page and its events shown with the Plaso filter', True)
+    page.screenshot(path=f'{OUT}/x17-plaso-import.png', full_page=True)
+
     print('== bad session')
     page.evaluate("() => { sessionStorage.setItem('dfip_token', 'garbage'); sessionStorage.setItem('dfip_refresh', 'garbage'); }")
     page.goto(BASE + '/app/timeline')
@@ -443,7 +499,7 @@ with sync_playwright() as p:
         sign_in(page, 'investigator@dfip.local')
         expect(page.get_by_text('Investigation functions')).to_be_visible()
         bad = []
-        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/shadow-copies', '/app/usb', '/app/reports', '/app/custody'):
+        for path in ('/app', '/app/files', '/app/timeline', '/app/browser', '/app/email', '/app/chat-cloud', '/app/media', '/app/indicators', '/app/shadow-copies', '/app/unix', '/app/usb', '/app/reports', '/app/custody'):
             page.goto(BASE + path)
             page.wait_for_load_state('networkidle')
             sw = page.evaluate('document.documentElement.scrollWidth')

@@ -11,7 +11,7 @@ import hashlib
 from pymongo import UpdateOne
 
 from ..filetypes import ENTROPY_BYTES, HEAD_BYTES, ZIP_LOCAL, category, encryption, entropy, histogram, mismatch, refine_zip
-from ..source import BlobRef, TskImageSource
+from ..source import BlobRef
 from .base import Module
 
 CHUNK = 1 << 20
@@ -39,7 +39,7 @@ class FileProcModule(Module):
         import magic
         mime_of = magic.Magic(mime=True)
         describe = magic.Magic()
-        src = TskImageSource(ctx.image)
+        src = ctx.source()
         entries = list(ctx.db['fs_entries'].find(
             {'evidence_id': ctx.eid, 'pipeline': True, 'is_dir': False, 'is_virtual': False, 'container': {'$exists': False}},
             {'path': 1, 'name': 1, 'inode': 1, 'volume_id': 1, 'size': 1, 'deleted': 1}))

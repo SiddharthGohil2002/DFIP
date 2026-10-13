@@ -218,7 +218,7 @@ function FileIndex({ caseId, evidenceId, deletedOnly, members, initialFlag, onRe
                     <td className="nowrap right">
                       {!f.is_dir && <Button size="sm" variant="ghost" className="icon-btn" icon={<Info size={15} />} onClick={() => setDetails(f)} aria-label={`Details of ${f.path}`} title="Hashes, type and same content" />}{' '}
                       <TagButton type="FILE" id={f._id} title={f.path} />{' '}
-                      {viewable && <ViewButton source={f.container ? { kind: 'member', entryId: f._id, name: f.path } : { kind: 'image', evidenceId, inode: f.inode, offset: f.partition_offset, name: f.path }} />}{' '}
+                      {viewable && <ViewButton source={f.container ? { kind: 'member', entryId: f._id, name: f.path } : { kind: 'image', evidenceId, inode: f.inode, offset: f.partition_offset, name: f.path, volumeId: (f as any).volume_id }} />}{' '}
                       {rec ? (
                         <Button size="sm" icon={<Download size={13} />} onClick={() => downloadFile(`/forensics/artifacts/${rec.artifact_id}/download`, rec.filename).catch((e) => toast(e.message, 'danger'))}>
                           Download

@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from .. import event_catalog as cat
 from .. import sigma_lite
 from ..eventlogs import EvtxLog
-from ..source import BlobRef, TskImageSource
+from ..source import BlobRef
 from ..timeline import _with_nk
 from ..usb import split_instance
 from .base import Module
@@ -126,7 +126,7 @@ class EventLogsModule(Module):
         self.timeline_capped = False
         self.usb: list[dict] = []
         self.total = 0
-        src = TskImageSource(ctx.image)
+        src = ctx.source()
         logs = []
         for n, e in enumerate(entries):
             ctx.progress(n / len(entries), e['path'].rsplit('/', 1)[-1])

@@ -132,7 +132,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
                             [[e['evidence_id'], e.get('sha256')] for e in evidence], [1, 5], mono_cols=(1,)))
         story.append(Spacer(1, 10))
     read_as = [[e['evidence_id'], _how_read(e), (e.get('working_copy') or {}).get('sha256')] for e in evidence
-               if e.get('image_files') or e.get('working_copy') or e.get('derived_from')]
+               if e.get('image_files') or e.get('working_copy') or e.get('derived_from') or e.get('package')]
     if read_as:
         story.append(Paragraph('Images in several files are hashed file by file and as a whole (above). Images that are not raw are '
                                'read through a raw working copy, made once and hashed; decrypted volumes are evidence of their own, '
@@ -541,6 +541,37 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
               for e in db['event_records'].find(q, {'xml': 0, 'text': 0, 'data': 0}).sort('time', 1).limit(MAX_ROWS)],
              [1.2, 1.5, 0.65, 1.15, 3.7], 'No notable events were found.', total=db['event_records'].count_documents(q), heading=H3)
 
+    # Linux and macOS (module unix).
+    ux_title = T('Linux and macOS')
+    story.append(Paragraph(escape(ux_title), H2))
+    story.append(Paragraph('Linux and macOS computers from disk images or collections. Shell history times are kept by the shell when it was '
+                           'configured to; syslog lines carry local times, read in the computer\'s time zone.', NOTE))
+    n = ux_title.split('.')[0]
+    flagged = lambda f: '; '.join(x['label'] for x in f or [])
+    q = {'case_id': cid, 'type': 'SHELL_COMMAND', 'flags.0': {'$exists': True}}
+    _section(story, f'{n}.1 Shell commands that stand out', ['Time', 'User', 'Command', 'Why'],
+             [[x.get('time'), x.get('user'), x.get('command'), flagged(x.get('flags'))] for x in art.find(q).sort([('time', 1), ('order', 1)]).limit(MAX_ROWS)],
+             [1.3, 0.8, 3.6, 1.8], 'No shell command stands out (or no Linux or macOS computer was analysed).',
+             total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'UNIX_EVENT', 'notable': True}
+    _section(story, f'{n}.2 Logins and notable log events', ['Time', 'Event', 'User', 'From', 'Log'],
+             [[x.get('time'), x.get('label') + (f": {x['summary']}" if x.get('summary') else ''), x.get('user'), x.get('ip') or x.get('host'), x.get('log')]
+              for x in art.find(q).sort('time', 1).limit(MAX_ROWS)],
+             [1.3, 3.2, 0.8, 1.2, 0.8], 'No logins or notable log events.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': 'SCHEDULED_JOB', 'notable': True}
+    _section(story, f'{n}.3 Scheduled jobs and services that stand out', ['Kind', 'Name', 'Runs', 'Why'],
+             [[x.get('mechanism'), x.get('name'), x.get('command'), flagged(x.get('flags'))] for x in art.find(q).sort('name', 1).limit(MAX_ROWS)],
+             [0.8, 1.5, 3.0, 2.2], 'No scheduled job or service stands out.', total=art.count_documents(q), heading=H3)
+    q = {'case_id': cid, 'type': {'$in': ['QUARANTINE_EVENT', 'WIFI_NETWORK', 'RECENT_DOCUMENT']}}
+    _section(story, f'{n}.4 Downloads, recent files and Wi-Fi networks', ['Time', 'What', 'Detail'],
+             [[x.get('time') or x.get('visited') or x.get('last_joined'),
+               {'QUARANTINE_EVENT': 'Downloaded', 'WIFI_NETWORK': 'Joined Wi-Fi', 'RECENT_DOCUMENT': 'Opened'}[x['type']],
+               {'QUARANTINE_EVENT': f'{x.get("url") or "email from " + str(x.get("sender"))} (by {x.get("agent")})',
+                'WIFI_NETWORK': f'{x.get("ssid")} ({x.get("security") or "security not recorded"})',
+                'RECENT_DOCUMENT': f'{x.get("path")} with {x.get("application")}'}[x['type']]]
+              for x in art.find(q).sort([('type', 1), ('time', 1)]).limit(MAX_ROWS)],
+             [1.4, 1.1, 4.9], 'None were found.', total=art.count_documents(q), heading=H3)
+
     # Malware indicators (modules yara, clamav, executables, reputation).
     mw_title = T('Malware indicators')
     story.append(Paragraph(escape(mw_title), H2))
@@ -610,7 +641,7 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     tagged = sorted(db['tags'].find({'case_id': cid}), key=lambda t: (tag_order.get(t.get('label'), 9), str((t.get('snapshot') or {}).get('timestamp') or '')))
     item_kind = {'FILE': 'File', 'TIMELINE_EVENT': 'Timeline event', 'BROWSER': 'Browser record', 'USB': 'USB device',
                  'ACTIVITY': 'Windows activity', 'ARTIFACT': 'Recovered / carved file', 'ENTITY': 'Found data',
-                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity', 'USN': 'USN journal record', 'SHADOW_FILE': 'Shadow copy file',
+                 'REGISTRY': 'Registry activity', 'EVENT': 'Event log record', 'WINDOWS': 'Windows activity', 'USN': 'USN journal record', 'SHADOW_FILE': 'Shadow copy file', 'UNIX': 'Linux or macOS record',
                  'EMAIL': 'Email', 'CHAT_CLOUD': 'Chat or cloud storage record', 'PROGRAM': 'Program'}
     _section(story, T('Tagged evidence'), ['Label', 'Item', 'Type', 'Time', 'Note', 'Tagged by'],
              [[(t.get('label') or '').replace('_', ' ').capitalize(),
@@ -620,7 +651,16 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
              [0.8, 2.8, 1.1, 1.3, 2.2, 1.1], 'No items have been tagged.')
 
     # Notable events: everything except per-file MACB entries, plus MACB entries of deleted files.
-    notable_q = {'case_id': cid, '$or': [{'type': {'$ne': 'FILE_MACB'}}, {'deleted': True}]}
+    imports = list(db['timeline_imports'].find({'case_id': cid}).sort('created_at', 1))
+    _section(story, T('Imported timelines'), ['Import', 'File', 'Format', 'Events', 'Parsers', 'SHA-256'],
+             [[i['import_id'], i.get('filename'), i.get('format'), i.get('events'),
+               ', '.join(f'{k} {v}' for k, v in list((i.get('parsers') or {}).items())[:5]), i.get('sha256')] for i in imports],
+             [0.8, 1.6, 0.8, 0.7, 2.4, 1.6], 'No timeline was imported.', mono_cols=(5,))
+    if imports:
+        story.append(Paragraph('Imported events are Plaso\'s own; they are on the case timeline in DFIP and not repeated below.', NOTE))
+
+    # Notable events: everything except per-file MACB entries (and imported Plaso events), plus MACB entries of deleted files.
+    notable_q = {'case_id': cid, '$or': [{'type': {'$nin': ['FILE_MACB', 'PLASO_EVENT']}}, {'deleted': True, 'type': 'FILE_MACB'}]}
     notable = list(db['timeline_events'].find(notable_q).sort('timestamp', 1).limit(MAX_ROWS))
     file_events = db['timeline_events'].count_documents({'case_id': cid, 'type': 'FILE_MACB'})
     story.append(PageBreak())
@@ -649,6 +689,11 @@ def _how_read(e: dict) -> str:
     if d:
         how = {'password': 'password', 'recovery_password': 'recovery password'}.get(d.get('method'), d.get('method'))
         parts.append(f'Decrypted {d.get("kind")} volume {d.get("volume_id")} of {d.get("evidence_id")}, unlocked with a {how}')
+    pkg = e.get('package')
+    if pkg:
+        roots = ', '.join(f'{r["volume_id"]} = {r["path"] or "(top)"} ({r["os"] or "files"})' for r in pkg.get('roots') or [])
+        parts.append(f'Collection ({pkg.get("archive")}): {pkg.get("files") or 0:,} files unpacked read-only' + (f'; file systems {roots}' if roots else '')
+                     + (f'; manifest SHA-256 {pkg["manifest_sha256"]}' if pkg.get('manifest_sha256') else ''))
     files = e.get('image_files') or []
     if files:
         parts.append(f'{(e.get("image_set") or {}).get("label") or e.get("format")} in {len(files)} files: '

@@ -15,10 +15,11 @@ const METHODS: Record<string, string[]> = { BitLocker: ['password', 'recovery_pa
 export function ImageFilesCard({ evidence: e }: { evidence: Evidence }) {
   const time = useTime();
   const wc = e.working_copy;
-  if (!e.image_files?.length && !wc && !e.derived_from) return null;
+  if (!e.image_files?.length && !wc && !e.derived_from && !e.package) return null;
+  const pkg = e.package;
   return (
-    <Card title="Image files and working copy" flush
-      subtitle={e.derived_from ? undefined : 'Each file of the image is hashed on its own and in order as a whole (the SHA-256 above). Images that are not raw are read through a raw working copy, made once and hashed.'}>
+    <Card title={pkg ? 'Collection' : 'Image files and working copy'} flush
+      subtitle={e.derived_from || pkg ? undefined : 'Each file of the image is hashed on its own and in order as a whole (the SHA-256 above). Images that are not raw are read through a raw working copy, made once and hashed.'}>
       <div className="stack" style={{ gap: 0 }}>
         {e.derived_from && (
           <div style={{ padding: '12px 16px' }}>
@@ -43,6 +44,16 @@ export function ImageFilesCard({ evidence: e }: { evidence: Evidence }) {
               </tbody>
             </table>
           </div>
+        )}
+        {pkg && (
+          <dl className="kv" style={{ padding: '12px 16px' }}>
+            <dt>Collection</dt><dd className="small">{pkg.archive} of collected files{pkg.files != null
+              ? `: ${pkg.files.toLocaleString()} files unpacked read-only (${formatBytes(pkg.bytes || 0)})${pkg.links ? `, ${pkg.links} links recorded` : ''}${pkg.skipped ? `, ${pkg.skipped} unsafe or duplicate entries left out` : ''}`
+              : ' (unpacked by the first analysis)'}</dd>
+            {!!pkg.roots?.length && (<><dt>File systems found</dt><dd className="small">{pkg.roots.map((r) => (
+              <div key={r.volume_id}><span className="mono">{r.volume_id}</span> · {r.os ? { windows: 'Windows', linux: 'Linux', macos: 'macOS' }[r.os] : 'files'} · <span className="mono">{r.path || '(top)'}</span></div>))}</dd></>)}
+            {pkg.manifest_sha256 && (<><dt>Manifest SHA-256</dt><dd><Hash value={pkg.manifest_sha256} /></dd></>)}
+          </dl>
         )}
         {wc && (
           <dl className="kv" style={{ padding: '12px 16px' }}>

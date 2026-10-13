@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .. import chat_cloud as cc
-from ..source import BlobRef, TskImageSource
+from ..source import BlobRef
 from ..timeline import _with_nk
 from .base import Module
 
@@ -43,7 +43,7 @@ class ChatCloudModule(Module):
         self.ctx = ctx
         for key in list(COUNT_KEYS.values()) + ['timeline_events']:
             ctx.count(key, 0)
-        self.src = TskImageSource(ctx.image)
+        self.src = ctx.source()
         self.rows, self.events, files = [], [], []
         entries = list(ctx.db['fs_entries'].find(
             {'evidence_id': ctx.eid, 'pipeline': True, 'deleted': False, 'is_virtual': False, 'is_dir': False,

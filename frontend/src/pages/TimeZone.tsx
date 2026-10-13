@@ -9,6 +9,7 @@ export function describeTimeZone(tz?: EvidenceTimeZone | null): string {
   if (!tz) return 'Not analysed yet';
   if (tz.source === 'override') return `${tz.zone} (set by ${tz.override?.set_by_name || 'an investigator'}: ${tz.override?.reason})`;
   if (tz.source === 'registry') return `${tz.zone} (${tz.detected?.key_name || 'Windows time zone'}, from the SYSTEM hive)`;
+  if (tz.source === 'system') return `${tz.zone} (from ${(tz.detected as any)?.file || 'the system files'})`;
   return `${tz.zone} (no time zone found in the evidence)`;
 }
 
@@ -86,7 +87,7 @@ function TimeZoneModal({ evidence, open, onClose, onQueued }: { evidence: Eviden
         <p className="small muted" style={{ margin: 0 }}>
           Windows stores FAT file times and setupapi.dev.log in the computer's local time. The file system index and
           what is built on it are re-run with the zone you choose; the change and your reason go to the audit log.
-          {tz?.detected?.zone && <> The SYSTEM hive says <span className="strong">{tz.detected.key_name}</span> ({tz.detected.zone}).</>}
+          {tz?.detected?.key_name && <> The SYSTEM hive says <span className="strong">{tz.detected.key_name}</span> ({tz.detected.zone}).</>}
         </p>
         <label className="check">
           <input type="radio" name="tzmode" checked={mode === 'set'} onChange={() => setMode('set')} />

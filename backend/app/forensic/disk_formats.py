@@ -20,9 +20,11 @@ VIRTUAL = ('VHD', 'VHDX', 'VMDK', 'QCOW2')
 EWF = ('E01', 'EX01')
 RAW = 'RAW'
 LABELS = {'E01': 'EnCase (E01)', 'EX01': 'EnCase (Ex01)', 'RAW': 'Raw (dd)', 'AFF': 'Advanced Forensic Format', 'AFF4': 'AFF4',
-          'VHD': 'Virtual Hard Disk (VHD)', 'VHDX': 'Virtual Hard Disk v2 (VHDX)', 'VMDK': 'VMware disk (VMDK)', 'QCOW2': 'QEMU disk (QCOW2)'}
+          'VHD': 'Virtual Hard Disk (VHD)', 'VHDX': 'Virtual Hard Disk v2 (VHDX)', 'VMDK': 'VMware disk (VMDK)', 'QCOW2': 'QEMU disk (QCOW2)',
+          'LOGICAL': 'Logical package (collected files)'}
 # File name extensions accepted for upload (numbered parts of a split raw image are accepted too).
 EXTENSIONS = ('E01', 'EX01', 'RAW', 'DD', 'IMG', 'AFF', 'AFF4', 'VHD', 'VHDX', 'VMDK', 'QCOW2', 'QCOW')
+LOGICAL = 'LOGICAL'  # a package of collected files (ZIP or TAR), see packages.py
 _SPLIT = re.compile(r'^(?P<base>.+)\.(?P<n>\d{3,4})$')
 _EWF = re.compile(r'^(?P<base>.+)\.(?P<seg>E(?:X)?(?:\d\d|[A-Z][A-Z]))$', re.I)
 CHUNK = 4 << 20
@@ -33,8 +35,9 @@ class SetError(ValueError):
 
 
 def extension_ok(name: str) -> bool:
+    from .packages import is_package_name
     ext = Path(name).suffix.lstrip('.').upper()
-    return ext in EXTENSIONS or bool(_SPLIT.match(name)) or bool(_EWF.match(name))
+    return ext in EXTENSIONS or bool(_SPLIT.match(name)) or bool(_EWF.match(name)) or is_package_name(name)
 
 
 def detect(path: Path) -> str:
@@ -58,6 +61,9 @@ def detect(path: Path) -> str:
         return 'VMDK'
     if head.startswith(b'QFI\xfb'):
         return 'QCOW2'
+    from .packages import archive_kind
+    if archive_kind(path):
+        return LOGICAL
     if path.suffix.upper() in ('.AFF', '.AFF4'):
         return path.suffix.upper().lstrip('.')
     return RAW
@@ -165,6 +171,8 @@ def classify(paths: list[Path]) -> dict:
     if dup:
         raise SetError(f'The same file name was uploaded twice: {", ".join(sorted(dup))}')
     formats = {p: detect(p) for p in paths}
+    if LOGICAL in formats.values() and len(paths) > 1:
+        raise SetError('A package of collected files (ZIP or TAR) is uploaded on its own, as one evidence item')
     if len(paths) == 1:
         p = paths[0]
         fmt = formats[p]

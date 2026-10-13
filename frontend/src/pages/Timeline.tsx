@@ -7,6 +7,7 @@ import { TagButton } from '../lib/tags';
 import type { TimelineEvent } from '../lib/types';
 import { Badge, Button, Card, Empty, ErrorBanner, Loading, PageHeader, Pager, type Tone } from '../ui';
 import { niceMax } from '../ui/charts';
+import { TimelineImportsCard } from './TimelineImports';
 
 const LIMIT = 100;
 const TYPE_FILTERS: Record<string, { label: string; types: string }> = {
@@ -16,14 +17,19 @@ const TYPE_FILTERS: Record<string, { label: string; types: string }> = {
   browser: { label: 'Browser activity', types: 'BROWSER_VISIT,BROWSER_DOWNLOAD' },
   usb: { label: 'USB activity', types: 'USB_ACTIVITY' },
   activity: { label: 'Windows activity', types: 'PROGRAM_RUN,RECENT_FILE_OPENED,FILE_DELETED_TO_RECYCLE_BIN' },
+  unix: { label: 'Linux and macOS', types: 'SHELL_COMMAND,UNIX_EVENT,RECENT_DOCUMENT,QUARANTINE_EVENT,WIFI_NETWORK' },
+  plaso: { label: 'Imported (Plaso)', types: 'PLASO_EVENT' },
 };
 const TYPE_TONE: Record<string, Tone> = {
   FILE_MACB: 'neutral', BROWSER_VISIT: 'info', BROWSER_DOWNLOAD: 'accent', USB_ACTIVITY: 'warn',
   PROGRAM_RUN: 'ok', RECENT_FILE_OPENED: 'info', FILE_DELETED_TO_RECYCLE_BIN: 'danger',
+  SHELL_COMMAND: 'accent', UNIX_EVENT: 'warn', PLASO_EVENT: 'neutral',
 };
 const TYPE_LABEL: Record<string, string> = {
   FILE_MACB: 'File MACB', BROWSER_VISIT: 'Browser visit', BROWSER_DOWNLOAD: 'Download', USB_ACTIVITY: 'USB',
   PROGRAM_RUN: 'Program run', RECENT_FILE_OPENED: 'File opened', FILE_DELETED_TO_RECYCLE_BIN: 'Recycled',
+  SHELL_COMMAND: 'Shell command', UNIX_EVENT: 'Login / log', RECENT_DOCUMENT: 'File opened', QUARANTINE_EVENT: 'Download',
+  WIFI_NETWORK: 'Wi-Fi', PLASO_EVENT: 'Plaso',
 };
 
 export function TimelinePage() {
@@ -67,7 +73,7 @@ export function TimelinePage() {
     <div className="stack">
       <PageHeader
         title="Timeline"
-        subtitle="One chronology of filesystem MACB times (m = modified, a = accessed, c = changed, b = born/created), browser visits and downloads, USB device events, and Windows activity (programs run, files opened, files recycled)."
+        subtitle="One chronology of filesystem MACB times (m = modified, a = accessed, c = changed, b = born/created), browser visits and downloads, USB device events, Windows, Linux and macOS activity, and timelines imported from Plaso."
       />
 
       <Card>
@@ -136,6 +142,7 @@ export function TimelinePage() {
         )}
         {events.data && <Pager skip={skip} limit={LIMIT} total={events.data.total} onChange={setSkip} />}
       </Card>
+      <TimelineImportsCard onChanged={() => { events.reload(); hist.reload(); }} />
     </div>
   );
 }

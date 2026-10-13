@@ -1,6 +1,6 @@
 import {
   Activity, BarChart3, Monitor, Bookmark, Clock, FileClock, FileText, FileX, Fingerprint, FolderOpen, Globe, HardDrive, Layers, LayoutDashboard, Link2, ListChecks, Mail,
-  MessagesSquare, NotebookPen, Images, Bug, History, ScanSearch, ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
+  MessagesSquare, NotebookPen, Images, Bug, History, ScanSearch, SquareTerminal, ScrollText, Search, ShieldAlert, Usb, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { CaseCounts } from '../lib/types';
 
@@ -118,6 +118,13 @@ export const NAV: NavGroup[] = [
         count: (c) => c.shadow_copies ?? 0,
         alert: (c) => (c.shadow_deleted ?? 0) > 0,
         countLabel: (c) => `${n(c.shadow_copies ?? 0)} snapshots · ${n(c.shadow_deleted ?? 0)} files deleted since`,
+      },
+      {
+        to: '/app/unix', label: 'Linux and macOS', icon: SquareTerminal, tone: 'teal',
+        description: 'Linux and macOS computers: shell history, logins and logs, cron, systemd and launchd jobs, recent files, downloads and Wi-Fi networks.',
+        count: (c) => (c.shell_commands ?? 0) + (c.unix_events ?? 0) + (c.scheduled_jobs ?? 0),
+        alert: (c) => (c.shell_commands_flagged ?? 0) + (c.scheduled_jobs_flagged ?? 0) > 0,
+        countLabel: (c) => `${n(c.shell_commands_flagged ?? 0)} commands and ${n(c.scheduled_jobs_flagged ?? 0)} jobs stand out`,
       },
       {
         to: '/app/computer', label: 'Computer and users', icon: Monitor, tone: 'teal',

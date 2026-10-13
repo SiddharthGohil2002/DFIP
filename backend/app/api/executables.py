@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..database import get_db
 from ..forensic import pe
 from ..forensic.modules.base import run_tool
-from ..forensic.source import TskImageSource, open_entry
+from ..forensic.source import evidence_source, open_entry
 from ..forensic.working_image import WorkingCopyUnavailable, analysis_image
 from ..repositories.cases import get_case
 from ..security import current_user, require_write
@@ -88,7 +88,7 @@ def capa(artifact_id: str, u=Depends(require_write('ANALYSIS_RUN'))):
         raise HTTPException(409, str(exc))
     work = Path(tempfile.mkdtemp(prefix='dfip_capa_'))
     try:
-        blob = open_entry(TskImageSource(Path(image)), doc['evidence_id'], entry)
+        blob = open_entry(evidence_source(evidence, Path(image)), doc['evidence_id'], entry)
         (work / 'program.bin').write_bytes(blob.read(0, blob.size))
         result = pe.run_capa(work / 'program.bin', run_tool)
     finally:

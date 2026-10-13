@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..rulesets import compile_rules
-from ..source import TskImageSource, open_entry
+from ..source import open_entry
 from .base import Module
 
 RULES_FILE = Path(__file__).resolve().parents[3] / 'rules' / 'default.yar'
@@ -53,7 +53,7 @@ class YaraModule(Module):
         if len(candidates) > MAX_FILES:
             ctx.warn(f'{len(candidates):,} files could be scanned with YARA; only the first {MAX_FILES:,} (by path) were')
             candidates = candidates[:MAX_FILES]
-        src = TskImageSource(ctx.image)
+        src = ctx.source()
         scanned, total_bytes, hits = 0, 0, []
         for n, c in enumerate(candidates):
             if total_bytes + c['size'] > MAX_TOTAL_BYTES:

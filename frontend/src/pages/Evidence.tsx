@@ -13,7 +13,7 @@ const SUPPORTED = ['E01', 'EX01', 'RAW', 'DD', 'IMG', 'AFF', 'AFF4', 'VHD', 'VHD
 /** A disk image file name: a known extension, an EnCase segment (.E02, .EAA, .Ex02) or a numbered part (.001). */
 const supportedName = (name: string) => {
   const ext = name.split('.').pop()?.toUpperCase() || '';
-  return SUPPORTED.includes(ext) || /^\d{3,4}$/.test(ext) || /^E(X?\d\d|[A-Z]{2})$/.test(ext);
+  return SUPPORTED.includes(ext) || /^\d{3,4}$/.test(ext) || /^E(X?\d\d|[A-Z]{2})$/.test(ext) || /\.(zip|tar|tgz|tar\.gz)$/i.test(name);
 };
 
 export function EvidencePage() {
@@ -166,7 +166,7 @@ function UploadCard({ evidence, onUploaded }: { evidence: Evidence[]; onUploaded
   }
 
   return (
-    <Card title="Add a disk image" subtitle="E01 (with all its segments), raw/dd (also split into numbered parts .001, .002 ...), VHD, VHDX, VMDK, QCOW2 (with their parent disks) and AFF. Choose every file of one image together; large images upload directly to the server's evidence store.">
+    <Card title="Add a disk image" subtitle="E01 (with all its segments), raw/dd (also split into numbered parts .001, .002 ...), VHD, VHDX, VMDK, QCOW2 (with their parent disks), AFF, and collections of files as ZIP or TAR (KAPE, Velociraptor, CyLR, UAC). Choose every file of one image together; large images upload directly to the server's evidence store.">
       <div className="stack" style={{ gap: 12 }}>
         <div
           className={`dropzone ${over ? 'over' : ''}`}

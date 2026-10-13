@@ -114,10 +114,11 @@ def inode_stat(path: Path, inode: int, offset: int = 0):
             'tool':'istat','inode':inode,'offset':offset,'stdout':r.get('stdout',''),'stderr':r.get('stderr','')}
 
 
-def recover_file(image: Path, inode: int | str, destination: Path, offset: int = 0):
+def recover_file(image: Path, inode: int | str, destination: Path, offset: int = 0, volume_args: list[str] | None = None):
+    """icat a file to destination; volume_args select the volume when the offset alone does not (an APFS volume)."""
     destination.parent.mkdir(parents=True, exist_ok=True)
-    args=[]
-    if offset: args += ['-o', str(offset)]
+    args=list(volume_args or [])
+    if offset and not volume_args: args += ['-o', str(offset)]
     args += [str(image), str(inode)]
     binary=shutil.which(TOOLS['sleuthkit_icat'])
     if not binary:
