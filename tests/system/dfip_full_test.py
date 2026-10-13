@@ -3867,6 +3867,10 @@ def t_unix():
           [(x['user'], x['command']) for x in res.get('data', [])])
     s = get(f'/api/forensics/search?case_id={case}&q=payroll', inv).json
     check('keyword search finds the Linux and macOS records (the scp, the shred, the Mac upload, the file opened)', s['totals'].get('unix', 0) >= 4, s['totals'])
+    rep = post(f'/api/reports?case_id={case}', inv)
+    text = ' '.join(_pdf_text(get(f"/api/reports/{rep.json['report_id']}/download", inv).body).split()) if rep.status == 200 else ''
+    check("a report of the Linux server and the Mac: their names and time zones in Computer and users (a zone name, not Windows' registry record)",
+          rep.status == 200 and L['hostname'] in text and L['zone'] in text and M['zone'] in text, (rep.status, rep.detail))
     C['LINUX_E'], C['MAC_E'] = ev, ev2
 
 

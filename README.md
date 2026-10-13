@@ -9,9 +9,9 @@ DFIP is a production-oriented digital-forensics case-management and examination 
 - **Database:** MongoDB with indexes and migration-safe startup
 - **Evidence:** filesystem-backed original store with SHA-256 manifest and read-only permissions
 - **Jobs:** Celery workers on Redis; job state in MongoDB
-- **Forensic adapters:** allow-listed integrations for The Sleuth Kit, ExifTool, tshark, YARA, Volatility and strings when installed
+- **Analysis:** 28 analysis modules (`backend/app/forensic/modules/`) in three profiles (quick, standard, full), run by Celery workers; external tools (The Sleuth Kit, libyal tools, tshark, Volatility 3, ClamAV, capa, ExifTool, ffmpeg, Tesseract, 7-Zip and others) run without a shell, in their own process group, under time and memory limits
 - **Security:** JWT access/refresh tokens, PBKDF2-SHA256 password hashing, RBAC, audit hash chain, CORS controls
-- **Reporting:** PDF generation with report hash
+- **Reporting:** report templates; signed PDF (PAdES, optional RFC 3161 timestamp) and the same content as HTML, each with its SHA-256; tables as CSV and XLSX, the case as CASE/UCO JSON-LD, indicators as STIX 2.1 and MISP
 - **Realtime:** authenticated WebSocket notifications
 - **Deployment:** Docker Compose, Nginx static frontend, health checks
 
@@ -47,15 +47,15 @@ Disable demo mode and remove/rotate these identities before production deploymen
 
 1. Create a case.
 2. Acquire/export the source image using your approved acquisition procedure.
-3. Upload the E01/EX01/RAW/DD/AFF/AFF4 image into the evidence register.
+3. Upload the evidence: a disk image (E01 with its segments, raw or split raw, VHD, VHDX, VMDK, QCOW2, AFF), a collection of files (ZIP or TAR: KAPE, Velociraptor, phone extractions), a network capture (pcap, pcapng) or a memory image (raw, crash dump, LiME).
 4. DFIP computes SHA-256 and records acquisition metadata.
 5. The original object is marked immutable and written read-only at the filesystem layer.
 6. Verify integrity whenever required.
-7. Run analysis as a background job or through the interactive analysis endpoint.
+7. Run the analysis as a background job with a profile (Quick triage, Standard, Full) or chosen modules; unlock encrypted volumes with their key when needed.
 8. Use specialist adapters when their tools are installed.
-9. Review timeline, browser/USB/network/email/malware artifacts, patterns and anomalies.
-10. Create evidence-linked findings.
-11. Generate a versioned PDF report and retain its SHA-256.
+9. Review the results: files and their hashes, content search, timeline, browser, USB, Windows activity and registry, event logs, NTFS internals, shadow copies, email, chat and cloud, pictures, programs and malware indicators, Linux and macOS, network captures, phones and memory images; the link graph and the case summary.
+10. Create evidence-linked findings, with pictures; have another investigator review and approve them.
+11. Generate a signed report from a template (PDF and HTML, SHA-256 recorded); export tables, the case (CASE/UCO) or its indicators (STIX, MISP).
 12. Review the chain of custody and tamper-evident audit chain.
 
 ## Production hardening checklist
@@ -114,17 +114,15 @@ DFIP does not claim that a web application alone replaces a validated forensic a
 
 ## Integrated forensic tooling
 
-The default backend image is wired to run these tools in a controlled worker context:
+The backend image holds the tools the analysis modules run (`backend/Dockerfile`, `backend/requirements.txt`, exact versions pinned):
 
-- The Sleuth Kit (`mmls`, `fsstat`, `fls`, `istat`, `icat`) for volume/filesystem examination and selected-file recovery.
-- libewf / `ewf-tools` for E01/EWF support at the image/tooling layer.
-- ExifTool for recovered-file metadata.
-- YARA for static rule matching.
-- `strings` and `file` for lightweight triage.
-- tshark for PCAP analysis.
-- Volatility 3 for memory-image triage (`windows.info` baseline check).
-
-The Debian package names used by the image are `sleuthkit`, `ewf-tools`, `libewf2`, `libimage-exiftool-perl`, `tshark`, and `yara`; these are available in Debian Bookworm. Volatility 3 is installed from PyPI; its current release is 2.28.0 and its CLI uses the `vol` command.
+- **Disks and file systems:** The Sleuth Kit (pytsk3 in-process, and `mmls`, `fls`, `icat`, `istat`, `blkls`), libewf, libvhdi, libvmdk, libqcow, libbde (BitLocker), libluksde (LUKS), libvshadow (Volume Shadow Copies), libfsntfs (MFT, alternate data streams, USN journal), APFS through the Sleuth Kit.
+- **Windows artefacts:** regipy and libregf (registry), libscca (Prefetch), liblnk and libolecf (shortcuts, Jump Lists), libevtx (event logs) with a Sigma-subset rule engine, libesedb (SRUM, Windows Search).
+- **Files and content:** libmagic, yara-python, pdftotext, 7-Zip, olefile and defusedxml, an SQLite FTS5 trigram index per evidence item, google-re2.
+- **Email, chat and media:** libpff (PST/OST), Python's mailbox and email modules, ExifTool, Pillow, ffmpeg, Tesseract OCR.
+- **Malware:** pefile, signify (Authenticode), capa with pinned rules, ClamAV (databases downloaded or added offline), YARA rule sets, VirusTotal lookups (off unless a case turns them on).
+- **Networks, phones and memory:** tshark (pcap, pcapng), DFIP's own Android and iOS readers, Volatility 3 (with symbol packs; offline unless `MEMORY_SYMBOL_SERVER` is on).
+- **Reports and exports:** ReportLab, pyHanko (PAdES signatures), openpyxl, stix2, case-utils.
 
 No specialist tool is invoked through a shell, and original evidence is never used as a writable destination.
 
@@ -138,7 +136,7 @@ One React codebase in `frontend/`, built for two targets:
 | After sign-in | The case workspace | The same case workspace, plus workstation details and local hash verification |
 | Server | Same origin (nginx proxies `/api`) | Configurable on the sign-in page (default `http://localhost:8000`) |
 
-The workspace is organised around an **active case** (switcher in the top bar). Its home screen, the *case desktop*, shows the evidence with live analysis progress and a tile for every function with live counts: Evidence, Files (hashes, real types, renamed and encrypted files, deleted files, archive contents), Timeline, Browser history, USB devices, Windows activity, Computer and users, Indicators (YARA, hash sets, renamed and encrypted files, patterns, anomalies), File carving, Found data (email, web and IP addresses, phone, card, IBAN, crypto and Aadhaar numbers in the file contents), Keyword search (names and records, file contents, regular expressions), Findings, Tagged items, Reports and Chain of custody. Administrators also get Users, Audit log and Hash sets. Actions a role cannot perform are hidden; the server enforces every permission regardless. Times display in UTC by default (switchable to local time in the top bar).
+The workspace is organised around an **active case** (switcher in the top bar). Its home screen, the *case desktop*, shows the evidence with live analysis progress and a tile for every function with live counts: Evidence and Physical evidence; Files, Timeline, Browser history, Email, Chat and cloud, Phones, Network, Pictures and videos, USB devices, Windows activity, Event logs, File system journal, Shadow copies, Linux and macOS, Memory, Computer and users; Indicators, File carving, Found data, Link graph, Case summary and Keyword search; Findings (with peer review), Tagged items, Reports and Chain of custody. Administrators also get Users, Audit log, Hash sets, Malware rules, Retention and System & tools (with the memory symbol packs). Every table exports as CSV or XLSX. Actions a role cannot perform are hidden; the server enforces every permission regardless. Times display in UTC by default (switchable to local time in the top bar).
 
 Development: `npm run dev` (web, port 5173, proxies the API on 8000) or `npm run dev:desktop` (desktop UI in a browser, port 1420).
 

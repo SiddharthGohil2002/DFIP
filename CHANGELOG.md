@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed — found while wrapping up
+- A report of a case holding a Linux or macOS computer failed: the Computer and users section expected every computer's time zone in Windows' registry form. It now shows the zone name for Linux and macOS (and the column is headed "System").
+- The README's tooling, workflow and workspace sections describe the current platform; the desktop installer is rebuilt with every feature.
+
 ### Added — Memory images
 - **Memory images** (new `memory` module and **Memory** page): Windows memory captures (raw, complete crash dumps, LiME, VMware .vmem) are evidence of their own, read with Volatility 3: the Windows release and the capture time, processes as a tree with their paths and command lines, network connections, code injected into processes (malfind, with its first bytes), services, and the DLLs of the processes that stand out. Processes, connections, services and DLLs that stand out are flagged with the reason (look-alike names, the wrong folder or parent, a second lsass.exe, a shell started by Word, encoded PowerShell, injected code, temporary folders, programs that rarely connect). Injected code is listed with the malware indicators; internet addresses can be looked up with threat intelligence and go into the STIX and MISP exports.
 - Raw captures with other names are uploaded with "This is a memory image" on the Evidence page; a process minidump is refused. An image Volatility cannot read fails its analysis saying why (no Windows kernel, a Linux kernel, missing symbols).

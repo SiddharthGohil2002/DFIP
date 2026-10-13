@@ -242,13 +242,15 @@ def build_case_report(db, case: dict, report_id: str, version: int, path: Path, 
     def _s_computer():
         computers = list(db['forensic_artifacts'].find({'evidence_id': {'$in': eids}, 'type': 'COMPUTER_INFO'}))
         users = list(db['forensic_artifacts'].find({'evidence_id': {'$in': eids}, 'type': 'USER_ACCOUNT'}).sort([('evidence_id', 1), ('rid', 1)]))
-        _section(story, T('Computer and users'), ['Evidence', 'Computer', 'Windows', 'Installed', 'Last shutdown', 'Time zone', 'IP addresses'],
+        # Windows keeps its time zone as a registry record; Linux and macOS as a zone name.
+        zone = lambda tz: tz.get('key_name') if isinstance(tz, dict) else tz
+        _section(story, T('Computer and users'), ['Evidence', 'Computer', 'System', 'Installed', 'Last shutdown', 'Time zone', 'IP addresses'],
                  [[c['evidence_id'], c.get('computer_name'),
                    ' '.join(str(x) for x in ((c.get('os') or {}).get('product_name'), (c.get('os') or {}).get('display_version'),
                                              f'build {(c.get("os") or {}).get("build")}' if (c.get('os') or {}).get('build') else None) if x),
                    (c.get('os') or {}).get('install_date'), c.get('last_shutdown'),
-                   (c.get('time_zone') or {}).get('key_name'), ', '.join(i['ip'] for i in c.get('interfaces') or [])] for c in computers],
-                 [0.9, 1.1, 1.6, 1.2, 1.2, 1.3, 1.2], 'No Windows registry (SYSTEM, SOFTWARE, SAM) was found on the evidence.')
+                   zone(c.get('time_zone')), ', '.join(i['ip'] for i in c.get('interfaces') or [])] for c in computers],
+                 [0.9, 1.1, 1.6, 1.2, 1.2, 1.3, 1.2], 'No Windows registry (SYSTEM, SOFTWARE, SAM) or Linux and macOS system files were found on the evidence.')
         if users:
             story.append(_table(['Evidence', 'User', 'Full name', 'SID', 'Last logon', 'Logons', 'Profile', 'Account'],
                                 [[u['evidence_id'], u.get('username'), u.get('full_name'), u.get('sid'), u.get('last_logon'),
