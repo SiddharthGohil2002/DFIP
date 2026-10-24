@@ -2,6 +2,8 @@
 
 DFIP is a production-oriented digital-forensics case-management and examination suite with a MongoDB system of record, immutable evidence workflow, SHA-256 integrity verification, chain of custody, tamper-evident audit logging, RBAC, background analysis jobs, specialist-tool adapters, investigator workspaces, administration, WebSockets, and forensic reporting.
 
+> **New here?** Go straight to [Run DFIP with Docker (step-by-step)](#run-dfip-with-docker-step-by-step). It takes you from an empty computer to a running DFIP, one command at a time.
+
 ## Architecture
 
 - **UI:** one React 19 + TypeScript + Vite codebase (`frontend/`) built twice: the **web** portal (public website + sign-in + workspace, served by nginx) and the **desktop** app (sign-in + workspace only, inside the Tauri 2 shell in `desktop/`)
@@ -15,33 +17,250 @@ DFIP is a production-oriented digital-forensics case-management and examination 
 - **Realtime:** authenticated WebSocket notifications
 - **Deployment:** Docker Compose, Nginx static frontend, health checks
 
-## Quick start
+## Run DFIP with Docker (step-by-step)
 
-1. Install Docker Desktop / Docker Engine + Compose.
-2. Copy `.env.example` to `.env` and replace `JWT_SECRET`, MongoDB root credentials, and CORS settings.
-3. For a first demo run, keep `DEMO_MODE=true`. With `DEMO_MODE=false`, the backend refuses to start with a placeholder `JWT_SECRET` and requires `ADMIN_PASSWORD` for the initial `admin@dfip.local` account.
-4. Writes (cases, uploads, analysis, findings, reports) are allowed from the web portal and enforced by RBAC. Set `REQUIRE_DESKTOP_FOR_WRITES=true` to restrict writes to registered DFIP desktop workstations; the web portal reads this from `/health` and becomes read-only.
-5. Accounts: users can create an account from the sign-in page (web and desktop). With the default `REGISTRATION_MODE=approval` it stays pending until an administrator approves it and picks its role (Users page); `open` activates accounts immediately as investigators, `disabled` hides the option. Sign-in is required every time the desktop app starts and in every new browser session.
-6. On Linux hosts, make `./storage` writable by the container user: `sudo chown -R 10001:10001 storage`.
-7. Start:
+This guide assumes you have never used Docker before. Follow the steps in order and do not skip any. You type every command into a **terminal**:
+
+- **Windows:** use **PowerShell**. Press the Start button, type `PowerShell` and press Enter. (Do not use Git Bash for these commands.)
+- **macOS:** use **Terminal** (Applications → Utilities → Terminal).
+- **Linux:** use your usual terminal app.
+
+When a command is different on Windows and on macOS/Linux, both versions are shown. Type (or paste) one command, press Enter, and wait for it to finish before typing the next one.
+
+### What you will have at the end
+
+Docker runs DFIP as six **containers**. A container is a small, isolated program package that brings everything it needs with it. You do **not** install Python, Node.js, MongoDB, Redis or any forensic tool yourself; Docker builds and runs all of them for you.
+
+| Container | What it does | Where you reach it |
+|---|---|---|
+| `dfip-frontend` | The website and the investigator workspace (nginx) | http://localhost |
+| `dfip-backend` | The API that the website talks to (FastAPI) | http://localhost:8000 |
+| `dfip-celery-worker` | Runs the forensic analysis jobs in the background | — |
+| `dfip-celery-beat` | Starts scheduled work (the daily retention check) | — |
+| `dfip-mongodb` | The database (cases, evidence records, results) | port 27017 |
+| `dfip-redis` | The job queue between the API and the worker | — |
+
+Uploaded evidence, analysis output and reports are saved in the `storage/` folder of the project, so you can see them on your own disk.
+
+### Step 0: Check your computer
+
+- **Operating system:** 64-bit Windows 10 or 11, macOS, or Linux.
+- **Memory:** 8 GB RAM or more is recommended.
+- **Disk space:** at least **10 GB free**. The finished Docker images take about 4 GB (the backend image alone is about 2.5 GB because it contains all the forensic tools), and the evidence you upload is stored on top of that.
+- **Internet:** needed for the first build, which downloads the base images and tools.
+- **Free ports:** 80, 8000 and 27017 must not be used by another program. If one is, see [Troubleshooting](#troubleshooting).
+
+### Step 1: Install Git
+
+Git is the tool that downloads (clones) the project code.
+
+- **Windows:** download Git from https://git-scm.com/download/win, run the installer and keep all the default options.
+- **macOS:** run `git --version`. If Git is missing, macOS offers to install the "Command Line Developer Tools"; click **Install**.
+- **Linux (Ubuntu/Debian):** `sudo apt update && sudo apt install -y git`
+
+Check that it worked (close and reopen the terminal first on Windows):
 
 ```bash
-docker compose up --build
+git --version
 ```
 
-8. Open `http://localhost`.
-9. API health: `http://localhost:8000/health`.
+You should see something like `git version 2.x.x`.
 
-### Demo accounts
+### Step 2: Install Docker and start it
 
-Only for local demonstration with `DEMO_MODE=true`:
+- **Windows:** install **Docker Desktop** from https://www.docker.com/products/docker-desktop/. During setup keep **"Use WSL 2 instead of Hyper-V"** ticked, and restart the computer when asked. If Docker Desktop later says WSL is missing or too old, open PowerShell **as Administrator** (right-click PowerShell → *Run as administrator*), run `wsl --install` (or `wsl --update`), and restart again.
+- **macOS:** install **Docker Desktop** from the same page. Pick the download that matches your Mac's chip (Apple silicon or Intel).
+- **Linux:** install **Docker Engine** and the **Docker Compose plugin** by following https://docs.docker.com/engine/install/ for your distribution. Then let your user run Docker without `sudo`: run `sudo usermod -aG docker $USER`, then log out and log back in.
 
-- `admin@dfip.local` / `DemoPassword!2026`
-- `investigator@dfip.local` / `DemoPassword!2026`
-- `analyst@dfip.local` / `DemoPassword!2026`
-- `viewer@dfip.local` / `DemoPassword!2026`
+**Start Docker.** On Windows and macOS, open the **Docker Desktop** app and wait until it shows **Engine running** at the bottom left. Docker must be running every time you use DFIP. The commands below fail if it is not.
 
-Disable demo mode and remove/rotate these identities before production deployment.
+Check that Docker works:
+
+```bash
+docker --version
+docker compose version
+docker run --rm hello-world
+```
+
+The first two commands print version numbers. The last one prints `Hello from Docker!`. If you see `Cannot connect to the Docker daemon` or `failed to connect to the docker API`, Docker is not running yet: start Docker Desktop, wait for **Engine running**, and try again.
+
+> Use `docker compose` (with a space). The old `docker-compose` command (with a dash) is outdated and is not used in this guide.
+
+### Step 3: Download the project
+
+Go to the folder where you want the project (for example your Documents folder), then clone it:
+
+```bash
+cd ~/Documents
+git clone https://github.com/SiddharthGohil2002/DFIP.git
+cd DFIP
+```
+
+`cd ~/Documents` works in PowerShell, macOS and Linux. **Run every remaining command from inside this `DFIP` folder.** To check that you are in the right place, run `ls`: you should see `docker-compose.yml`, `backend`, `frontend` and `storage` in the list.
+
+### Step 4: Create your settings file (`.env`)
+
+DFIP reads its settings from a file named `.env`. The project ships a template called `.env.example`; copy it:
+
+| Windows (PowerShell) | macOS / Linux |
+|---|---|
+| `Copy-Item .env.example .env` | `cp .env.example .env` |
+
+**For a first run on your own computer you do not need to change anything.** Demo mode is switched on, and demo accounts are created for you.
+
+If other people can reach your computer over the network, change the passwords **before Step 6**. Open `.env` in a text editor (`notepad .env` on Windows, `open -e .env` on macOS, `nano .env` on Linux) and replace these three values with your own long random text:
+
+- `JWT_SECRET`: at least 32 characters
+- `MONGO_ROOT_PASSWORD`
+- `REDIS_PASSWORD`
+
+To generate random text, use `[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')` in PowerShell, or `openssl rand -hex 32` on macOS/Linux.
+
+> **Important:** MongoDB stores its password the **first** time it starts. If you change `MONGO_ROOT_PASSWORD` after DFIP has already run once, the backend can no longer sign in to the database. Either set it before the first start, or reset the database as described in [Step 10](#step-10-everyday-commands).
+
+`.env` holds your secrets, so it is listed in `.gitignore` and never uploaded to GitHub.
+
+### Step 5 (Linux only): Let the containers write to `storage/`
+
+The backend runs inside its container as user ID `10001` and needs to write evidence and reports into `storage/`. On Linux, give that user ownership of the folder:
+
+```bash
+sudo chown -R 10001:10001 storage
+```
+
+Windows and macOS users skip this step.
+
+### Step 6: Build and start DFIP
+
+```bash
+docker compose up -d --build
+```
+
+What the parts mean:
+
+- `up` creates and starts all six containers.
+- `-d` (detached) runs them in the background, so you get your terminal back.
+- `--build` builds the DFIP images from the code in this folder.
+
+**The first build takes a while** (often 10–30 minutes, depending on your internet speed), because Docker downloads base images and installs many forensic tools. You will see a lot of output scrolling by; that is normal. Later starts take only seconds. If the build stops with a network error, run the same command again: Docker continues from the steps that already finished.
+
+The command is done when you see lines like these and get your prompt back:
+
+```
+ ✔ Container dfip-redis           Healthy
+ ✔ Container dfip-mongodb         Healthy
+ ✔ Container dfip-celery-beat     Started
+ ✔ Container dfip-backend         Healthy
+ ✔ Container dfip-celery-worker   Started
+ ✔ Container dfip-frontend        Started
+```
+
+> **Windows shortcut:** `.\start-dfip.ps1` does Steps 4 and 6 for you. It creates `.env` if it is missing, starts DFIP, waits until it is ready, and opens your browser. Use `.\start-dfip.ps1 -Rebuild` after you download new code. If PowerShell says *"running scripts is disabled on this system"*, run it like this instead: `powershell -ExecutionPolicy Bypass -File .\start-dfip.ps1`
+
+### Step 7: Check that everything is running
+
+```bash
+docker compose ps
+```
+
+You should see all six containers with a **STATUS** of `Up`. The three that have health checks (`dfip-backend`, `dfip-mongodb` and `dfip-redis`) should also show `(healthy)`. Your output has a few more columns than this example:
+
+```
+NAME                 SERVICE         STATUS
+dfip-backend         backend         Up 2 minutes (healthy)
+dfip-celery-beat     celery_beat     Up 2 minutes
+dfip-celery-worker   celery_worker   Up 2 minutes
+dfip-frontend        frontend        Up 2 minutes
+dfip-mongodb         mongodb         Up 2 minutes (healthy)
+dfip-redis           redis           Up 2 minutes (healthy)
+```
+
+If a container shows `(health: starting)`, wait a minute and run the command again.
+
+Then open http://localhost:8000/health in your browser. You should see:
+
+```json
+{"status":"ok","database":"mongodb","version":"2.1.0","demo_mode":true,"require_desktop_for_writes":false,"registration_mode":"approval"}
+```
+
+`"status":"ok"` means the API is running and connected to the database. If it says `"degraded"` instead, see [Troubleshooting](#troubleshooting).
+
+### Step 8: Open DFIP and sign in
+
+1. Open **http://localhost** in your browser. You see the DFIP website.
+2. Click **Sign in** (top right).
+3. Under **Demo accounts**, click one of the accounts. Its email and password are filled in for you. Then click the sign-in button.
+
+| Account | Password | Role |
+|---|---|---|
+| `investigator@dfip.local` | `DemoPassword!2026` | Investigator: full case work (start with this one) |
+| `analyst@dfip.local` | `DemoPassword!2026` | Analyst: analysis and findings |
+| `viewer@dfip.local` | `DemoPassword!2026` | Viewer: read only |
+| `admin@dfip.local` | `DemoPassword!2026` | Administrator: everything, plus user management |
+
+These accounts exist **only while `DEMO_MODE=true`**. They are for trying DFIP on your own computer. Turn demo mode off before real use (see [Settings you can change](#settings-you-can-change)).
+
+### Step 9 (optional): Analyse a sample disk image
+
+You need a disk image to analyse. The project can generate a small (64 MiB) Windows-like test disk with known deleted files, browser history, USB devices and more. From the `DFIP` folder:
+
+```bash
+docker run --rm -v "${PWD}:/repo" -w /repo python:3.11-slim sh scripts/test-image/make-test-image.sh
+```
+
+This command works as written in PowerShell, macOS and Linux. It takes a few minutes and creates `storage/test-images/dfip-test-disk.dd`.
+
+Then, in DFIP (signed in as the investigator):
+
+1. Click **New case**, enter a name, and click **Create case**.
+2. On the case's home screen, click **Add evidence**, choose `storage/test-images/dfip-test-disk.dd`, and click **Upload and seal**. DFIP calculates the file's SHA-256 and SHA-512 and stores it read-only.
+3. Click **Run analysis**. Progress appears on the case's home screen. A small test disk finishes within a few minutes.
+4. Explore the results: Files, Timeline, Browser history, USB devices, Windows activity and more.
+
+The full investigation workflow is described in [Forensic workflow](#forensic-workflow) below.
+
+### Step 10: Everyday commands
+
+Run these from the `DFIP` folder:
+
+| I want to… | Command |
+|---|---|
+| Stop DFIP (all data is kept) | `docker compose stop` (Windows: `.\stop-dfip.ps1`) |
+| Start it again | `docker compose up -d` |
+| See what is running | `docker compose ps` |
+| Watch the logs of the API | `docker compose logs -f backend` (press `Ctrl+C` to stop watching) |
+| Watch the logs of the analysis worker | `docker compose logs -f celery_worker` |
+| Update to the newest code | `git pull`, then `docker compose up -d --build` |
+| Remove the containers but keep the data | `docker compose down` |
+| **Delete everything**, including the database | `docker compose down -v`. Uploaded files stay in `storage/`; delete them yourself if you also want those gone |
+
+`docker compose logs` uses the **service** names (`backend`, `celery_worker`, `frontend`, `mongodb`, `redis`, `celery_beat`), not the container names.
+
+### Troubleshooting
+
+| Problem | What to do |
+|---|---|
+| `Cannot connect to the Docker daemon` / `failed to connect to the docker API` | Docker is not running. Start Docker Desktop and wait for **Engine running**. |
+| `port is already allocated` / `ports are not available` / `address already in use` | Another program (another web server, IIS, Skype, or a second copy of DFIP) is using port 80, 8000 or 27017. Stop that program, or change the left-hand number in `docker-compose.yml`, for example `ports: ["8080:80"]`, and then open http://localhost:8080. (`start-dfip.ps1` always checks port 80, so use the `docker compose` commands if you change it.) |
+| http://localhost shows *502 Bad Gateway* or says the server is not reachable | The backend is still starting. Wait a minute, then refresh. Check `docker compose ps`. |
+| `dfip-backend` is `unhealthy` or keeps restarting | Read its log: `docker compose logs backend`. |
+| Backend log shows `Authentication failed` from MongoDB | `MONGO_ROOT_PASSWORD` in `.env` was changed after the first start. Put the old value back, **or** reset the database with `docker compose down -v` (this deletes all cases) and run `docker compose up -d` again. |
+| Backend log shows a `JWT_SECRET` or `ADMIN_PASSWORD` error | You set `DEMO_MODE=false`. That mode needs a real `JWT_SECRET` (32+ characters) and an `ADMIN_PASSWORD` (12+ characters) in `.env`. |
+| Linux: `Permission denied` on `/app/storage` | Do [Step 5](#step-5-linux-only-let-the-containers-write-to-storage). |
+| The build fails while downloading packages | Check your internet connection (and proxy/VPN), then run `docker compose up -d --build` again. |
+| `no space left on device` | Free some disk space. `docker system prune` removes stopped containers, unused images and the build cache. It keeps your DFIP database as long as you do **not** add `--volumes`. |
+| An analysis stops and a container shows exit code `137` | Docker ran out of memory. Close other programs or give Docker more memory (Docker Desktop → Settings → Resources; on Windows with WSL 2 this is set in `%UserProfile%\.wslconfig`). |
+| `running scripts is disabled on this system` (Windows) | Run `powershell -ExecutionPolicy Bypass -File .\start-dfip.ps1`, or use the `docker compose` commands directly. |
+| Apple silicon Mac: a tool fails with `exec format error` | Some bundled tools (such as capa) are built for Intel/AMD processors. Rebuild for that platform: `DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose up -d --build`. |
+
+### Settings you can change
+
+All settings live in `.env` (the full list with comments is in `.env.example`). After you edit `.env`, run `docker compose up -d` so the containers restart with the new values.
+
+- **Demo mode:** keep `DEMO_MODE=true` for a first try. With `DEMO_MODE=false`, the backend refuses to start with a placeholder `JWT_SECRET` and requires `ADMIN_PASSWORD` for the initial `admin@dfip.local` account. Disable demo mode and remove or rotate the demo identities before production deployment.
+- **Who may change data:** writes (cases, uploads, analysis, findings, reports) are allowed from the web portal and enforced by RBAC. Set `REQUIRE_DESKTOP_FOR_WRITES=true` to restrict writes to registered DFIP desktop workstations; the web portal reads this from `/health` and becomes read-only.
+- **New accounts:** users can create an account from the sign-in page (web and desktop). With the default `REGISTRATION_MODE=approval`, a new account stays pending until an administrator approves it and picks its role (Users page). `open` activates accounts immediately as investigators, and `disabled` hides the option. Sign-in is required every time the desktop app starts and in every new browser session.
+- **Optional online lookups:** `VIRUSTOTAL_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY` and `URLHAUS_API_KEY` turn on threat-intelligence lookups; leave them empty to keep DFIP offline. `ANTHROPIC_API_KEY` enables the optional Claude mode on the Case summary page (see [docs/ai.md](docs/ai.md)).
 
 ## Forensic workflow
 
