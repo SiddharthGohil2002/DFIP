@@ -236,6 +236,110 @@ Run these from the `DFIP` folder:
 
 `docker compose logs` uses the **service** names (`backend`, `celery_worker`, `frontend`, `mongodb`, `redis`, `celery_beat`), not the container names.
 
+### After setup: turn on the optional features
+
+As soon as you can sign in (Step 8), these work with nothing extra: cases, evidence upload with SHA-256/SHA-512 and chain of custody, all disk, file, registry, browser, email, chat, phone and network analysis, DFIP's built-in YARA rules, findings, signed PDF/HTML reports and every export.
+
+A few features need a **one-time step by an administrator**. Sign in as `admin@dfip.local`, because these actions need administrator rights. The downloads need internet access on the computer running DFIP.
+
+| Feature | Until you do the step | How to turn it on |
+|---|---|---|
+| **ClamAV virus scan** | The ClamAV scan is skipped during analysis (the Malware rules page says so) | Administration → **Malware rules** → **Download official databases**. It runs as a background job. Repeat it now and then to get new signatures. On a computer without internet, copy the database files (`main.cvd`, `daily.cvd`, `bytecode.cvd`) from elsewhere and use **Add a database file** on the same page. |
+| **Windows memory images** (Volatility) | Volatility cannot read Windows memory images, because it needs the symbols of the exact Windows kernel | Administration → **System & tools** → *Memory analysis symbols* → **Download the Windows pack** (a large download). Or set `MEMORY_SYMBOL_SERVER=true` in `.env` so Volatility fetches the symbols it needs from Microsoft's symbol server (it sends the kernel's name and ID there). |
+| **Linux and macOS memory images** | Volatility has no symbols for them | Same card → **Add a symbol pack**: a ZIP with Volatility symbol tables (ISF files in `linux/` or `mac/` folders) made for that exact kernel. |
+| **Your own YARA rules** | Only DFIP's built-in rules are used | Administration → **Malware rules** → **Add a rule set** (a `.yar` file). |
+| **Hash sets** such as the NIST NSRL | Files are not marked as known good, known bad or notable | Administration → **Hash sets** → **Import a hash set**. Accepted: a text file with one MD5, SHA-1 or SHA-256 per line (`sha256sum` output works), a CSV with `md5`/`sha1`/`sha256` columns, or the NSRL RDS v3 SQLite file. Large files (such as the NSRL) are too big to upload: copy them into `storage/hashsets/incoming/` and import them from *Files on the server* on the same page. |
+
+These features need **your own key or certificate** in `.env`. After editing `.env`, run `docker compose up -d` so DFIP restarts with the new values. All of them are optional, and DFIP stays fully offline without them.
+
+| Feature | Setting in `.env` | Where you use it |
+|---|---|---|
+| **VirusTotal** lookups of program hashes | `VIRUSTOTAL_API_KEY` (a free key from virustotal.com allows 4 lookups a minute, which is the default `VIRUSTOTAL_RATE_PER_MINUTE`) | In a case: **Indicators** → tick *Look up program hashes on VirusTotal for this case*. Only SHA-256 hashes are sent. |
+| **AbuseIPDB**, **AlienVault OTX** and **URLhaus** lookups of addresses | `ABUSEIPDB_API_KEY`, `OTX_API_KEY`, `URLHAUS_API_KEY` | In a case: **Network** → **Look up** next to a host or IP address. |
+| **Claude mode** (ask questions about the case summary) | `ANTHROPIC_API_KEY` (from console.anthropic.com) | In a case: **Case summary** → **Turn on for this case**, tick facts, type a question, **Ask Claude**. Only the ticked facts and the question are sent. See [docs/ai.md](docs/ai.md). |
+| **Trusted report signatures** | Copy your organisation's PKCS#12 file into `storage/signing/` and set `REPORT_SIGNING_P12=/app/storage/signing/<file name>` and `REPORT_SIGNING_P12_PASSWORD` | Every new report PDF is signed with your certificate. Without one, DFIP signs reports with a self-signed certificate that verification shows as *not trusted*. |
+| **Trusted signing time** on reports | `REPORT_TSA_URL` (an RFC 3161 timestamp authority) | Every new report PDF also gets a timestamp from that authority. |
+| **Checking signatures against your own roots** | `REPORT_TRUST_ROOTS`, `REPORT_TSA_TRUST_ROOTS` (PEM files, also in `storage/signing/`, written as `/app/storage/signing/<file name>`) | Report verification then shows signatures from those roots as trusted. |
+
+`storage/` and `.env` are never uploaded to GitHub, so your certificates and keys stay on your computer.
+
+### Build the Windows desktop app (optional)
+
+DFIP also has a Windows app, *DFIP Investigator*, which connects to this server. It is **not** built by `docker compose`. Until you build it, the website and the sign-in page offer no download. You only need Docker to build it:
+
+1. Open a terminal that has `sh`. On Windows that is **Git Bash**, which was installed with Git in Step 1 (Start → type `Git Bash`). On macOS/Linux use your normal terminal.
+2. Go to the project folder, for example `cd ~/Documents/DFIP`.
+3. Run:
+
+   ```bash
+   sh desktop/scripts/build-windows-docker.sh
+   ```
+
+The first build takes a long time, because it downloads a Rust toolchain and the Windows SDK and compiles the app. Later builds are much faster. When it finishes, it prints the installer's SHA-256 and leaves the installer in `storage/downloads/`, named like `DFIP-Investigator_2.1.0_x64-setup.exe`. DFIP then offers it automatically on the website, on the sign-in page and in the workspace sidebar, with its SHA-256.
+
+Install it on a Windows PC and enter the server address on its sign-in page: `http://localhost:8000` on the same computer, or `http://<server IP address>:8000` from another computer on the network. The installer is not code-signed, so Windows SmartScreen may warn you; click **More info** → **Run anyway**. Sign it before you give it to other people (see [releases/README.md](releases/README.md)). To build natively on Windows with Rust instead, see [desktop/INSTALL.md](desktop/INSTALL.md).
+
+### Move DFIP to another computer (or make a backup)
+
+Your cases are **not** in Git, so cloning the project on a new computer gives you an empty DFIP (in demo mode, it has only the demo case). The data lives in three places on the computer that runs DFIP, and you need **all three**:
+
+1. the **database**, inside Docker;
+2. the **`storage/` folder**: evidence files, reports, the report signing key, hash sets, rules and symbol packs;
+3. the **`.env` file**: its secrets unlock stored keys (such as the passwords of encrypted volumes and the report signing key), and its MongoDB password must match the database.
+
+**On the old computer**, with DFIP running, run these from the `DFIP` folder:
+
+```bash
+docker compose exec mongodb sh -c 'mongodump -u $MONGO_INITDB_ROOT_USERNAME -p $MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --db dfip --gzip --archive=/tmp/dfip-db.archive'
+docker compose cp mongodb:/tmp/dfip-db.archive dfip-db.archive
+docker compose stop
+```
+
+The first command writes the database into one file inside the database container, and the second copies it into the `DFIP` folder as `dfip-db.archive`. Now copy **`.env`**, **`dfip-db.archive`** and the whole **`storage`** folder to the new computer, for example with a USB drive.
+
+**On the new computer:**
+
+1. Do Steps 0–3: install Git and Docker, and clone the project.
+2. Put the copied `.env` and `dfip-db.archive` into the new `DFIP` folder, and copy the **contents** of the old `storage` folder into the new `storage` folder (replace files when asked). **Skip Step 4.** Copying `.env.example` would overwrite your `.env`.
+3. Linux only: do Step 5.
+4. Do Step 6 (`docker compose up -d --build`) and wait until it has finished.
+5. Load the database back in, then restart the API and the workers:
+
+   ```bash
+   docker compose cp dfip-db.archive mongodb:/tmp/dfip-db.archive
+   docker compose exec mongodb sh -c 'mongorestore -u $MONGO_INITDB_ROOT_USERNAME -p $MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --drop --gzip --archive=/tmp/dfip-db.archive'
+   docker compose restart backend celery_worker celery_beat
+   ```
+
+   The restore ends with `... document(s) restored successfully. 0 document(s) failed to restore.` Sign in with the same accounts as on the old computer. Your cases, evidence and reports are back, and **Verify** on an evidence item confirms its hash still matches.
+
+> If you started DFIP on the new computer **before** putting the old `.env` in place, MongoDB has already saved a different password. Run `docker compose down -v` (this deletes only the new, empty database), put the old `.env` in the folder, and do steps 4–5 again.
+
+**To make a backup** instead of moving: do the "old computer" part, keep `.env`, `dfip-db.archive` and a copy of `storage/` somewhere safe, then start DFIP again with `docker compose up -d`. `dfip-db.archive` is listed in `.gitignore`, so it cannot be committed by accident.
+
+These commands work in PowerShell, macOS and Linux as written.
+
+### Running on Linux, macOS and Apple silicon
+
+- **Windows 10/11 (Intel or AMD processor):** follow the guide as written. This is the platform DFIP is developed and tested on.
+- **Linux (Intel or AMD processor):** the same steps. [Step 5](#step-5-linux-only-let-the-containers-write-to-storage) is required, and you need `sudo` before `docker` unless your user is in the `docker` group (Step 2).
+- **Intel Macs:** the same steps.
+- **Apple silicon Macs (M1 and later) and ARM Linux:** every DFIP component and forensic tool is available for ARM, so the images build and run natively, with one exception: **capa**, the "what can this program do" check on the Indicators page. capa is published for Intel/AMD processors only, so on ARM its result shows as *failed* for each program, and the rest of the analysis is not affected. If you need capa, build the Intel/AMD images instead. They run under emulation, which is slower:
+
+  ```bash
+  DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose up -d --build
+  ```
+
+### Tool versions
+
+The Python packages, capa and the website's npm packages are pinned to exact versions. The base images (`python:3.11-slim`, `mongo:8`, `redis:7-alpine`, `node:22-alpine`, `nginx:1.27-alpine`) and the Debian packages of the forensic tools are not, so a rebuild months later can pick up newer tool versions. After such a rebuild, run the backend's test suite. It takes about half a minute and should end with `passed` and no `failed`:
+
+```bash
+docker run --rm dfip-backend python -m pytest -q
+```
+
+(`dfip-backend` is the image name when the project folder is called `DFIP`, as in Step 3.)
+
 ### Troubleshooting
 
 | Problem | What to do |
@@ -251,7 +355,9 @@ Run these from the `DFIP` folder:
 | `no space left on device` | Free some disk space. `docker system prune` removes stopped containers, unused images and the build cache. It keeps your DFIP database as long as you do **not** add `--volumes`. |
 | An analysis stops and a container shows exit code `137` | Docker ran out of memory. Close other programs or give Docker more memory (Docker Desktop → Settings → Resources; on Windows with WSL 2 this is set in `%UserProfile%\.wslconfig`). |
 | `running scripts is disabled on this system` (Windows) | Run `powershell -ExecutionPolicy Bypass -File .\start-dfip.ps1`, or use the `docker compose` commands directly. |
-| Apple silicon Mac: a tool fails with `exec format error` | Some bundled tools (such as capa) are built for Intel/AMD processors. Rebuild for that platform: `DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose up -d --build`. |
+| Apple silicon Mac or ARM Linux: capa shows *failed* with `exec format error` | capa is published for Intel/AMD processors only. See [Running on Linux, macOS and Apple silicon](#running-on-linux-macos-and-apple-silicon). |
+| A feature says it has no database, symbols or key | See [After setup: turn on the optional features](#after-setup-turn-on-the-optional-features). |
+| `git clone` gives an empty DFIP on a new computer | Cases are not stored in Git. See [Move DFIP to another computer](#move-dfip-to-another-computer-or-make-a-backup). |
 
 ### Settings you can change
 
@@ -260,7 +366,7 @@ All settings live in `.env` (the full list with comments is in `.env.example`). 
 - **Demo mode:** keep `DEMO_MODE=true` for a first try. With `DEMO_MODE=false`, the backend refuses to start with a placeholder `JWT_SECRET` and requires `ADMIN_PASSWORD` for the initial `admin@dfip.local` account. Disable demo mode and remove or rotate the demo identities before production deployment.
 - **Who may change data:** writes (cases, uploads, analysis, findings, reports) are allowed from the web portal and enforced by RBAC. Set `REQUIRE_DESKTOP_FOR_WRITES=true` to restrict writes to registered DFIP desktop workstations; the web portal reads this from `/health` and becomes read-only.
 - **New accounts:** users can create an account from the sign-in page (web and desktop). With the default `REGISTRATION_MODE=approval`, a new account stays pending until an administrator approves it and picks its role (Users page). `open` activates accounts immediately as investigators, and `disabled` hides the option. Sign-in is required every time the desktop app starts and in every new browser session.
-- **Optional online lookups:** `VIRUSTOTAL_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY` and `URLHAUS_API_KEY` turn on threat-intelligence lookups; leave them empty to keep DFIP offline. `ANTHROPIC_API_KEY` enables the optional Claude mode on the Case summary page (see [docs/ai.md](docs/ai.md)).
+- **API keys, certificates and memory symbols:** see [After setup: turn on the optional features](#after-setup-turn-on-the-optional-features).
 
 ## Forensic workflow
 

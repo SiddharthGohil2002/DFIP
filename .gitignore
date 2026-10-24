@@ -34,3 +34,6 @@ scratch/
 # Test run output
 tests/system/out/
 tests/ui/out/
+
+# Database backups (README: Move DFIP to another computer)
+*.archive
