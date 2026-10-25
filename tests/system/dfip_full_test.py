@@ -4469,6 +4469,16 @@ def t_carving():
     bad = [c['filename'] for c in carved if hashlib.sha256(Path(c['path']).read_bytes()).hexdigest() != c['sha256']]
     check('every carved file is registered with its true SHA-256', carved and not bad, bad or len(carved))
     note('carving recovered the deleted payroll export by content', any(c['sha256'] == hashlib.sha256(PAYROLL).hexdigest() for c in carved))
+    import csv as csv_mod
+    import io
+    path = f"/api/forensics/artifacts?case_id={C['A']}&artifact_type=CARVED_FILE"
+    whole, part = get(path, inv).json, get(f'{path}&skip=5&limit=5', inv).json
+    check('artifact lists give their total and page with skip and limit (newest first), so table exports read every page',
+          whole.get('total') == len(carved) == part.get('total') and [x['_id'] for x in part['data']] == [x['_id'] for x in carved[5:10]],
+          (whole.get('total'), len(carved), part.get('total'), len(part.get('data') or [])))
+    exp = get('/api/exports/table?' + urllib.parse.urlencode({'resource': path, 'format': 'csv'}), inv)
+    rows = list(csv_mod.reader(io.StringIO(exp.body.decode('utf-8-sig')))) if exp.status == 200 else []
+    check('the carved-file export holds every carved file', exp.status == 200 and len(rows) - 1 == len(carved), (exp.status, len(rows)))
     u = post(f'/api/forensics/evidence/{E}/carve?engine=foremost', inv)
     check('unknown carving engine is refused (400)', u.status == 400, u)
     check('viewer cannot run carving (403)', post(f'/api/forensics/evidence/{E}/carve?engine=photorec', C['VIEWER']).status in (403, 404))

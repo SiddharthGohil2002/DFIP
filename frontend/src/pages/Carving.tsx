@@ -9,7 +9,7 @@ import { TagButton } from '../lib/tags';
 import { ViewButton } from '../ui/FileViewer';
 import { ExportButton } from '../ui/ExportButton';
 import type { Artifact } from '../lib/types';
-import { Banner, Button, Card, Empty, Field, Hash, Loading, PageHeader, Pager, useToast } from '../ui';
+import { Banner, Button, Card, Empty, Field, Hash, ListedOf, Loading, PageHeader, Pager, useToast } from '../ui';
 
 const LIMIT = 100;
 
@@ -29,7 +29,7 @@ export function CarvingPage() {
   }, [evidence, evidenceId]);
 
   const path = `/forensics/artifacts?case_id=${encodeURIComponent(caseId)}&artifact_type=CARVED_FILE`;
-  const carved = useApi<{ data: Artifact[] }>(path);
+  const carved = useApi<{ data: Artifact[]; total?: number }>(path);
   const all = carved.data?.data || [];
   const exts = Array.from(new Set(all.map((a) => (a.filename || '').split('.').pop()?.toLowerCase() || ''))).filter(Boolean).sort();
   const rows = ext ? all.filter((a) => a.filename?.toLowerCase().endsWith(`.${ext}`)) : all;
@@ -87,7 +87,7 @@ export function CarvingPage() {
 
       <Card
         title="Carved files"
-        subtitle={`${all.length.toLocaleString()} files, each hashed and registered as an artifact`}
+        subtitle={`${(carved.data?.total ?? all.length).toLocaleString()} files, each hashed and registered as an artifact`}
         actions={<>
           {exts.length > 1 && (
             <select className="select sm" style={{ width: 130 }} value={ext} onChange={(e) => { setExt(e.target.value); setSkip(0); }} aria-label="File type">
@@ -129,6 +129,7 @@ export function CarvingPage() {
           </div>
         )}
         <Pager skip={skip} limit={LIMIT} total={rows.length} onChange={setSkip} />
+        <ListedOf shown={all.length} total={carved.data?.total} what="carved files" />
       </Card>
     </div>
   );

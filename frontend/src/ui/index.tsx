@@ -223,6 +223,12 @@ export function Hash({ value, short }: { value?: string | null; short?: number }
   );
 }
 
+/** Says so when a list shows only the newest part of what the server holds (its `total`); exports hold every row. */
+export function ListedOf({ shown, total, what }: { shown: number; total?: number; what: string }) {
+  if (total === undefined || total <= shown) return null;
+  return <div className="small muted" style={{ padding: '8px 16px' }}>The newest {shown.toLocaleString()} of {total.toLocaleString()} {what} are listed here; the CSV and XLSX exports hold all of them.</div>;
+}
+
 export function Pager({ skip, limit, total, onChange }: { skip: number; limit: number; total: number; onChange: (skip: number) => void }) {
   if (total <= limit) return null;
   return (

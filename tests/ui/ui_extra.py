@@ -681,10 +681,15 @@ with sync_playwright() as p:
     expect(page.get_by_label(f'Role of {email}')).to_have_value('INVESTIGATOR')
     check('role change is saved', True)
     row.get_by_role('button', name='Suspend').click()
-    expect(row.get_by_role('button', name='Reactivate')).to_be_visible()
-    row.get_by_role('button', name='Reactivate').click()
+    confirm = page.get_by_role('dialog', name=f'Suspend {email}?')
+    confirm.get_by_role('button', name='Cancel').click()  # nothing happens without the confirmation
     expect(row.get_by_role('button', name='Suspend')).to_be_visible()
-    check('user can be suspended and reactivated', True)
+    row.get_by_role('button', name='Suspend').click()
+    confirm.get_by_role('button', name='Suspend account').click()
+    expect(row.get_by_role('button', name='Reactivate')).to_be_visible()
+    row.get_by_role('button', name='Reactivate').click()  # reactivating needs no confirmation
+    expect(row.get_by_role('button', name='Suspend')).to_be_visible()
+    check('user can be suspended (after confirming) and reactivated', True)
     page.locator('.topbar').get_by_role('button', name='Sign out').click()
     expect(page.get_by_text('You have signed out.')).to_be_visible()
 

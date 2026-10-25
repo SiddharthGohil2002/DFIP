@@ -3,6 +3,7 @@ from playwright.sync_api import sync_playwright, expect
 
 BASE = 'http://host.docker.internal'
 EMAIL = f'new.investigator.{random.randint(1000, 9999)}@example.org'
+REJECTED = f'unknown.person.{random.randint(1000, 9999)}@example.org'
 PW = 'Correct-Horse-Battery-7'
 problems = []
 
@@ -36,9 +37,12 @@ with sync_playwright() as p:
     page.screenshot(path='/out/a2-pending.png')
     ctx.close()
 
-    # 3. Administrator approves it from the Users page.
+    # 3. Administrator approves it from the Users page, and rejects another request (after confirming).
     ctx = b.new_context(viewport={'width': 1440, 'height': 900})
     page = ctx.new_page()
+    r = page.request.post(BASE + '/api/auth/register', headers={'Content-Type': 'application/json'},
+                          data=json.dumps({'name': 'Unknown Person', 'email': REJECTED, 'password': PW}))
+    assert r.status == 201, r.status
     page.goto(BASE + '/login')
     page.get_by_role('button', name='Administrator Everything + users').click()
     page.locator('form').get_by_role('button', name='Sign in').click()
@@ -51,6 +55,20 @@ with sync_playwright() as p:
     page.screenshot(path='/out/a3-approvals.png', full_page=True)
     row.get_by_role('button', name='Approve').click()
     expect(page.get_by_text(f'{EMAIL} updated')).to_be_visible()
+    page.locator('tr', has_text=REJECTED).get_by_role('button', name='Reject').click()
+    page.get_by_role('dialog', name=f'Reject {REJECTED}?').get_by_role('button', name='Reject account').click()
+    expect(page.get_by_text(f'{REJECTED} updated')).to_be_visible()
+    expect(page.locator('tr', has_text=REJECTED).get_by_role('button', name='Reactivate')).to_be_visible()  # can be undone
+    ctx.close()
+
+    # 3b. The rejected account cannot sign in.
+    ctx = b.new_context(viewport={'width': 1440, 'height': 900})
+    page = ctx.new_page()
+    page.goto(BASE + '/login')
+    page.get_by_label('Email').fill(REJECTED)
+    page.get_by_label('Password').fill(PW)
+    page.locator('form').get_by_role('button', name='Sign in').click()
+    expect(page.get_by_text('This account is disabled. Contact your DFIP administrator.')).to_be_visible()
     ctx.close()
 
     # 4. The new user signs in; a new browser session must sign in again.

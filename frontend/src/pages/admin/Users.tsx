@@ -28,6 +28,8 @@ export function UsersPage() {
   const [form, setForm] = useState({ name: '', email: '', role: 'INVESTIGATOR', password: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Rejecting and suspending lock a person out, so they are confirmed first; approving and reactivating are not.
+  const [confirm, setConfirm] = useState<{ user: User; status: 'SUSPENDED' | 'DISABLED' } | null>(null);
 
   if (!can('USER_MANAGE')) return <Banner tone="warn">Only administrators can manage users.</Banner>;
 
@@ -73,7 +75,8 @@ export function UsersPage() {
               <thead><tr><th>Name</th><th>Email</th><th>Requested</th><th>Role on approval</th><th /></tr></thead>
               <tbody>
                 {pending.map((u) => (
-                  <PendingRow key={u._id} user={u} requested={time(u.created_at)} onDecide={(change) => update(u, change)} />
+                  <PendingRow key={u._id} user={u} requested={time(u.created_at)}
+                    onDecide={(change) => change.status === 'DISABLED' ? setConfirm({ user: u, status: 'DISABLED' }) : update(u, change)} />
                 ))}
               </tbody>
             </table>
@@ -102,7 +105,7 @@ export function UsersPage() {
                         <div className="row">
                           <StatusBadge status={u.status} />
                           {!self && (
-                            <Button size="sm" variant="ghost" onClick={() => update(u, { status: u.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE' })}>
+                            <Button size="sm" variant="ghost" onClick={() => u.status === 'ACTIVE' ? setConfirm({ user: u, status: 'SUSPENDED' }) : update(u, { status: 'ACTIVE' })}>
                               {u.status === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
                             </Button>
                           )}
@@ -152,6 +155,22 @@ export function UsersPage() {
           <input className="input" type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
         </Field>
         {error && <Banner tone="danger">{error}</Banner>}
+      </Modal>
+
+      <Modal
+        open={!!confirm}
+        title={confirm ? `${confirm.status === 'SUSPENDED' ? 'Suspend' : 'Reject'} ${confirm.user.email}?` : ''}
+        onClose={() => setConfirm(null)}
+        footer={confirm && <>
+          <Button onClick={() => setConfirm(null)}>Cancel</Button>
+          <Button variant="danger" onClick={() => { update(confirm.user, { status: confirm.status }); setConfirm(null); }}>
+            {confirm.status === 'SUSPENDED' ? 'Suspend account' : 'Reject account'}
+          </Button>
+        </>}
+      >
+        {confirm?.status === 'SUSPENDED'
+          ? <p>{confirm.user.name} is signed out at once: every request is refused until an administrator reactivates the account. Their cases, findings and audit records are kept.</p>
+          : <p>{confirm?.user.name} cannot sign in. The account stays in the list as disabled, so an administrator can still reactivate it later.</p>}
       </Modal>
     </div>
   );

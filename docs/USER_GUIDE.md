@@ -600,7 +600,7 @@ For each Windows image:
 Everything that may point to wrongdoing, on one page:
 
 - **Hash set matches:** files matching an administrator's known-bad or notable hash sets (Section 11.3).
-- **Renamed and encrypted files:** files whose content does not match their name, and encrypted files. **Open in Files** lists them there.
+- **Renamed and encrypted files:** files whose content does not match their name, and encrypted files. **Renamed in Files** and **Encrypted in Files** open the Files page filtered to them.
 - **Programs that stand out:** unsigned, packed, in unusual places, or named like system files. Click a program to see its signature and details, and **Run capa** to see what it can do. An investigator can tick *Look up program hashes on VirusTotal for this case* (needs `VIRUSTOTAL_API_KEY`; only SHA-256 hashes are sent).
 - **Malware signature matches:** YARA (built-in rules and the administrator's rule sets) and ClamAV hits.
 - **Activity patterns** and **Anomalies:** click **Recompute** after new analysis.
@@ -614,7 +614,7 @@ Everything that may point to wrongdoing, on one page:
 Finds files in the raw bytes of an image, including deleted space where the file system no longer describes them.
 
 1. Choose the **Evidence** and the **Engine** (**PhotoRec** or **Scalpel**), and click **Start carving**. Keep the page open: it can take many minutes on large images.
-2. **Carved files** lists each file found, with its type and hash, plus **View** and **Download**.
+2. **Carved files** lists each file found, with its type and hash, plus **View** and **Download**. A large image can give thousands: the newest 1,000 are listed, and the CSV and XLSX exports hold all of them.
 
 ### 8.20 Found data
 
@@ -787,9 +787,9 @@ Sign in as `admin@dfip.local`. Investigators also see **Audit log** (their own c
 
 ![Users](guide/images/users.webp)
 
-- **Waiting for approval:** accounts created from the sign-in page. Choose a **role** for each, then click **Approve** or **Reject**. The demo loader leaves `priya.shah@dfip.local` here for you to try.
+- **Waiting for approval:** accounts created from the sign-in page. Choose a **role** for each, then click **Approve**, or **Reject** and confirm with **Reject account**. A rejected account cannot sign in; it stays in the users list and can be reactivated. The demo loader leaves `priya.shah@dfip.local` here for you to try.
 - **Add user:** create an account directly. Enter the Full name, Email, Role and an Initial password of at least 12 characters.
-- **Users table:** change a user's role, or **Suspend** and **Reactivate** them. A suspended user cannot sign in.
+- **Users table:** change a user's role, or **Suspend** them (confirm with **Suspend account**) and **Reactivate** them. A suspended user is signed out at once and cannot sign in until reactivated; their cases and records are kept.
 - **Role permissions:** what each role may do.
 
 ### 11.2 Audit log

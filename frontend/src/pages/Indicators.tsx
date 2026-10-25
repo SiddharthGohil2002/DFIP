@@ -7,7 +7,7 @@ import { post } from '../lib/api';
 import { humanize, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import type { Artifact, FsEntry } from '../lib/types';
-import { Badge, Button, Card, Empty, Hash, Loading, PageHeader, StatusBadge, useToast } from '../ui';
+import { Badge, Button, Card, Empty, Hash, ListedOf, Loading, PageHeader, StatusBadge, useToast } from '../ui';
 import { ExportButton } from '../ui/ExportButton';
 import { FileDetails, HASH_KIND } from './Files';
 import { ProgramsCard } from './Programs';
@@ -22,12 +22,12 @@ export function IndicatorsPage() {
     yara: `/forensics/artifacts?case_id=${enc}&artifact_type=MALWARE_INDICATOR`,
     patterns: `/forensics/patterns?case_id=${enc}`,
     anomalies: `/forensics/anomalies?case_id=${enc}`,
-    hashHits: `/forensics/artifacts?case_id=${enc}&artifact_type=HASH_SET_MATCH&limit=500`,
+    hashHits: `/forensics/artifacts?case_id=${enc}&artifact_type=HASH_SET_MATCH`,
   };
-  const yara = useApi<{ data: Artifact[] }>(paths.yara);
+  const yara = useApi<{ data: Artifact[]; total?: number }>(paths.yara);
   const patterns = useApi<{ data: any[] }>(paths.patterns);
   const anomalies = useApi<{ data: any[] }>(paths.anomalies);
-  const hashHits = useApi<{ data: Artifact[] }>(paths.hashHits);
+  const hashHits = useApi<{ data: Artifact[]; total?: number }>(paths.hashHits);
   const renamed = useApi<{ data: FsEntry[]; total: number }>(`/forensics/flagged?case_id=${enc}&kind=renamed&limit=200`);
   const encrypted = useApi<{ data: FsEntry[]; total: number }>(`/forensics/flagged?case_id=${enc}&kind=encrypted&limit=200`);
   const [busy, setBusy] = useState('');
@@ -82,12 +82,17 @@ export function IndicatorsPage() {
             </table>
           </div>
         )}
+        <ListedOf shown={hits.length} total={hashHits.data?.total} what="matches" />
       </Card>
 
       <Card
         title="Renamed and encrypted files"
         subtitle="Files whose content contradicts their name (for example a CSV named holiday.jpg), and files that are encrypted or look like an encrypted container. Found from the content, not the name."
-        actions={<Link className="btn sm" to="/app/files?flag=renamed">Open in Files</Link>}
+        actions={<>
+          {/* Files shows one evidence item at a time: open it on one that has such files. */}
+          {!!renamed.data?.data.length && <Link className="btn sm" to={`/app/files?flag=renamed&evidence=${encodeURIComponent(renamed.data.data[0].evidence_id)}`}>Renamed in Files</Link>}
+          {!!encrypted.data?.data.length && <Link className="btn sm" to={`/app/files?flag=encrypted&evidence=${encodeURIComponent(encrypted.data.data[0].evidence_id)}`}>Encrypted in Files</Link>}
+        </>}
         flush
       >
         {(renamed.loading && !renamed.data) || (encrypted.loading && !encrypted.data) ? <Loading /> : !flagged.length ? (
@@ -138,6 +143,7 @@ export function IndicatorsPage() {
             </tbody>
           </table>
         )}
+        <ListedOf shown={yara.data?.data.length ?? 0} total={yara.data?.total} what="matches" />
       </Card>
 
       <div className="grid cols-2">

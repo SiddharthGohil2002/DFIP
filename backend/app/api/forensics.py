@@ -665,14 +665,16 @@ def memory(artifact_id,u=Depends(require_permission('ANALYSIS_RUN'))):
     return serial(inspect_memory(p))
 
 @r.get('/artifacts')
-def artifacts(case_id:str|None=None,evidence_id:str|None=None,artifact_type:str|None=None,u=Depends(current_user)):
+def artifacts(case_id:str|None=None,evidence_id:str|None=None,artifact_type:str|None=None,skip:int=0,limit:int=1000,u=Depends(current_user)):
+    """Newest first, at most 1,000 a page; `total` tells pages (and table exports, which read every page) how many there are."""
     q=_case_scope(u,case_id)
     if evidence_id:q['evidence_id']=evidence_id
     if artifact_type:q['type']=artifact_type
-    out=[]
-    for x in get_db()['forensic_artifacts'].find(q).sort('timestamp',-1).limit(1000):
+    skip,limit=max(0,skip),max(1,min(limit,1000));col=get_db()['forensic_artifacts'];out=[]
+    # _id breaks ties (one carving run gives all its files the same time), so pages neither repeat nor skip a row
+    for x in col.find(q).sort([('timestamp',-1),('_id',-1)]).skip(skip).limit(limit):
         x['_id']=str(x['_id']);out.append(serial(x))
-    return {'data':out}
+    return {'data':out,'total':col.count_documents(q),'skip':skip,'limit':limit}
 
 @r.post('/demo/seed/{case_id}')
 def seed_demo(case_id,u=Depends(require_permission('ANALYSIS_RUN'))):

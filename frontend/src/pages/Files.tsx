@@ -11,7 +11,7 @@ import { Comments } from '../ui/Comments';
 import { ViewButton } from '../ui/FileViewer';
 import { ExportButton } from '../ui/ExportButton';
 import type { Artifact, FsEntry, HashKind } from '../lib/types';
-import { Badge, Banner, Button, Card, Empty, ErrorBanner, Hash, Loading, Modal, PageHeader, Pager, Tabs, useToast, type Tone } from '../ui';
+import { Badge, Banner, Button, Card, Empty, ErrorBanner, Hash, ListedOf, Loading, Modal, PageHeader, Pager, Tabs, useToast, type Tone } from '../ui';
 
 const LIMIT = 100;
 type Tab = 'deleted' | 'all' | 'members' | 'recovered';
@@ -345,7 +345,7 @@ function RecoveredFiles({ caseId }: { caseId: string }) {
   const time = useTime();
   const { can } = useAuth();
   const path = `/forensics/artifacts?case_id=${encodeURIComponent(caseId)}&artifact_type=RECOVERED_FILE`;
-  const { data, error, loading } = useApi<{ data: Artifact[] }>(path);
+  const { data, error, loading } = useApi<{ data: Artifact[]; total?: number }>(path);
   const [meta, setMeta] = useState<{ name: string; json: any } | null>(null);
   const [busy, setBusy] = useState('');
 
@@ -376,7 +376,7 @@ function RecoveredFiles({ caseId }: { caseId: string }) {
         <Empty icon={<RotateCcw size={20} />} title="Nothing recovered yet" text="Recover a file from the Deleted entries or All files tab. Each recovered copy is hashed and logged to the chain of custody." />
       ) : (<>
         <div className="row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
-          <span className="small muted">{formatNumber(data.data.length)} recovered {data.data.length === 1 ? 'file' : 'files'}</span>
+          <span className="small muted">{formatNumber(data.total ?? data.data.length)} recovered {(data.total ?? data.data.length) === 1 ? 'file' : 'files'}</span>
           <span style={{ flex: 1 }} />
           <ExportButton path={path} what="list of recovered files" />
         </div>
@@ -404,6 +404,7 @@ function RecoveredFiles({ caseId }: { caseId: string }) {
             </tbody>
           </table>
         </div>
+        <ListedOf shown={data.data.length} total={data.total} what="recovered files" />
       </>)}
       <Modal open={!!meta} title={`Metadata — ${meta?.name}`} onClose={() => setMeta(null)} wide>
         <Banner tone="info">Extracted with ExifTool from the recovered copy.</Banner>

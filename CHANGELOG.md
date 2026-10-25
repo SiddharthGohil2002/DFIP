@@ -16,6 +16,9 @@ Found by running the full system and browser test suites on a fresh clone with o
 - **Demo data** (`scripts/demo/load_demo_data.py`): one command loads three analysed cases from the generated test evidence (and the public samples when downloaded) with findings in each review state, tags, comments, physical evidence, hash sets, a YARA rule set and a report, so every page has something to show; running it again completes what is missing.
 - **User guide** (`docs/USER_GUIDE.md`, and `docs/user-guide.html` built from it by `scripts/docs/build_user_guide.py`): every function step by step with screenshots of the demo data (`scripts/docs/take_screenshots.py`), a demo script and which evidence and profile each page needs. `.env.example` lists every setting `docker-compose.yml` passes on.
 - Tests: `ui_desktop` makes its own analysed case on a fresh installation instead of relying on one left by earlier runs.
+- **Rejecting and suspending accounts** are confirmed first (they lock a person out; approving and reactivating are not).
+- **Exports of recovered, carved and extracted files, hash-set matches and YARA matches held at most 1,000 rows**: their API now pages (`skip`, `limit`) and gives its `total`, so table exports read every row; the pages say when only the newest 1,000 are listed.
+- Indicators: **Renamed in Files** and **Encrypted in Files** open Files filtered to those files, on the evidence that holds them (it opened only renamed files of the first evidence item).
 
 ### Fixed — found while wrapping up
 - A report of a case holding a Linux or macOS computer failed: the Computer and users section expected every computer's time zone in Windows' registry form. It now shows the zone name for Linux and macOS (and the column is headed "System").

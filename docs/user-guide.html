@@ -842,7 +842,7 @@ docker run --rm -v &quot;${PWD}:/repo&quot; -w /repo python:3.11-slim sh scripts
 <p>Everything that may point to wrongdoing, on one page:</p>
 <ul>
 <li><strong>Hash set matches:</strong> files matching an administrator's known-bad or notable hash sets (Section 11.3).</li>
-<li><strong>Renamed and encrypted files:</strong> files whose content does not match their name, and encrypted files. <strong>Open in Files</strong> lists them there.</li>
+<li><strong>Renamed and encrypted files:</strong> files whose content does not match their name, and encrypted files. <strong>Renamed in Files</strong> and <strong>Encrypted in Files</strong> open the Files page filtered to them.</li>
 <li><strong>Programs that stand out:</strong> unsigned, packed, in unusual places, or named like system files. Click a program to see its signature and details, and <strong>Run capa</strong> to see what it can do. An investigator can tick <em>Look up program hashes on VirusTotal for this case</em> (needs <code>VIRUSTOTAL_API_KEY</code>; only SHA-256 hashes are sent).</li>
 <li><strong>Malware signature matches:</strong> YARA (built-in rules and the administrator's rule sets) and ClamAV hits.</li>
 <li><strong>Activity patterns</strong> and <strong>Anomalies:</strong> click <strong>Recompute</strong> after new analysis.</li>
@@ -853,7 +853,7 @@ docker run --rm -v &quot;${PWD}:/repo&quot; -w /repo python:3.11-slim sh scripts
 <p>Finds files in the raw bytes of an image, including deleted space where the file system no longer describes them.</p>
 <ol>
 <li>Choose the <strong>Evidence</strong> and the <strong>Engine</strong> (<strong>PhotoRec</strong> or <strong>Scalpel</strong>), and click <strong>Start carving</strong>. Keep the page open: it can take many minutes on large images.</li>
-<li><strong>Carved files</strong> lists each file found, with its type and hash, plus <strong>View</strong> and <strong>Download</strong>.</li>
+<li><strong>Carved files</strong> lists each file found, with its type and hash, plus <strong>View</strong> and <strong>Download</strong>. A large image can give thousands: the newest 1,000 are listed, and the CSV and XLSX exports hold all of them.</li>
 </ol>
 <h3 id="820-found-data">8.20 Found data</h3>
 <p><strong>Where:</strong> sidebar → <strong>Found data</strong> (Full profile).</p>
@@ -997,9 +997,9 @@ docker run --rm -v &quot;${PWD}:/repo&quot; -w /repo python:3.11-slim sh scripts
 <p><strong>Where:</strong> sidebar → Administration → <strong>Users</strong>.</p>
 <p><img alt="Users" src="guide/images/users.webp" /></p>
 <ul>
-<li><strong>Waiting for approval:</strong> accounts created from the sign-in page. Choose a <strong>role</strong> for each, then click <strong>Approve</strong> or <strong>Reject</strong>. The demo loader leaves <code>priya.shah@dfip.local</code> here for you to try.</li>
+<li><strong>Waiting for approval:</strong> accounts created from the sign-in page. Choose a <strong>role</strong> for each, then click <strong>Approve</strong>, or <strong>Reject</strong> and confirm with <strong>Reject account</strong>. A rejected account cannot sign in; it stays in the users list and can be reactivated. The demo loader leaves <code>priya.shah@dfip.local</code> here for you to try.</li>
 <li><strong>Add user:</strong> create an account directly. Enter the Full name, Email, Role and an Initial password of at least 12 characters.</li>
-<li><strong>Users table:</strong> change a user's role, or <strong>Suspend</strong> and <strong>Reactivate</strong> them. A suspended user cannot sign in.</li>
+<li><strong>Users table:</strong> change a user's role, or <strong>Suspend</strong> them (confirm with <strong>Suspend account</strong>) and <strong>Reactivate</strong> them. A suspended user is signed out at once and cannot sign in until reactivated; their cases and records are kept.</li>
 <li><strong>Role permissions:</strong> what each role may do.</li>
 </ul>
 <h3 id="112-audit-log">11.2 Audit log</h3>
