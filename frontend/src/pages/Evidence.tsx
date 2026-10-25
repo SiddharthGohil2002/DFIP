@@ -49,13 +49,13 @@ export function EvidencePage() {
     <div className="stack">
       <PageHeader
         title="Evidence"
-        subtitle={`Disk images for ${activeCase?.case_id || 'this case'}. Each upload is hashed (SHA-256 and SHA-512) on the server, stored read-only, and logged to the chain of custody.`}
+        subtitle={`Evidence of ${activeCase?.case_id || 'this case'}: disk images, collections, network captures and memory images. Each upload is hashed (SHA-256 and SHA-512) on the server, stored read-only, and logged to the chain of custody.`}
       />
       {can('EVIDENCE_UPLOAD') && <UploadCard evidence={evidence} onUploaded={reloadOverview} />}
 
       <Card title="Evidence register" subtitle="Integrity is re-verified automatically before every analysis run." flush>
         {!evidence.length ? (
-          <Empty title="No evidence in this case" text="Upload a disk image above." />
+          <Empty title="No evidence in this case" text="Upload evidence above." />
         ) : (
           <div className="table-wrap">
             <table className="table">

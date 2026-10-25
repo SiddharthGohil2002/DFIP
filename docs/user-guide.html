@@ -1,0 +1,1328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DFIP User Guide</title>
+<meta name="description" content="How to use every function of DFIP, the Digital Forensics Investigation Platform, step by step.">
+<style>
+:root { --bg: #f6f8fb; --surface: #ffffff; --text: #0f172a; --muted: #5b6b82; --border: #dde3ea; --accent: #1d4ed8;
+  --accent-soft: #e8efff; --code: #eef2f7; --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 8px 24px rgba(15, 23, 42, .06); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0b1220; --surface: #111a2e; --text: #e5ecf6; --muted: #9aaac2; --border: #22314d;
+    --accent: #7aa2ff; --accent-soft: #1a2747; --code: #17223a; --shadow: none; }
+}
+:root[data-theme="dark"] { --bg: #0b1220; --surface: #111a2e; --text: #e5ecf6; --muted: #9aaac2; --border: #22314d;
+  --accent: #7aa2ff; --accent-soft: #1a2747; --code: #17223a; --shadow: none; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15.5px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+strong, b { font-weight: 700; }
+a { color: var(--accent); }
+.layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); min-height: 100vh; }
+nav.toc { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 22px 18px 40px; background: var(--surface);
+  border-right: 1px solid var(--border); font-size: 13.5px; }
+nav.toc .brand { font-weight: 800; font-size: 17px; margin-bottom: 2px; }
+nav.toc .tag { color: var(--muted); font-size: 12.5px; margin-bottom: 16px; }
+nav.toc ul { list-style: none; margin: 0; padding: 0; }
+nav.toc li { margin: 1px 0; }
+nav.toc > ul > li > a { font-weight: 650; }
+nav.toc ul ul { padding-left: 12px; margin: 2px 0 8px; border-left: 2px solid var(--border); }
+nav.toc a { display: block; padding: 3px 8px; border-radius: 6px; color: var(--text); text-decoration: none; }
+nav.toc a:hover { background: var(--accent-soft); color: var(--accent); }
+main { padding: 36px 48px 80px; max-width: 980px; }
+h1 { font-size: 32px; line-height: 1.2; margin: 0 0 12px; }
+h2 { font-size: 24px; margin: 48px 0 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+h3 { font-size: 18.5px; margin: 32px 0 8px; }
+p, li { max-width: 78ch; }
+img { display: block; max-width: 100%; height: auto; margin: 14px 0 20px; border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; background: var(--surface); font-size: 14px;
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: block; overflow-x: auto; }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+th { background: var(--accent-soft); font-weight: 650; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+code { font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--code); padding: 1px 5px; border-radius: 5px; }
+pre { background: var(--code); padding: 12px 14px; border-radius: 10px; overflow-x: auto; border: 1px solid var(--border); }
+pre code { background: none; padding: 0; white-space: pre; }
+blockquote { margin: 14px 0; padding: 10px 16px; border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 10px 10px 0; }
+blockquote p { margin: 4px 0; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 28px 0; }
+.theme { margin: 8px 0 18px; display: flex; gap: 6px; }
+.theme button { font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); cursor: pointer; }
+@media (max-width: 900px) {
+  .layout { display: block; }
+  nav.toc { position: static; height: auto; max-height: 50vh; border-right: 0; border-bottom: 1px solid var(--border); }
+  main { padding: 20px 16px 60px; }
+  h1 { font-size: 26px; }
+}
+@media print {
+  nav.toc { display: none; }
+  .layout { display: block; }
+  main { max-width: none; padding: 0; }
+  img { box-shadow: none; break-inside: avoid; }
+  h2 { break-before: page; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+<div class="brand">DFIP User Guide</div>
+<div class="tag">Digital Forensics Investigation Platform</div>
+<div class="theme" aria-label="Colour theme"><button type="button" data-set="auto">Auto</button><button type="button" data-set="light">Light</button><button type="button" data-set="dark">Dark</button></div>
+<div class="toc">
+<ul>
+<li><a href="#1-load-the-demo-data">1. Load the demo data</a></li>
+<li><a href="#2-accounts-and-roles">2. Accounts and roles</a></li>
+<li><a href="#3-the-public-website">3. The public website</a></li>
+<li><a href="#4-sign-in-and-create-an-account">4. Sign in and create an account</a><ul>
+<li><a href="#sign-in">Sign in</a></li>
+<li><a href="#create-an-account">Create an account</a></li>
+</ul>
+</li>
+<li><a href="#5-find-your-way-around-the-workspace">5. Find your way around the workspace</a></li>
+<li><a href="#6-workflow-a-complete-investigation-in-ten-steps">6. Workflow: a complete investigation in ten steps</a></li>
+<li><a href="#7-cases-and-evidence">7. Cases and evidence</a><ul>
+<li><a href="#71-cases">7.1 Cases</a></li>
+<li><a href="#72-legal-hold">7.2 Legal hold</a></li>
+<li><a href="#73-evidence-upload-verify-delete">7.3 Evidence: upload, verify, delete</a></li>
+<li><a href="#74-evidence-details-and-analysis-options">7.4 Evidence details and analysis options</a></li>
+<li><a href="#75-encrypted-volumes-bitlocker-and-luks">7.5 Encrypted volumes (BitLocker and LUKS)</a></li>
+<li><a href="#76-physical-evidence">7.6 Physical evidence</a></li>
+</ul>
+</li>
+<li><a href="#8-analysis-pages">8. Analysis pages</a><ul>
+<li><a href="#81-activity-dashboard">8.1 Activity dashboard</a></li>
+<li><a href="#82-files">8.2 Files</a></li>
+<li><a href="#83-timeline">8.3 Timeline</a></li>
+<li><a href="#84-browser-history">8.4 Browser history</a></li>
+<li><a href="#85-email">8.5 Email</a></li>
+<li><a href="#86-chat-and-cloud">8.6 Chat and cloud</a></li>
+<li><a href="#87-phones">8.7 Phones</a></li>
+<li><a href="#88-network">8.8 Network</a></li>
+<li><a href="#89-pictures-and-videos">8.9 Pictures and videos</a></li>
+<li><a href="#810-usb-devices">8.10 USB devices</a></li>
+<li><a href="#811-windows-activity">8.11 Windows activity</a></li>
+<li><a href="#812-event-logs">8.12 Event logs</a></li>
+<li><a href="#813-file-system-journal-ntfs">8.13 File system journal (NTFS)</a></li>
+<li><a href="#814-shadow-copies">8.14 Shadow copies</a></li>
+<li><a href="#815-linux-and-macos">8.15 Linux and macOS</a></li>
+<li><a href="#816-memory">8.16 Memory</a></li>
+<li><a href="#817-computer-and-users">8.17 Computer and users</a></li>
+<li><a href="#818-indicators">8.18 Indicators</a></li>
+<li><a href="#819-file-carving">8.19 File carving</a></li>
+<li><a href="#820-found-data">8.20 Found data</a></li>
+<li><a href="#821-link-graph">8.21 Link graph</a></li>
+<li><a href="#822-case-summary">8.22 Case summary</a></li>
+<li><a href="#823-keyword-search">8.23 Keyword search</a></li>
+</ul>
+</li>
+<li><a href="#9-tools-used-on-many-pages">9. Tools used on many pages</a><ul>
+<li><a href="#91-tags">9.1 Tags</a></li>
+<li><a href="#92-comments-and-mentions">9.2 Comments and @mentions</a></li>
+<li><a href="#93-the-file-viewer">9.3 The file viewer</a></li>
+<li><a href="#94-exports">9.4 Exports</a></li>
+</ul>
+</li>
+<li><a href="#10-reporting">10. Reporting</a><ul>
+<li><a href="#101-findings-and-peer-review">10.1 Findings and peer review</a></li>
+<li><a href="#102-tagged-items">10.2 Tagged items</a></li>
+<li><a href="#103-reports">10.3 Reports</a></li>
+<li><a href="#104-chain-of-custody">10.4 Chain of custody</a></li>
+</ul>
+</li>
+<li><a href="#11-administration">11. Administration</a><ul>
+<li><a href="#111-users">11.1 Users</a></li>
+<li><a href="#112-audit-log">11.2 Audit log</a></li>
+<li><a href="#113-hash-sets">11.3 Hash sets</a></li>
+<li><a href="#114-malware-rules">11.4 Malware rules</a></li>
+<li><a href="#115-retention">11.5 Retention</a></li>
+<li><a href="#116-system-tools">11.6 System &amp; tools</a></li>
+</ul>
+</li>
+<li><a href="#12-your-account">12. Your account</a><ul>
+<li><a href="#121-notifications">12.1 Notifications</a></li>
+<li><a href="#122-change-your-password">12.2 Change your password</a></li>
+<li><a href="#123-time-display">12.3 Time display</a></li>
+<li><a href="#124-sign-out">12.4 Sign out</a></li>
+</ul>
+</li>
+<li><a href="#13-a-15-minute-demo-script">13. A 15-minute demo script</a></li>
+<li><a href="#14-which-page-needs-which-evidence-and-profile">14. Which page needs which evidence and profile</a></li>
+<li><a href="#15-when-a-page-is-empty-or-something-does-not-work">15. When a page is empty or something does not work</a></li>
+</ul>
+</div>
+
+</nav>
+<main>
+<h1 id="dfip-user-guide">DFIP User Guide</h1>
+<p>How to use every function of DFIP, step by step, from the public website and the sign-in page to the last administration page. Each section says where the function is, what to click, and what you should see.</p>
+<p><strong>Before you start:</strong> DFIP must be running. If it is not, follow <a href="../README.md#run-dfip-with-docker-step-by-step">Run DFIP with Docker</a> in the README first. This guide assumes DFIP is at <strong>http://localhost</strong>.</p>
+<hr />
+<h2 id="1-load-the-demo-data">1. Load the demo data</h2>
+<p>A new DFIP has only one sample case, and its evidence is a placeholder that cannot be analysed. For a demonstration, or simply to see every page with real results, load the demo data: test evidence that the project generates itself (a Windows laptop in a "payroll data leak" story, a network capture, phones, a Linux server, a Mac and more), uploaded and analysed through DFIP's own API.</p>
+<p>Run these commands from the <code>DFIP</code> folder while DFIP is running. They work as written in PowerShell (Windows), macOS and Linux.</p>
+<p><strong>Step 1: generate the test evidence</strong> (a few minutes; needs internet the first time):</p>
+<pre><code class="language-bash">docker run --rm -v &quot;${PWD}:/repo&quot; -w /repo python:3.11-slim sh scripts/test-image/make-test-image.sh
+docker run --rm --privileged -v &quot;${PWD}:/repo&quot; -w /repo python:3.11-slim sh scripts/test-image/make-ntfs-image.sh
+</code></pre>
+<p>The first command builds the Windows laptop image and, next to it, a Linux server disk, a Mac collection, KAPE and Velociraptor packages, an Android and an iPhone extraction and a network capture. The second builds an NTFS disk (it needs <code>--privileged</code> to format NTFS). Everything is written to <code>storage/test-images/</code>.</p>
+<p><strong>Step 2 (optional): public samples.</strong> About 400 MB of real test files from the dfVFS, Plaso and python-evtx projects. The download can take 20 minutes or more. They add BitLocker and LUKS volumes to unlock, Volume Shadow Copies, a split EnCase image, and a disk with real SRUM, Windows Search, Jump Lists, Outlook, Chrome, Firefox and event-log files:</p>
+<pre><code class="language-bash">docker run --rm -v &quot;${PWD}:/repo&quot; -w /repo python:3.11-slim python scripts/test-image/fetch_samples.py
+docker run --rm -v &quot;${PWD}:/repo&quot; -w /repo python:3.11-slim sh scripts/test-image/make-samples-image.sh
+</code></pre>
+<p><strong>Step 3 (optional): a Plaso timeline</strong> of the laptop image, to show the timeline import. This command is a shell script, so on Windows run it in <strong>Git Bash</strong>. It downloads Plaso's image (about 660 MB) the first time:</p>
+<pre><code class="language-bash">sh scripts/test-image/make-plaso-timeline.sh
+</code></pre>
+<p><strong>Step 4: load everything into DFIP:</strong></p>
+<pre><code class="language-bash">docker compose run --rm --no-deps -v &quot;${PWD}/scripts:/scripts:ro&quot; -v &quot;${PWD}/storage/test-images:/img:ro&quot; backend python /scripts/demo/load_demo_data.py
+</code></pre>
+<p>It prints each step and takes a few minutes (under 3 minutes on a fast computer). Add <code>--clamav</code> at the end to download ClamAV's virus databases first, so the analysis also runs the ClamAV scan (needs internet access).</p>
+<p>When it finishes, sign in and pick a <strong>DEMO</strong> case in the case switcher at the top:</p>
+<table>
+<thead>
+<tr>
+<th>Case</th>
+<th>What it holds</th>
+<th>Pages it fills</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DEMO - Payroll data leak (Alice's laptop)</strong></td>
+<td>The Windows laptop, an NTFS office desktop, a network capture, an Android and an iPhone extraction, Plaso's timeline (if made); a recovered deleted file, carved files, tags, three findings (approved, in review, draft), a comment, the seized laptop as physical evidence, a signed report</td>
+<td>Almost every page</td>
+</tr>
+<tr>
+<td><strong>DEMO - Collections: Linux server, Mac and triage packages</strong></td>
+<td>A Linux server disk, a Mac collection, KAPE and Velociraptor packages (collections of the laptop's files)</td>
+<td>Linux and macOS, plus the laptop's records again as the triage packages collected them</td>
+</tr>
+<tr>
+<td><strong>DEMO - Encrypted volumes, shadow copies and image formats</strong> (only with the samples)</td>
+<td>BitLocker and LUKS volumes unlocked with their passwords, shadow copies, a split EnCase image, the samples disk</td>
+<td>Shadow copies, the Volumes card, Windows activity (SRUM network usage, Search index, Jump lists, Timeline), Email (an Outlook mailbox), Browser history, Chat and cloud</td>
+</tr>
+</tbody>
+</table>
+<p>As administrator, the loader also adds a YARA rule set and two hash sets, and registers the account <code>priya.shah@dfip.local</code>, which waits for your approval on the <strong>Users</strong> page.</p>
+<p>Running the loader again is safe. It completes whatever is missing (for example after an interruption, or once you have downloaded the samples) and repeats nothing that is already there. To start completely fresh, run <code>docker compose down -v</code> (this deletes <strong>all</strong> cases), then <code>docker compose up -d</code> and Step 4 again.</p>
+<blockquote>
+<p><strong>Memory images</strong> are the one kind of evidence the demo cannot include, because a real memory capture is several gigabytes. To show the Memory page, upload a memory image of your own (Section 8.16).</p>
+</blockquote>
+<hr />
+<h2 id="2-accounts-and-roles">2. Accounts and roles</h2>
+<p>In demo mode (<code>DEMO_MODE=true</code>, the default) four accounts exist. They all use the password <strong>DemoPassword!2026</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Account</th>
+<th>Role</th>
+<th>What the role can do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>investigator@dfip.local</code></td>
+<td>Investigator</td>
+<td>Create and edit cases, upload, verify and delete evidence, run analysis, record and review findings, generate and export reports, legal hold, read the audit log of their cases</td>
+</tr>
+<tr>
+<td><code>analyst@dfip.local</code></td>
+<td>Analyst</td>
+<td>Read the cases they belong to, run analysis, record findings</td>
+</tr>
+<tr>
+<td><code>viewer@dfip.local</code></td>
+<td>Viewer</td>
+<td>Read only</td>
+</tr>
+<tr>
+<td><code>admin@dfip.local</code></td>
+<td>Administrator</td>
+<td>Everything, plus users, hash sets, malware rules, retention and deleting cases</td>
+</tr>
+</tbody>
+</table>
+<p>Rules that apply everywhere:</p>
+<ul>
+<li><strong>Which cases you see:</strong> an administrator sees every case. Everyone else sees only the cases they created, lead, or are a member of.</li>
+<li><strong>Hidden buttons:</strong> a button your role cannot use is not shown. The server checks every permission again, whatever the screen shows.</li>
+<li><strong>Exports:</strong> the <strong>CSV</strong> and <strong>XLSX</strong> buttons on tables appear only for investigators and administrators.</li>
+</ul>
+<hr />
+<h2 id="3-the-public-website">3. The public website</h2>
+<p><img alt="The DFIP website" src="guide/images/website.webp" /></p>
+<p>Open <strong>http://localhost</strong>. The website introduces DFIP:</p>
+<ul>
+<li><strong>Top menu:</strong> Features, How it works, Security, Download, FAQ, plus <strong>Sign in</strong> and <strong>Create account</strong>.</li>
+<li><strong>Hero:</strong> <strong>Get started</strong> (opens Create account) and <strong>Download for Windows</strong> when a desktop installer has been published, otherwise <strong>Sign in</strong>.</li>
+<li><strong>Features:</strong> the key facts and one section per main result (deleted files, timeline, browser history, USB, reports), each with a screenshot.</li>
+<li><strong>How it works:</strong> the six steps Acquire, Preserve, Examine, Analyze, Document, Report.</li>
+<li><strong>Evidence integrity:</strong> how evidence is protected (hashing, read-only originals, custody, tamper-evident audit log, roles).</li>
+<li><strong>Platforms (Download):</strong> the web portal and the Windows app with the installer's name, size and SHA-256 (see the README, "Build the Windows desktop app").</li>
+<li><strong>FAQ:</strong> formats supported, where evidence is stored, accounts.</li>
+</ul>
+<p>On a phone-sized window the menu collapses into a button.</p>
+<hr />
+<h2 id="4-sign-in-and-create-an-account">4. Sign in and create an account</h2>
+<p><img alt="The sign-in page with the demo accounts" src="guide/images/sign-in.webp" /></p>
+<h3 id="sign-in">Sign in</h3>
+<ol>
+<li>Click <strong>Sign in</strong> on the website (or open http://localhost/login).</li>
+<li>Check the status line under the heading: it should say <strong>Server online · v2.1.0</strong>. "Server unreachable" means the backend is not running (see the README's Troubleshooting).</li>
+<li>Enter your <strong>Email</strong> and <strong>Password</strong> and click <strong>Sign in</strong>. In demo mode, click one of the <strong>Demo accounts</strong> buttons (Investigator, Analyst, Viewer, Administrator) to fill them in, then click <strong>Sign in</strong>.</li>
+</ol>
+<p>You land on the <strong>Case desktop</strong>. You stay signed in until you sign out or close the browser.</p>
+<p>Messages you may see:</p>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Email or password is incorrect.</td>
+<td>Check both, or ask an administrator to reset the account.</td>
+</tr>
+<tr>
+<td>Your account is waiting for administrator approval.</td>
+<td>An administrator must approve the account first (Section 11.1).</td>
+</tr>
+<tr>
+<td>This account is disabled. Contact your DFIP administrator.</td>
+<td>The account was suspended or rejected.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="create-an-account">Create an account</h3>
+<ol>
+<li>On the sign-in page click <strong>Create account</strong> (or <strong>Create an account</strong> under the form).</li>
+<li>Fill in <strong>Full name</strong>, <strong>Work email</strong>, <strong>Password</strong> (at least 12 characters) and <strong>Confirm password</strong>, then click <strong>Create account</strong>.</li>
+<li>With the default setting (<code>REGISTRATION_MODE=approval</code>) you see <em>"Account created. An administrator must approve it before you can sign in."</em> An administrator approves it and chooses its role on the <strong>Users</strong> page. With <code>open</code> the account works at once, as an Investigator. With <code>disabled</code> the Create account option is not shown.</li>
+</ol>
+<hr />
+<h2 id="5-find-your-way-around-the-workspace">5. Find your way around the workspace</h2>
+<p><img alt="The case desktop" src="guide/images/case-desktop.webp" /></p>
+<p><strong>Sidebar (left).</strong> The pages, in five groups: <strong>Workspace</strong>, <strong>Case</strong>, <strong>Analysis</strong>, <strong>Reporting</strong>, <strong>Administration</strong>. A number next to a page counts its records in the active case. A red number means something needs attention, such as recovered deleted history, a detection, or an item checked out. <strong>Users</strong> shows how many accounts wait for approval.</p>
+<p><strong>Top bar.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Case</strong> dropdown</td>
+<td>The <strong>active case</strong>. Every analysis page shows the active case only. Your choice is remembered in this browser.</td>
+</tr>
+<tr>
+<td>Status and <strong>Legal hold</strong> badges</td>
+<td>The case status, and a red badge while the case is under legal hold</td>
+</tr>
+<tr>
+<td><strong>New case</strong></td>
+<td>Creates a case (Section 7.1)</td>
+</tr>
+<tr>
+<td><strong>Search this case…</strong></td>
+<td>Type at least 2 characters and press Enter to open Keyword search (Section 8.23)</td>
+</tr>
+<tr>
+<td><strong>UTC</strong> / <strong>Local</strong></td>
+<td>Shows every time in UTC or in your computer's time zone</td>
+</tr>
+<tr>
+<td>Bell</td>
+<td>Your <strong>notifications</strong> (Section 12.1). A red number counts the unread ones.</td>
+</tr>
+<tr>
+<td>Key icon</td>
+<td><strong>Change password</strong> (Section 12.2)</td>
+</tr>
+<tr>
+<td><strong>Sign out</strong></td>
+<td>Ends your session</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Case desktop</strong> (the first page after signing in; <strong>Case desktop</strong> at the top of the sidebar):</p>
+<ul>
+<li><strong>Case header:</strong> the case ID, title, description, status and priority, with <strong>Place legal hold</strong>, <strong>Add evidence</strong> and <strong>Generate report</strong>.</li>
+<li><strong>Getting started:</strong> four steps (upload evidence, run the analysis, record findings, generate the report), ticked off as you go. Only the next step has a button.</li>
+<li><strong>Evidence:</strong> each evidence item with its integrity badge, live analysis progress and a summary of what was found, plus <strong>Analyze</strong> and <strong>Open</strong>.</li>
+<li><strong>Investigation functions:</strong> a tile for every page, with its count. Click a tile to open the page.</li>
+<li><strong>Recent jobs:</strong> background analysis jobs with their progress. A queued or running job has a <strong>Cancel</strong> button (investigators and administrators). A cancelled analysis can simply be run again.</li>
+</ul>
+<hr />
+<h2 id="6-workflow-a-complete-investigation-in-ten-steps">6. Workflow: a complete investigation in ten steps</h2>
+<p>The short path from nothing to a signed report. Sign in as <code>investigator@dfip.local</code>.</p>
+<ol>
+<li><strong>Create a case.</strong> Click <strong>New case</strong> in the top bar. Enter a <strong>Case title</strong> and, if you like, a <strong>Description</strong>, <strong>Priority</strong> and <strong>Lead investigator</strong>. Click <strong>Create case</strong>. The new case becomes the active case.</li>
+<li><strong>Upload evidence.</strong> Open <strong>Evidence</strong> (sidebar, Case group). Drop the file on the upload area or click it to choose, for example <code>storage/test-images/dfip-test-disk.dd</code>. Click <strong>Upload and seal</strong>. The bar shows <em>Uploading…</em>, then <em>Hashing on server…</em>. A green banner shows the SHA-256 and SHA-512.</li>
+<li><strong>Run the analysis.</strong> For a first look, click <strong>Run analysis</strong> in the green banner (Standard profile). For everything, including content search and found data, open the evidence (<strong>Details</strong>), click <strong>Analysis options</strong>, choose <strong>Full</strong> and click <strong>Start analysis</strong>.</li>
+<li><strong>Watch the progress</strong> on the <strong>Case desktop</strong> (Evidence card and Recent jobs). The bell tells you when the analysis has finished.</li>
+<li><strong>Review the results.</strong> Start with the <strong>Activity dashboard</strong> and <strong>Timeline</strong>, then <strong>Files</strong> (deleted entries), <strong>USB devices</strong>, <strong>Browser history</strong> and <strong>Indicators</strong>. Section 8 explains each page.</li>
+<li><strong>Tag what matters.</strong> Click the bookmark icon on any row, choose <strong>Evidence</strong>, <strong>Notable</strong> or <strong>Follow up</strong>, write why, and click <strong>Add tag</strong>.</li>
+<li><strong>Recover deleted files.</strong> In <strong>Files → Deleted entries</strong>, click <strong>Recover</strong> on a file. It appears in <strong>Recovered files</strong>, hashed and in the chain of custody.</li>
+<li><strong>Record findings.</strong> In <strong>Findings</strong>, click <strong>Record finding</strong>, write the observation and tick the supporting evidence. Click <strong>Send for review</strong> to have a colleague approve it.</li>
+<li><strong>Generate the report.</strong> In <strong>Reports</strong>, choose the sections (or keep the full report) and click <strong>Generate report</strong>. Download the <strong>PDF</strong> (digitally signed) or the <strong>HTML</strong>.</li>
+<li><strong>Check the chain of custody.</strong> <strong>Chain of custody</strong> lists every action on the evidence, and its banner confirms the audit chain is intact.</li>
+</ol>
+<hr />
+<h2 id="7-cases-and-evidence">7. Cases and evidence</h2>
+<h3 id="71-cases">7.1 Cases</h3>
+<p><strong>Where:</strong> sidebar → <strong>Cases</strong>.</p>
+<p><img alt="Cases" src="guide/images/cases.webp" /></p>
+<p>The table lists the cases you can see, with status, priority and dates. The active case is marked <em>active</em>.</p>
+<ul>
+<li><strong>Open a case:</strong> click <strong>Open</strong> on its row. It becomes the active case and the Case desktop opens. You can also pick it in the top-bar <strong>Case</strong> dropdown.</li>
+<li><strong>Create a case:</strong> <strong>New case</strong>, then fill in:</li>
+<li><strong>Case title</strong> (required)</li>
+<li><strong>Description</strong></li>
+<li><strong>Priority</strong> (LOW, MEDIUM, HIGH, CRITICAL)</li>
+<li><strong>Lead investigator</strong></li>
+</ul>
+<p>Click <strong>Create case</strong>.
+- <strong>Edit a case and its team:</strong> click <strong>Edit</strong>. You can also change the <strong>Status</strong> (Open, In progress, On hold, Completed, Archived), the lead investigator and the <strong>Team</strong>. Team members can open the case, comment and be asked to review findings, and they are notified when added. Click <strong>Save changes</strong>.
+- Setting the status to <strong>Completed</strong> or <strong>Archived</strong> starts the case's retention period (Section 11.5).</p>
+<h3 id="72-legal-hold">7.2 Legal hold</h3>
+<p><strong>Where:</strong> Case desktop → <strong>Place legal hold</strong> (investigators and administrators).</p>
+<ol>
+<li>Click <strong>Place legal hold</strong>, enter the <strong>Reason for the hold</strong> and click <strong>Place hold</strong>.</li>
+<li>A red <strong>Legal hold</strong> badge appears in the top bar. While it is there, no evidence of the case can be deleted, and the case is never due for deletion under the retention policy.</li>
+<li>To end it: <strong>Release legal hold</strong>, enter the <strong>Reason for releasing the hold</strong>, click <strong>Release hold</strong>.</li>
+</ol>
+<h3 id="73-evidence-upload-verify-delete">7.3 Evidence: upload, verify, delete</h3>
+<p><strong>Where:</strong> sidebar → <strong>Evidence</strong>.</p>
+<p><img alt="Evidence upload and register" src="guide/images/evidence.webp" /></p>
+<p><strong>What you can upload:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Formats</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Disk images</td>
+<td>E01/Ex01 with all their segments (.E02 …); raw/dd/img, also split into .001, .002 …; VHD, VHDX, VMDK, QCOW2 (with their parent disks); AFF/AFF4</td>
+</tr>
+<tr>
+<td>Collections of files</td>
+<td>ZIP or TAR: KAPE, Velociraptor, CyLR, UAC, and Android or iOS full file system extractions</td>
+</tr>
+<tr>
+<td>Network captures</td>
+<td>pcap, pcapng, cap</td>
+</tr>
+<tr>
+<td>Memory images</td>
+<td>.mem, .vmem, .lime, Windows crash dumps (.dmp), or a raw file marked as a memory image</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Upload:</strong></p>
+<ol>
+<li>Drop the file on <strong>Drop evidence here or click to choose</strong>, or click it and pick the file. For an image in several parts (EnCase segments, numbered parts, a virtual disk with its parent), <strong>choose all its files together</strong>: they become one evidence item.</li>
+<li>For a single raw file (.raw, .dd, .img, .mem, .vmem), a checkbox <em>"This is a memory image (a RAM capture), not a disk image"</em> appears. Tick it when the file is a memory capture. It is ticked already for .mem and .vmem.</li>
+<li>Click <strong>Upload and seal</strong>. The original file on your computer is never changed. On the server, the file is hashed (SHA-256 and SHA-512), stored read-only and written to the chain of custody.</li>
+<li>The green banner shows the evidence ID and hashes. Click <strong>Run analysis</strong> to start the Standard analysis straight away.</li>
+</ol>
+<p>The same image can be registered only once per case. If a file has the same name and size as one already in the case, you are warned before uploading.</p>
+<p><strong>The evidence register</strong> (below the upload card) lists every item with its acquisition SHA-256, integrity and analysis status.</p>
+<table>
+<thead>
+<tr>
+<th>Button</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Verify</strong></td>
+<td>Re-computes the stored file's SHA-256 now and compares it with the acquisition hash. A mismatch shows <em>INTEGRITY FAILED</em>.</td>
+</tr>
+<tr>
+<td><strong>Analyze</strong> / <strong>Re-run</strong></td>
+<td>Runs the Standard analysis</td>
+</tr>
+<tr>
+<td><strong>Details</strong></td>
+<td>Opens the evidence detail page (Section 7.4)</td>
+</tr>
+<tr>
+<td><strong>Delete</strong></td>
+<td>Asks for a reason, then permanently deletes the image and everything extracted from it. The chain of custody, audit log, findings and reports are kept. Not possible during an analysis or under legal hold.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="74-evidence-details-and-analysis-options">7.4 Evidence details and analysis options</h3>
+<p><strong>Where:</strong> Evidence → <strong>Details</strong> (or the evidence ID on the Case desktop).</p>
+<p><img alt="Evidence details" src="guide/images/evidence-detail.webp" /></p>
+<p>The page shows, from top to bottom:</p>
+<ul>
+<li><strong>Evidence manifest:</strong> the hashes, the integrity and the storage.</li>
+<li><strong>Chain of custody</strong> for this item.</li>
+<li><strong>Image files and working copy</strong>.</li>
+<li><strong>Volumes:</strong> partitions and file systems, encryption and shadow copies.</li>
+<li><strong>Disk image analysis:</strong> what was found, the partition table, and the pre-analysis integrity check.</li>
+<li><strong>Analysis modules:</strong> each module's status and results, with <strong>Run</strong>/<strong>Re-run</strong> per module.</li>
+<li><strong>Comments on this evidence</strong>.</li>
+</ul>
+<p>Header buttons:</p>
+<ul>
+<li><strong>Verify integrity</strong>: the same check as Verify above.</li>
+<li><strong>Run full analysis</strong> / <strong>Re-run analysis</strong>: runs the Standard profile.</li>
+<li><strong>Analysis options</strong>: choose what to run:</li>
+</ul>
+<p><img alt="Analysis options" src="guide/images/analysis-options.webp" /></p>
+<table>
+<thead>
+<tr>
+<th>Profile</th>
+<th>Runs</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Quick triage</strong></td>
+<td>Files (including deleted), file timeline, browser, USB and Windows activity, computer and users, Linux and macOS, phones, network captures, memory images</td>
+<td>A fast first look</td>
+</tr>
+<tr>
+<td><strong>Standard</strong> (default)</td>
+<td>Quick, plus event logs, Jump Lists/Timeline/SRUM/search index, NTFS internals, shadow copies, browser depth, file hashes and types, email, chat and cloud, pictures and videos, programs, VirusTotal, ClamAV, hash sets, YARA</td>
+<td>Most cases</td>
+</tr>
+<tr>
+<td><strong>Full</strong></td>
+<td>Standard, plus archives and embedded files, OCR of pictures, file contents (for content search), unallocated space, found data</td>
+<td>Everything; needed for Keyword search in file contents and Found data</td>
+</tr>
+<tr>
+<td><strong>Choose modules</strong></td>
+<td>Only the modules you tick (modules they need are added automatically)</td>
+<td>Re-running one part</td>
+</tr>
+</tbody>
+</table>
+<p>Click <strong>Start analysis</strong>. The image's SHA-256 is verified before anything runs. Only the modules that apply to the kind of evidence are listed: a network capture has no file system, and a memory image only runs the memory module.</p>
+<ul>
+<li><strong>Computer time zone:</strong> after analysis, a banner shows the time zone found in the Windows registry, which DFIP uses to convert FAT and log times to UTC. <strong>Change time zone</strong> lets you set it by hand (give a reason) and re-index.</li>
+</ul>
+<h3 id="75-encrypted-volumes-bitlocker-and-luks">7.5 Encrypted volumes (BitLocker and LUKS)</h3>
+<p><strong>Where:</strong> Evidence details → <strong>Volumes</strong> card. Demo case: <em>DEMO - Encrypted volumes…</em> (with the samples).</p>
+<ol>
+<li>Analyse the image first (Quick is enough). The Volumes card shows the encrypted volume as <strong>BitLocker, LOCKED</strong> or <strong>LUKS, LOCKED</strong>.</li>
+<li>Click <strong>Unlock</strong>. For BitLocker, choose <strong>Password</strong> or <strong>Recovery password (48 digits)</strong>. Type the key and click <strong>Unlock and decrypt</strong>.</li>
+<li>The key is checked at once (a wrong key is refused in the dialog), stored encrypted, and never shown again. The decrypted volume becomes a <strong>new evidence item</strong> of its own, with its own hash, and is analysed automatically.</li>
+<li><strong>Forget key</strong> deletes the stored key.</li>
+</ol>
+<p>The demo samples' passwords are <code>bde-TEST</code> (BitLocker) and <code>luksde-TEST</code> (LUKS); the loader has already used them.</p>
+<h3 id="76-physical-evidence">7.6 Physical evidence</h3>
+<p><strong>Where:</strong> sidebar → <strong>Physical evidence</strong>.</p>
+<p><img alt="Physical evidence" src="guide/images/physical.webp" /></p>
+<p>Record the seized devices themselves: bag and seal numbers, where each is kept, photos, and every hand-over.</p>
+<ol>
+<li><strong>Book an item in:</strong> click <strong>Add item</strong>. Fill in <strong>Description</strong>, <strong>Kind</strong>, make, model, serial, <strong>Bag number</strong>, <strong>Seal number</strong>, <strong>Stored at</strong>, when and where it was seized and by whom. Tick the disk images made from it. Click <strong>Book in</strong>.</li>
+<li><strong>Open</strong> an item to see its details, photos and custody log.</li>
+<li><strong>Move it:</strong></li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Button</th>
+<th>Required fields</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Check out</strong></td>
+<td>Taken by, Purpose</td>
+</tr>
+<tr>
+<td><strong>Check in</strong></td>
+<td>Stored at, Seal when it came back (Intact or Broken)</td>
+</tr>
+<tr>
+<td><strong>Move</strong></td>
+<td>Stored at</td>
+</tr>
+<tr>
+<td><strong>Release</strong></td>
+<td>Released to</td>
+</tr>
+<tr>
+<td><strong>Destroy</strong></td>
+<td>How it was destroyed, and the authority</td>
+</tr>
+</tbody>
+</table>
+<p>Click <strong>Record</strong>. A broken seal notifies the case investigator.
+4. <strong>Add photo</strong> (JPEG or PNG) to document the item. <strong>Remove</strong> under a photo takes it off again; give a reason (kept in the audit log). Photos cannot be removed while the case is under legal hold.
+5. <strong>Edit details</strong> corrects what was recorded: description, kind, make, model, serial and bag numbers, when, where and by whom it was seized, notes, and the disk images made from it. Where the item is kept and its seal number are not edited here: they change only through Check in, Check out and Move, so the custody log stays complete.
+6. <strong>Print custody form</strong> downloads a PDF custody form for signatures.</p>
+<hr />
+<h2 id="8-analysis-pages">8. Analysis pages</h2>
+<p>Every page shows the <strong>active case</strong> (top-bar Case dropdown). Most tables have a search box, filters, paging, a <strong>CSV</strong>/<strong>XLSX</strong> export of every row the filters select, and a bookmark icon to tag a row (Section 9.1). Section 14 lists which evidence and analysis profile fills each page.</p>
+<h3 id="81-activity-dashboard">8.1 Activity dashboard</h3>
+<p><strong>Where:</strong> sidebar → Workspace → <strong>Activity dashboard</strong>.</p>
+<p><img alt="Activity dashboard" src="guide/images/dashboard.webp" /></p>
+<p>An overview of when the computer was used:</p>
+<ul>
+<li>a heatmap by day of the week and hour;</li>
+<li>the busiest days;</li>
+<li>USB connections;</li>
+<li>the top websites;</li>
+<li>file types.</li>
+</ul>
+<p>Tick <strong>Include filesystem times (MACB)</strong> to count file-system times too; they also change for system reasons. Times follow the <strong>UTC/Local</strong> switch.</p>
+<h3 id="82-files">8.2 Files</h3>
+<p><strong>Where:</strong> sidebar → <strong>Files</strong>.</p>
+<p><img alt="Files" src="guide/images/files.webp" /></p>
+<p>The file index of each analysed image, including deleted entries. Choose the evidence in the dropdown at the top right.</p>
+<p><strong>Tabs:</strong></p>
+<ul>
+<li><strong>Deleted entries:</strong> files the file system still describes although they were deleted.</li>
+<li><strong>All files</strong>.</li>
+<li><strong>Archives and attachments:</strong> files inside ZIP/7z archives, Office documents, PDFs and email attachments. Needs the Full profile.</li>
+<li><strong>Recovered files:</strong> files you have recovered.</li>
+</ul>
+<p><strong>Filters:</strong></p>
+<ul>
+<li>a path filter (for example <code>payroll</code> or <code>.docx</code>);</li>
+<li><strong>type</strong> (Program, Document, Picture…);</li>
+<li><strong>flag</strong>: Renamed (content does not match the name), Encrypted, Known bad, Notable or Known good (hash sets);</li>
+<li><strong>Hide known-good files</strong>.</li>
+</ul>
+<p><strong>On each row:</strong></p>
+<ul>
+<li><strong>Info</strong> (ⓘ): hashes, real type, entropy, hash-set matches and <em>Same content elsewhere in this case</em>.</li>
+<li><strong>View:</strong> preview text, pictures and PDFs, or the hex view (Section 9.3).</li>
+<li><strong>Recover:</strong> copies the file out of the image (with icat), hashes it and logs it to the chain of custody. The button then becomes <strong>Download</strong>.</li>
+<li>In <strong>Recovered files</strong>, <strong>Metadata</strong> shows ExifTool's metadata.</li>
+</ul>
+<h3 id="83-timeline">8.3 Timeline</h3>
+<p><strong>Where:</strong> sidebar → <strong>Timeline</strong>.</p>
+<p><img alt="Timeline" src="guide/images/timeline.webp" /></p>
+<p>One chronology of file times (MACB: modified, accessed, changed, born), browser visits and downloads, USB events, Windows, Linux and macOS activity, phones, network traffic and imported Plaso timelines.</p>
+<ul>
+<li><strong>Filter</strong> by event type, search the descriptions (press Enter), choose the evidence, and set <strong>From</strong>/<strong>To</strong>. Toggle <strong>Oldest first</strong>/<strong>Newest first</strong>. <strong>Reset</strong> clears everything.</li>
+<li><strong>Events over time:</strong> click a column to zoom into that period, and <strong>Full range</strong> to zoom out. The columns are UTC hours, days or months, whatever the UTC/Local switch shows.</li>
+<li><strong>Import a Plaso timeline:</strong> in <strong>Imported timelines</strong>, click <strong>Import a Plaso timeline</strong>. Choose a file made with <code>psort -o json_line</code> or <code>-o l2tcsv</code>, link it to the evidence it came from (<strong>Made from</strong>), and click <strong>Import</strong>. Its events join the timeline as <em>Imported (Plaso)</em>. <strong>Delete</strong> removes an import.</li>
+</ul>
+<h3 id="84-browser-history">8.4 Browser history</h3>
+<p><strong>Where:</strong> sidebar → <strong>Browser history</strong>.</p>
+<p><img alt="Browser history" src="guide/images/browser.webp" /></p>
+<p>Records from Chrome, Edge, Brave, Opera, Vivaldi and Firefox profiles, each row naming the database it came from.</p>
+<ul>
+<li><strong>Tabs:</strong> History, Downloads, Searches, Recovered history (deleted rows found inside the databases), Cookies, Bookmarks, Autofill, Saved logins. Passwords are never shown, only whether one was saved.</li>
+<li><strong>Filter</strong> by browser, and search the tab.</li>
+</ul>
+<h3 id="85-email">8.5 Email</h3>
+<p><strong>Where:</strong> sidebar → <strong>Email</strong>.</p>
+<p><img alt="Email" src="guide/images/email.webp" /></p>
+<p>Mailboxes found in the images: Outlook PST/OST, MBOX, Thunderbird, and EML/MSG files.</p>
+<ol>
+<li>The <strong>Mailboxes</strong> card lists each mailbox. <strong>Show only</strong> narrows the messages to one.</li>
+<li>Filter the messages by text, folder, direction (Sent/Received), <strong>With attachments</strong> or <strong>Deleted only</strong>.</li>
+<li>Click a subject to open the message: its headers, the <strong>Text</strong> and <strong>HTML (safe view)</strong> tabs, and the attachments, each with <strong>View</strong>. The safe view removes scripts, forms and links and loads nothing from the internet.</li>
+</ol>
+<h3 id="86-chat-and-cloud">8.6 Chat and cloud</h3>
+<p><strong>Where:</strong> sidebar → <strong>Chat and cloud</strong>.</p>
+<p><img alt="Chat and cloud storage" src="guide/images/chat-cloud.webp" /></p>
+<p>Skype, WhatsApp Desktop, Telegram and other chat apps, and OneDrive, Dropbox and Google Drive accounts and files.</p>
+<ul>
+<li><strong>Tabs:</strong> Messages, Calls, File transfers, Accounts and contacts, Chat apps found, Cloud accounts, Cloud files.</li>
+<li>On Messages, filter by conversation. On Cloud files, tick <strong>Files only (hide folders)</strong>.</li>
+</ul>
+<h3 id="87-phones">8.7 Phones</h3>
+<p><strong>Where:</strong> sidebar → <strong>Phones</strong>.</p>
+<p><img alt="Phones" src="guide/images/phones.webp" /></p>
+<p>Android and iPhone full file system extractions, uploaded as ZIP or TAR.</p>
+<ul>
+<li>A card per device: system, time zone and counts.</li>
+<li><strong>Tabs:</strong></li>
+<li><strong>Messages:</strong> SMS, MMS and iMessage. Contact names are filled in from the address book. Pictures in MMS open with <strong>View</strong>.</li>
+<li><strong>WhatsApp</strong>.</li>
+<li><strong>Calls</strong>.</li>
+<li><strong>Contacts</strong>.</li>
+<li><strong>Apps:</strong> tick <strong>Only what stands out</strong>.</li>
+<li><strong>Wi-Fi networks:</strong> passwords are never shown.</li>
+</ul>
+<h3 id="88-network">8.8 Network</h3>
+<p><strong>Where:</strong> sidebar → <strong>Network</strong>.</p>
+<p><img alt="Network" src="guide/images/network.webp" /></p>
+<p>What a network capture (pcap/pcapng) shows.</p>
+<ul>
+<li>The capture card shows the packets and the first and last packet times.</li>
+<li><strong>Tabs:</strong></li>
+<li><strong>HTTP:</strong> tick <strong>Only uploads</strong> to see data sent out.</li>
+<li><strong>DNS lookups</strong>.</li>
+<li><strong>TLS connections:</strong> server names.</li>
+<li><strong>Conversations</strong>.</li>
+<li><strong>Files carried:</strong> files transferred over HTTP, with their hashes. Open them with <strong>View</strong>.</li>
+<li><strong>Look up</strong> next to a host or address checks it with the threat-intelligence services an administrator configured (AbuseIPDB, AlienVault OTX, URLhaus; see the README). It is shown to roles that may run analysis, and every lookup is audited.</li>
+</ul>
+<h3 id="89-pictures-and-videos">8.9 Pictures and videos</h3>
+<p><strong>Where:</strong> sidebar → <strong>Pictures and videos</strong>.</p>
+<p><img alt="Pictures and videos" src="guide/images/media.webp" /></p>
+<ul>
+<li><strong>Where pictures were taken:</strong> a map, drawn offline, of photos with GPS positions. Click a point to open the photo.</li>
+<li><strong>Tabs:</strong> All, Pictures, Videos, With a location, and Text in pictures (OCR; Full profile).</li>
+<li><strong>Filter</strong> by file name, camera, origin (on the disk, in archives, in network captures, in emails) or <strong>Deleted only</strong>.</li>
+<li><strong>Click a picture</strong> to see when and where it was taken, the camera, the video keyframes, the text read by OCR and all its metadata. <strong>Open in OpenStreetMap</strong> shows the place.</li>
+</ul>
+<h3 id="810-usb-devices">8.10 USB devices</h3>
+<p><strong>Where:</strong> sidebar → <strong>USB devices</strong>.</p>
+<p><img alt="USB devices" src="guide/images/usb.webp" /></p>
+<p>One card per USB storage device.</p>
+<ul>
+<li><strong>Where it was recorded:</strong> the registry, setupapi.dev.log or the event logs.</li>
+<li><strong>Identity:</strong> serial number, vendor and product IDs, drive letter and volume GUID.</li>
+<li><strong>Every time recorded:</strong> first installed, last connected and last removed.</li>
+<li><strong>Event log records:</strong> expand to see the event-log records for the device.</li>
+</ul>
+<p>A time the evidence does not record is shown as <em>not recorded</em>; DFIP never estimates one.</p>
+<h3 id="811-windows-activity">8.11 Windows activity</h3>
+<p><strong>Where:</strong> sidebar → <strong>Windows activity</strong>.</p>
+<p><img alt="Windows activity" src="guide/images/activity.webp" /></p>
+<p>What the user did on Windows, one tab per kind of record:</p>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>Shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Programs run</strong></td>
+<td>Prefetch files, with <strong>View</strong></td>
+</tr>
+<tr>
+<td><strong>Execution evidence</strong></td>
+<td>Every trace that a program ran (UserAssist, BAM, ShimCache, Amcache, Prefetch), merged per program; expand <strong>Traces</strong></td>
+</tr>
+<tr>
+<td><strong>Recently opened files</strong></td>
+<td>Shortcut (.lnk) files</td>
+</tr>
+<tr>
+<td><strong>Recycle Bin</strong></td>
+<td>Deleted files with their original path; <strong>Recover</strong> them</td>
+</tr>
+<tr>
+<td><strong>Folders browsed</strong></td>
+<td>ShellBags</td>
+</tr>
+<tr>
+<td><strong>Searches and typed paths</strong></td>
+<td>Explorer searches, typed paths, the Run dialog, RecentDocs, typed addresses</td>
+</tr>
+<tr>
+<td><strong>Persistence</strong></td>
+<td>Autostart entries and services; <strong>Only entries that stand out</strong></td>
+</tr>
+<tr>
+<td><strong>Installed programs</strong></td>
+<td>From the registry</td>
+</tr>
+<tr>
+<td><strong>Remote desktop and drives</strong></td>
+<td>Remote desktop connections and mapped network drives</td>
+</tr>
+<tr>
+<td><strong>Jump lists</strong></td>
+<td>Files and sites opened per program, with <strong>Details</strong></td>
+</tr>
+<tr>
+<td><strong>Timeline</strong></td>
+<td>The Windows 10/11 Timeline (ActivitiesCache.db), including clipboard text and deleted entries</td>
+</tr>
+<tr>
+<td><strong>Thumbnails</strong></td>
+<td>Pictures from the thumbnail caches, even of files that no longer exist</td>
+</tr>
+<tr>
+<td><strong>Network usage</strong></td>
+<td>SRUM: data sent and received per program</td>
+</tr>
+<tr>
+<td><strong>Search index</strong></td>
+<td>Windows Search: files that were indexed, including those <em>Not on the disk</em> any more</td>
+</tr>
+</tbody>
+</table>
+<h3 id="812-event-logs">8.12 Event logs</h3>
+<p><strong>Where:</strong> sidebar → <strong>Event logs</strong>.</p>
+<p><img alt="Event logs" src="guide/images/event-logs.webp" /></p>
+<p>Windows event logs (.evtx) read out of the images.</p>
+<ul>
+<li><strong>Notable:</strong> the events that usually matter, such as logons, new services, cleared logs, PowerShell and USB.</li>
+<li><strong>All events:</strong> filter by category, log, event ID (e.g. <code>4624,4625</code>) and level, or tick <strong>Recovered records only</strong>.</li>
+<li><strong>Detections:</strong> the Sigma rules that matched, with <strong>Show events</strong>.</li>
+<li><strong>Logs:</strong> each log file and its state.</li>
+<li><strong>Details</strong> on a row: the full event with its XML. A PowerShell <code>-EncodedCommand</code> is decoded for you.</li>
+</ul>
+<h3 id="813-file-system-journal-ntfs">8.13 File system journal (NTFS)</h3>
+<p><strong>Where:</strong> sidebar → <strong>File system journal</strong>.</p>
+<p><img alt="File system journal" src="guide/images/ntfs.webp" /></p>
+<p>NTFS internals (Standard and Full profiles):</p>
+<ul>
+<li><strong>Timestomping:</strong> files whose $STANDARD_INFORMATION times look altered compared with their $FILE_NAME times, graded <strong>Strong</strong> or <strong>Possible</strong>.</li>
+<li><strong>Alternate data streams:</strong> hidden streams, including the <em>Mark of the Web</em> (Zone.Identifier) that records where a download came from. Tick <strong>Downloaded files only</strong>.</li>
+<li><strong>USN journal:</strong> every change Windows recorded (created, renamed, overwritten, deleted), even for files that are gone.</li>
+</ul>
+<h3 id="814-shadow-copies">8.14 Shadow copies</h3>
+<p><strong>Where:</strong> sidebar → <strong>Shadow copies</strong>. Demo case: <em>DEMO - Encrypted volumes…</em> (with the samples).</p>
+<p><img alt="Shadow copies" src="guide/images/shadow-copies.webp" /></p>
+<ul>
+<li><strong>Snapshots:</strong> each Volume Shadow Copy. <strong>Browse</strong> opens a snapshot as a folder tree, with <strong>View</strong> and <strong>Recover</strong>.</li>
+<li><strong>What changed:</strong></li>
+<li><strong>Deleted since</strong>: files in a snapshot that are not on the current volume;</li>
+<li><strong>Changed since</strong>;</li>
+<li><strong>Added since</strong>.</li>
+<li><strong>Recover</strong> copies a file out of a snapshot. It is listed under <strong>Files → Recovered files</strong>.</li>
+</ul>
+<h3 id="815-linux-and-macos">8.15 Linux and macOS</h3>
+<p><strong>Where:</strong> sidebar → <strong>Linux and macOS</strong>. Demo case: <em>DEMO - Collections…</em></p>
+<p><img alt="Linux and macOS" src="guide/images/unix.webp" /></p>
+<ul>
+<li><strong>Shell history</strong>.</li>
+<li><strong>Logins and logs</strong>: wtmp, btmp, auth and syslog.</li>
+<li><strong>Jobs and services</strong>: cron, systemd, launchd.</li>
+<li><strong>Recent files</strong>.</li>
+<li><strong>Downloads (quarantine)</strong>: macOS quarantine records, saying where a download came from.</li>
+<li><strong>Wi-Fi networks</strong>.</li>
+</ul>
+<p>Tick <strong>Only what stands out</strong> to see the suspicious entries first.</p>
+<h3 id="816-memory">8.16 Memory</h3>
+<p><strong>Where:</strong> sidebar → <strong>Memory</strong>.</p>
+<p>Windows memory images analysed with Volatility 3:</p>
+<ul>
+<li><strong>Processes</strong>: a process tree; tick <strong>Only processes that stand out</strong>.</li>
+<li><strong>Connections</strong>: with <strong>Look up</strong>.</li>
+<li><strong>Injected code</strong>.</li>
+<li><strong>Services</strong>.</li>
+<li><strong>DLLs</strong>.</li>
+</ul>
+<p><strong>To use it:</strong></p>
+<ol>
+<li>An administrator downloads the Windows symbol pack once: <strong>System &amp; tools → Memory analysis symbols → Download the Windows pack</strong> (Section 11.6).</li>
+<li>Upload the memory image as evidence (Section 7.3); tick the memory checkbox for a raw file.</li>
+<li>Run the analysis.</li>
+</ol>
+<p>The demo data has no memory image.</p>
+<h3 id="817-computer-and-users">8.17 Computer and users</h3>
+<p><strong>Where:</strong> sidebar → <strong>Computer and users</strong>.</p>
+<p><img alt="Computer and users" src="guide/images/computer.webp" /></p>
+<p>For each Windows image:</p>
+<ul>
+<li>the Windows version and install date;</li>
+<li>the registered owner;</li>
+<li>the last shutdown and last signed-in user;</li>
+<li>the time zone and computer SID;</li>
+<li>the network interfaces;</li>
+<li>the user accounts, from the SAM hive, with their last logon and logon count.</li>
+</ul>
+<h3 id="818-indicators">8.18 Indicators</h3>
+<p><strong>Where:</strong> sidebar → <strong>Indicators</strong>.</p>
+<p><img alt="Indicators" src="guide/images/indicators.webp" /></p>
+<p>Everything that may point to wrongdoing, on one page:</p>
+<ul>
+<li><strong>Hash set matches:</strong> files matching an administrator's known-bad or notable hash sets (Section 11.3).</li>
+<li><strong>Renamed and encrypted files:</strong> files whose content does not match their name, and encrypted files. <strong>Open in Files</strong> lists them there.</li>
+<li><strong>Programs that stand out:</strong> unsigned, packed, in unusual places, or named like system files. Click a program to see its signature and details, and <strong>Run capa</strong> to see what it can do. An investigator can tick <em>Look up program hashes on VirusTotal for this case</em> (needs <code>VIRUSTOTAL_API_KEY</code>; only SHA-256 hashes are sent).</li>
+<li><strong>Malware signature matches:</strong> YARA (built-in rules and the administrator's rule sets) and ClamAV hits.</li>
+<li><strong>Activity patterns</strong> and <strong>Anomalies:</strong> click <strong>Recompute</strong> after new analysis.</li>
+</ul>
+<h3 id="819-file-carving">8.19 File carving</h3>
+<p><strong>Where:</strong> sidebar → <strong>File carving</strong>.</p>
+<p><img alt="File carving" src="guide/images/carving.webp" /></p>
+<p>Finds files in the raw bytes of an image, including deleted space where the file system no longer describes them.</p>
+<ol>
+<li>Choose the <strong>Evidence</strong> and the <strong>Engine</strong> (<strong>PhotoRec</strong> or <strong>Scalpel</strong>), and click <strong>Start carving</strong>. Keep the page open: it can take many minutes on large images.</li>
+<li><strong>Carved files</strong> lists each file found, with its type and hash, plus <strong>View</strong> and <strong>Download</strong>.</li>
+</ol>
+<h3 id="820-found-data">8.20 Found data</h3>
+<p><strong>Where:</strong> sidebar → <strong>Found data</strong> (Full profile).</p>
+<p><img alt="Found data" src="guide/images/found-data.webp" /></p>
+<p>Values found inside file contents and unallocated space, each checked for validity, for example the card-number checksum:</p>
+<ul>
+<li><strong>Tabs:</strong> Email, Web addresses, IP addresses, Phone numbers, Card numbers, IBANs, Crypto addresses, Aadhaar.</li>
+<li>Sensitive values are masked. <strong>Show</strong> reveals one, and that is written to the audit log.</li>
+<li><strong>Where</strong> lists every place a value was found. <strong>View at offset</strong> opens the bytes with the value highlighted.</li>
+</ul>
+<p>If the evidence was not analysed with the Full profile, a banner offers <strong>Index contents and find data</strong>.</p>
+<h3 id="821-link-graph">8.21 Link graph</h3>
+<p><strong>Where:</strong> sidebar → <strong>Link graph</strong>.</p>
+<p><img alt="Link graph" src="guide/images/graph.webp" /></p>
+<p>People, devices, accounts, addresses and files of the case as a graph, with lines where the records connect them.</p>
+<ul>
+<li>Tick the types to show.</li>
+<li>Click a node, then <strong>Expand</strong> or <strong>Only its neighbours</strong>.</li>
+<li>Click a connection to open the page that holds its records.</li>
+<li>The <strong>Connections</strong> table lists every line drawn.</li>
+</ul>
+<h3 id="822-case-summary">8.22 Case summary</h3>
+<p><strong>Where:</strong> sidebar → <strong>Case summary</strong>.</p>
+<p><img alt="Case summary" src="guide/images/summary.webp" /></p>
+<p>A summary of the case built only from the stored records: numbered facts (F1, F2 …), each citing the records it rests on. The same records always give the same summary.</p>
+<p><strong>Claude mode (optional):</strong> an administrator sets <code>ANTHROPIC_API_KEY</code> (README). An investigator then clicks <strong>Turn on for this case</strong>, ticks facts, types a <strong>Question</strong> and clicks <strong>Ask Claude</strong>. Only the ticked facts and the question are sent, and every request is recorded under <strong>Questions asked</strong> and in the audit log.</p>
+<h3 id="823-keyword-search">8.23 Keyword search</h3>
+<p><strong>Where:</strong> sidebar → <strong>Keyword search</strong>, or the top-bar search box.</p>
+<p><img alt="Keyword search" src="guide/images/search.webp" /></p>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>Searches</th>
+<th>Minimum</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Names and records</strong></td>
+<td>File names, paths, browser records, emails, events and the other records</td>
+<td>2 characters</td>
+</tr>
+<tr>
+<td><strong>File contents</strong></td>
+<td>The text inside files and unallocated space (Full profile)</td>
+<td>3 characters</td>
+</tr>
+<tr>
+<td><strong>Regular expression</strong></td>
+<td>File contents, with an RE2 regular expression</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>Record results are grouped by type, with a link to the page that holds them. Content results show the snippet. <strong>View at offset</strong> opens the exact bytes. Evidence not yet indexed for content offers <strong>Index file contents</strong>.</p>
+<hr />
+<h2 id="9-tools-used-on-many-pages">9. Tools used on many pages</h2>
+<h3 id="91-tags">9.1 Tags</h3>
+<ol>
+<li>Click the bookmark icon on a row (files, events, browser records, USB devices, emails, messages, programs…).</li>
+<li>Choose a <strong>Label</strong>: <strong>Evidence</strong>, <strong>Notable</strong> or <strong>Follow up</strong>. Add a <strong>Note</strong> saying why the item matters.</li>
+<li>Click <strong>Add tag</strong>. The icon fills with the label's colour. Click it again to change the tag or <strong>Remove tag</strong>.</li>
+</ol>
+<p>Tags are listed on <strong>Tagged items</strong> (Section 10.2) and in the report.</p>
+<h3 id="92-comments-and-mentions">9.2 Comments and @mentions</h3>
+<p>Findings, tags, files and evidence have a comments box.</p>
+<ol>
+<li>Type a comment.</li>
+<li>Type <code>@</code> to pick a person on the case. Their email address is inserted, and they get a notification.</li>
+<li>Press Ctrl+Enter or click <strong>Comment</strong>.</li>
+</ol>
+<p>Under the box, <em>Notified: …</em> names who was told, and <em>Not notified</em> names people who cannot see the case. You can <strong>Edit</strong> or <strong>Delete</strong> your own comments. An administrator can delete any comment.</p>
+<h3 id="93-the-file-viewer">9.3 The file viewer</h3>
+<p><strong>View</strong> (on files, attachments, carved and recovered files) opens:</p>
+<ul>
+<li><strong>Preview:</strong> text (the first 256 KB), pictures and PDFs.</li>
+<li><strong>Hex:</strong> the raw bytes, with <strong>Previous</strong>/<strong>Next</strong> and <strong>Go to offset</strong>.</li>
+</ul>
+<p><strong>View at offset</strong> (search hits, found data) opens the hex view with the match highlighted.</p>
+<h3 id="94-exports">9.4 Exports</h3>
+<p><strong>CSV</strong> and <strong>XLSX</strong> above a table export <strong>every row the current filters select</strong>, not just the page shown. A message gives the number of rows and the file's SHA-256. Formulas in cells are defused, so a spreadsheet cannot run them.</p>
+<hr />
+<h2 id="10-reporting">10. Reporting</h2>
+<h3 id="101-findings-and-peer-review">10.1 Findings and peer review</h3>
+<p><strong>Where:</strong> sidebar → <strong>Findings</strong>.</p>
+<p><img alt="Findings" src="guide/images/findings.webp" /></p>
+<p>A finding is a conclusion you record, linked to the evidence. It goes through peer review:</p>
+<pre><code>Draft  →  In review  →  Approved
+              ↓
+       Changes requested  →  (edit)  →  In review again
+</code></pre>
+<ol>
+<li><strong>Record finding:</strong> give it a <strong>Title</strong>, a <strong>Severity</strong>, the <strong>Observation</strong> (what the evidence shows and where: paths, times, serial numbers) and tick its <strong>Supporting evidence</strong>. Add pictures (PNG/JPEG) while it is a draft. It starts as a <strong>Draft</strong>.</li>
+<li><strong>Send for review:</strong> choose a <strong>Reviewer</strong>, or leave <em>Anyone who may review</em>, and add a note if you like. The reviewer (or else the case's investigator) is notified.</li>
+<li>The reviewer clicks <strong>Approve</strong>, or <strong>Request changes</strong> with a note. Any investigator or administrator on the case may review, but never the author. The author is notified of the decision.</li>
+<li>The author can <strong>Withdraw</strong> a finding in review, and <strong>Reopen</strong> an approved one to correct it (it goes back to draft). <strong>Delete</strong> works on anything not approved.</li>
+<li><strong>History and comments</strong> shows every step and the discussion.</li>
+</ol>
+<p>The tabs <strong>All</strong>, <strong>Drafts</strong>, <strong>In review</strong>, <strong>Changes requested</strong> and <strong>Approved</strong> filter the list.</p>
+<h3 id="102-tagged-items">10.2 Tagged items</h3>
+<p><strong>Where:</strong> sidebar → <strong>Tagged items</strong>.</p>
+<p><img alt="Tagged items" src="guide/images/tagged.webp" /></p>
+<p>Every tag in the case, filtered by <strong>Evidence</strong>, <strong>Notable</strong> or <strong>Follow up</strong>. Each row shows what the item was when it was tagged.</p>
+<ul>
+<li><strong>Open</strong> goes to the page that lists the item: for example Files, a recovered file in <em>Recovered files</em>, or a carved file in <em>File carving</em>.</li>
+<li><strong>Comments</strong> shows the tag's discussion.</li>
+</ul>
+<h3 id="103-reports">10.3 Reports</h3>
+<p><strong>Where:</strong> sidebar → <strong>Reports</strong>.</p>
+<p><img alt="Reports" src="guide/images/reports.webp" /></p>
+<p><strong>Generate a report:</strong></p>
+<ol>
+<li>In <strong>What the report holds</strong>, pick a <strong>Template</strong>: <em>Full report (every section)</em> or a saved one.</li>
+<li>Tick the <strong>Sections, in order</strong> you want. There are 38, from the evidence register to the audit-trail check. Use the arrows to reorder them.</li>
+<li>Fill in the <strong>Cover</strong>: Title, Organisation, Reference, Prepared for, Classification (printed on every page) and Scope.</li>
+<li>Tick <strong>Only findings approved in peer review</strong> and/or <strong>Pictures attached to findings</strong>, if you want them.</li>
+<li><strong>Save template</strong> or <strong>Save as new template</strong> to reuse the choice.</li>
+<li>Click <strong>Generate report</strong>. A new numbered version appears in <strong>Report versions</strong>.</li>
+</ol>
+<p><strong>Each version</strong> has:</p>
+<ul>
+<li><strong>PDF:</strong> digitally signed. It is signed with a self-signed certificate unless an administrator configured your organisation's; see the README.</li>
+<li><strong>HTML:</strong> the same content, in a browser.</li>
+<li><strong>Check:</strong> re-verifies the stored PDF's hash and signature.</li>
+</ul>
+<p><strong>Check a report PDF someone gave you:</strong> in <strong>Check a report PDF</strong>, choose the file and click <strong>Check file</strong>. DFIP tells you whether it matches a report it generated and whether its signature is intact. A changed byte is detected.</p>
+<p><strong>Share the case</strong> (investigators and administrators):</p>
+<ul>
+<li><strong>Case as CASE/UCO (JSON-LD)</strong>: the standard format for exchanging cases.</li>
+<li><strong>Indicators as STIX 2.1</strong>, or <strong>Indicators as MISP event</strong>, with a TLP marking.</li>
+</ul>
+<h3 id="104-chain-of-custody">10.4 Chain of custody</h3>
+<p><strong>Where:</strong> sidebar → <strong>Chain of custody</strong>.</p>
+<p><img alt="Chain of custody" src="guide/images/custody.webp" /></p>
+<p>Every action on the case's evidence, in order: uploads, verifications, analyses, recoveries, exports, deletions, unlocks and hand-overs. The banner at the top says whether the audit log's hash chain verifies, which proves no record was altered. Filter by evidence item, or export the log.</p>
+<hr />
+<h2 id="11-administration">11. Administration</h2>
+<p>Sign in as <code>admin@dfip.local</code>. Investigators also see <strong>Audit log</strong> (their own cases) and <strong>System &amp; tools</strong>.</p>
+<h3 id="111-users">11.1 Users</h3>
+<p><strong>Where:</strong> sidebar → Administration → <strong>Users</strong>.</p>
+<p><img alt="Users" src="guide/images/users.webp" /></p>
+<ul>
+<li><strong>Waiting for approval:</strong> accounts created from the sign-in page. Choose a <strong>role</strong> for each, then click <strong>Approve</strong> or <strong>Reject</strong>. The demo loader leaves <code>priya.shah@dfip.local</code> here for you to try.</li>
+<li><strong>Add user:</strong> create an account directly. Enter the Full name, Email, Role and an Initial password of at least 12 characters.</li>
+<li><strong>Users table:</strong> change a user's role, or <strong>Suspend</strong> and <strong>Reactivate</strong> them. A suspended user cannot sign in.</li>
+<li><strong>Role permissions:</strong> what each role may do.</li>
+</ul>
+<h3 id="112-audit-log">11.2 Audit log</h3>
+<p><strong>Where:</strong> Administration → <strong>Audit log</strong>.</p>
+<p><img alt="Audit log" src="guide/images/audit.webp" /></p>
+<p>Every action in DFIP, newest first: sign-ins, uploads, analyses, lookups, reveals of masked values, deletions. Each record is chained to the one before by a hash. <strong>Verify hash chain</strong> checks the whole chain; a changed or removed record breaks it. Filter the list or export it.</p>
+<h3 id="113-hash-sets">11.3 Hash sets</h3>
+<p><strong>Where:</strong> Administration → <strong>Hash sets</strong>.</p>
+<p><img alt="Hash sets" src="guide/images/hashsets.webp" /></p>
+<p>Lists of known file hashes that every analysed file is compared with: <strong>Known good</strong> (hidden by default in Files), <strong>Known bad</strong> and <strong>Notable</strong>.</p>
+<ol>
+<li>Click <strong>Import a hash set</strong> and choose the <strong>File</strong>. Accepted formats:
+   - a text file with one MD5, SHA-1 or SHA-256 per line (<code>sha256sum</code> output works);
+   - a CSV with <code>md5</code>/<code>sha1</code>/<code>sha256</code> columns;
+   - the NIST NSRL RDS v3 SQLite database.</li>
+</ol>
+<p>Enter a <strong>Name</strong>, choose the <strong>Kind</strong> (Known good, Known bad or Notable), and click <strong>Import</strong>. The import runs in the background; the bell tells you when it is done.
+2. Large sets such as the NSRL are copied into <code>storage/hashsets/incoming/</code> on the server instead, then imported from <strong>Files on the server</strong>.
+3. Importing or deleting a set re-matches all analysed evidence. Matches appear in Files (flags), on Indicators, and in the report. A known-bad match also notifies the case's investigators.</p>
+<h3 id="114-malware-rules">11.4 Malware rules</h3>
+<p><strong>Where:</strong> Administration → <strong>Malware rules</strong>.</p>
+<p><img alt="Malware rules" src="guide/images/malware-rules.webp" /></p>
+<ul>
+<li><strong>YARA rule sets:</strong> <strong>Add a rule set</strong> (a <code>.yar</code> file; it is compiled first, and <code>include</code> is refused). Use <strong>In use</strong> to switch a set on or off. Adding a set re-scans the evidence already analysed.</li>
+<li><strong>ClamAV databases:</strong> <strong>Download official databases</strong> fetches ClamAV's signatures (needs internet; run it now and then). Without databases the ClamAV scan is skipped. <strong>Add a database file</strong> works on computers without internet.</li>
+<li><strong>Other checks:</strong> whether capa and VirusTotal are available.</li>
+</ul>
+<h3 id="115-retention">11.5 Retention</h3>
+<p><strong>Where:</strong> Administration → <strong>Retention</strong>.</p>
+<p><img alt="Retention" src="guide/images/retention.webp" /></p>
+<p>How long closed cases are kept.</p>
+<ol>
+<li>Tick <strong>Give closed cases a retention date</strong>, set the number of days and click <strong>Save</strong>. The period starts when a case is set to Completed or Archived.</li>
+<li>A daily check tells administrators which cases are due. <strong>Run the check now</strong> runs it at once.</li>
+<li><strong>Due for deletion</strong> lists them. <strong>Delete case</strong> asks you to type the case ID and give a reason.</li>
+</ol>
+<p>Nothing is deleted automatically, and a case under legal hold is never due.</p>
+<h3 id="116-system-tools">11.6 System &amp; tools</h3>
+<p><strong>Where:</strong> Administration → <strong>System &amp; tools</strong>.</p>
+<p><img alt="System &amp; tools" src="guide/images/system.webp" /></p>
+<ul>
+<li><strong>DFIP server:</strong> version and settings.</li>
+<li><strong>Server forensic tools:</strong> every forensic tool in the backend image and whether it is available.</li>
+<li><strong>Memory analysis symbols:</strong> Volatility needs the symbols of the exact Windows kernel in a memory image.</li>
+<li><strong>Download the Windows pack</strong> fetches them once (a large download).</li>
+<li><strong>Add a symbol pack</strong> uploads a ZIP. Use it for Linux or macOS images, or for a computer without internet.</li>
+</ul>
+<hr />
+<h2 id="12-your-account">12. Your account</h2>
+<h3 id="121-notifications">12.1 Notifications</h3>
+<p>Click the <strong>bell</strong> in the top bar. The red number counts unread notifications. You are notified when:</p>
+<ul>
+<li>an analysis or another job finishes or fails;</li>
+<li>someone mentions you in a comment, or asks you to review a finding;</li>
+<li>your finding is approved or sent back;</li>
+<li>a known-bad file is found;</li>
+<li>a hash-set import or a ClamAV or symbol download finishes;</li>
+<li>a case is assigned to you, or you are added to a case's team;</li>
+<li>a case you lead is updated, gets new evidence, or is put under (or released from) legal hold;</li>
+<li>a physical item comes back with a broken seal (the case's investigator);</li>
+<li>a case is due for deletion (administrators).</li>
+</ul>
+<p>Click <strong>Mark as read</strong> on one notification, or <strong>Mark all as read</strong>.</p>
+<h3 id="122-change-your-password">12.2 Change your password</h3>
+<p>Click the <strong>key icon</strong> in the top bar. Enter your current password and the new one twice (at least 12 characters). Your other sessions are signed out.</p>
+<h3 id="123-time-display">12.3 Time display</h3>
+<p><strong>UTC</strong> / <strong>Local</strong> in the top bar switches every time shown between UTC and your computer's time zone. Your choice is remembered in this browser.</p>
+<h3 id="124-sign-out">12.4 Sign out</h3>
+<p>Click <strong>Sign out</strong> in the top bar. Closing the browser also ends the session.</p>
+<hr />
+<h2 id="13-a-15-minute-demo-script">13. A 15-minute demo script</h2>
+<p>With the demo data loaded, sign in as <code>investigator@dfip.local</code> and pick <strong>DEMO - Payroll data leak (Alice's laptop)</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Minute</th>
+<th>Page</th>
+<th>What to show</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0–1</td>
+<td>Website, Sign in</td>
+<td>The website's sections; the demo accounts on the sign-in page</td>
+</tr>
+<tr>
+<td>1–2</td>
+<td>Case desktop</td>
+<td>Evidence items with what each analysis found; the function tiles; the bell</td>
+</tr>
+<tr>
+<td>2–3</td>
+<td>Evidence → Details</td>
+<td>Hashes, chain of custody, Analysis options and the modules</td>
+</tr>
+<tr>
+<td>3–4</td>
+<td>Activity dashboard, Timeline</td>
+<td>When the laptop was used; zoom into the day of the leak; search <code>payroll</code></td>
+</tr>
+<tr>
+<td>4–5</td>
+<td>Files</td>
+<td>Deleted entries: the payroll export; <strong>Recover</strong> it, <strong>View</strong> it, ⓘ shows its copies elsewhere</td>
+</tr>
+<tr>
+<td>5–6</td>
+<td>USB devices</td>
+<td>The USB drive with its first and last connection times</td>
+</tr>
+<tr>
+<td>6–7</td>
+<td>Browser history, Windows activity</td>
+<td>The wiping tool's download and its traces of running (Execution evidence, Jump lists, Recycle Bin)</td>
+</tr>
+<tr>
+<td>7–8</td>
+<td>Network, Phones</td>
+<td>The payroll file uploaded out (Only uploads, Files carried); messages and calls on the phones</td>
+</tr>
+<tr>
+<td>8–9</td>
+<td>Indicators, File system journal</td>
+<td>The wiping tool flagged (YARA, known-bad hash set, packed copy); timestomping and the Mark of the Web</td>
+</tr>
+<tr>
+<td>9–10</td>
+<td>Found data, Keyword search</td>
+<td>IBANs and card numbers found; <strong>View at offset</strong></td>
+</tr>
+<tr>
+<td>10–11</td>
+<td>Link graph, Case summary</td>
+<td>How people, devices and files connect; the facts with their citations</td>
+</tr>
+<tr>
+<td>11–12</td>
+<td>Findings</td>
+<td>The approved, in-review and draft findings; sign in as <strong>admin</strong> to approve the one in review</td>
+</tr>
+<tr>
+<td>12–13</td>
+<td>Reports</td>
+<td>Generate a report; open the signed PDF; <strong>Check</strong> it</td>
+</tr>
+<tr>
+<td>13–14</td>
+<td>Chain of custody, Audit log</td>
+<td>Every action recorded; <strong>Verify hash chain</strong></td>
+</tr>
+<tr>
+<td>14–15</td>
+<td>Users (admin)</td>
+<td>Approve <code>priya.shah@dfip.local</code> and give her a role</td>
+</tr>
+</tbody>
+</table>
+<p>Then switch to <strong>DEMO - Collections…</strong> for Linux and macOS, and to <strong>DEMO - Encrypted volumes…</strong> for shadow copies and unlocked volumes.</p>
+<hr />
+<h2 id="14-which-page-needs-which-evidence-and-profile">14. Which page needs which evidence and profile</h2>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Needs this evidence</th>
+<th>Analysis profile</th>
+<th>Demo case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Activity dashboard, Files (deleted, all), Timeline, Browser history, USB devices, Computer and users</td>
+<td>A Windows disk image (or a KAPE/Velociraptor collection)</td>
+<td>Quick or more</td>
+<td>Payroll data leak</td>
+</tr>
+<tr>
+<td>Files → Archives and attachments, Found data, Keyword search → File contents, Pictures → Text in pictures</td>
+<td>Any disk image or collection</td>
+<td><strong>Full</strong></td>
+<td>Payroll data leak</td>
+</tr>
+<tr>
+<td>Email, Chat and cloud, Pictures and videos, Event logs, Windows activity (Jump lists, Timeline, Thumbnails, SRUM, Search index), Indicators (programs, YARA, hash sets)</td>
+<td>A Windows disk image</td>
+<td>Standard or Full</td>
+<td>Payroll data leak; Encrypted volumes… (real SRUM, Search, Outlook)</td>
+</tr>
+<tr>
+<td>File system journal</td>
+<td>An NTFS disk image</td>
+<td>Standard or Full</td>
+<td>Payroll data leak (NTFS desktop)</td>
+</tr>
+<tr>
+<td>Shadow copies</td>
+<td>An NTFS volume with shadow copies</td>
+<td>Standard or Full</td>
+<td>Encrypted volumes…</td>
+</tr>
+<tr>
+<td>Network</td>
+<td>A pcap or pcapng file</td>
+<td>Any</td>
+<td>Payroll data leak</td>
+</tr>
+<tr>
+<td>Phones</td>
+<td>An Android or iPhone extraction (ZIP/TAR)</td>
+<td>Any</td>
+<td>Payroll data leak</td>
+</tr>
+<tr>
+<td>Linux and macOS</td>
+<td>A Linux disk image or a Mac collection</td>
+<td>Any</td>
+<td>Collections…</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td>A memory image, plus the symbol pack</td>
+<td>Any</td>
+<td>— (bring your own)</td>
+</tr>
+<tr>
+<td>File carving</td>
+<td>Any disk image</td>
+<td>None needed; run from the page</td>
+<td>Payroll data leak</td>
+</tr>
+<tr>
+<td>Link graph, Case summary</td>
+<td>Any analysed evidence</td>
+<td>Any</td>
+<td>All</td>
+</tr>
+<tr>
+<td>Indicators → ClamAV</td>
+<td>Any</td>
+<td>Standard or Full, <strong>after</strong> the ClamAV download</td>
+<td>Load the demo with <code>--clamav</code></td>
+</tr>
+<tr>
+<td>Programs → VirusTotal, Network → Look up, Case summary → Claude</td>
+<td>Any</td>
+<td>—</td>
+<td>Need API keys in <code>.env</code> (README)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="15-when-a-page-is-empty-or-something-does-not-work">15. When a page is empty or something does not work</h2>
+<table>
+<thead>
+<tr>
+<th>What you see</th>
+<th>Why, and what to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>"No case selected"</em></td>
+<td>Pick a case in the top-bar Case dropdown, or create one</td>
+</tr>
+<tr>
+<td>A page says <em>"No analyzed evidence"</em> or is empty</td>
+<td>The case has no evidence of that kind, or the evidence was analysed with a smaller profile. Check Section 14, then run <strong>Analysis options → Full</strong> on the evidence</td>
+</tr>
+<tr>
+<td>The sample case <em>CASE-2026-001</em> shows almost nothing</td>
+<td>Its evidence is a placeholder (<em>Demo record</em>) that cannot be analysed. Load the demo data (Section 1)</td>
+</tr>
+<tr>
+<td>Found data or content search is empty</td>
+<td>Run the <strong>Full</strong> profile, or click <strong>Index contents and find data</strong> on Found data</td>
+</tr>
+<tr>
+<td><em>"ClamAV scan is skipped"</em></td>
+<td>An administrator clicks <strong>Download official databases</strong> on Malware rules, then re-run the analysis (or just the ClamAV scan module)</td>
+</tr>
+<tr>
+<td>Memory page: Volatility could not read the image</td>
+<td>Download the Windows symbol pack (System &amp; tools), make sure the file is a full memory capture, and re-run</td>
+</tr>
+<tr>
+<td><strong>Look up</strong> returns <em>NOT_CONFIGURED</em></td>
+<td>No threat-intelligence key is set; see the README, "After setup: turn on the optional features"</td>
+</tr>
+<tr>
+<td>An analysis seems stuck</td>
+<td>Watch <strong>Recent jobs</strong> on the Case desktop; <strong>Cancel</strong> it and run it again. Check the worker: <code>docker compose logs -f celery_worker</code></td>
+</tr>
+<tr>
+<td>Upload refused: <em>already registered</em></td>
+<td>That image is already in the case; each image is registered once per case</td>
+</tr>
+<tr>
+<td>Sign-in: <em>waiting for administrator approval</em></td>
+<td>An administrator approves the account on <strong>Users</strong></td>
+</tr>
+<tr>
+<td>A button you expect is missing</td>
+<td>Your role does not allow it (Section 2), or the server runs with <code>REQUIRE_DESKTOP_FOR_WRITES=true</code> (web portal read-only)</td>
+</tr>
+<tr>
+<td>Anything else</td>
+<td>See the README's Troubleshooting, and the logs: <code>docker compose logs backend</code></td>
+</tr>
+</tbody>
+</table>
+</main>
+</div>
+<script>
+document.querySelectorAll('.theme button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var t = b.getAttribute('data-set');
+    if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+    try { localStorage.setItem('dfip-guide-theme', t); } catch (e) {}
+  });
+});
+try { var s = localStorage.getItem('dfip-guide-theme'); if (s && s !== 'auto') document.documentElement.setAttribute('data-theme', s); } catch (e) {}
+</script>
+</body>
+</html>

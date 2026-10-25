@@ -56,6 +56,11 @@ async def add_import(case_id: str, file: UploadFile = File(...), evidence_id: st
     folder = imports_dir() / case_id
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f'{import_id}-{name}'
+    # A new import ID has no file yet: one already there was left by an earlier database (storage/ outlives a reset
+    # of the database, which starts the IDs again), and would make the exclusive create below fail.
+    if target.exists():
+        target.chmod(0o600)
+        target.unlink()
     h, size = hashlib.sha256(), 0
     try:
         with target.open('xb') as out:

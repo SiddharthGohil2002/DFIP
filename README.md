@@ -3,6 +3,8 @@
 DFIP is a production-oriented digital-forensics case-management and examination suite with a MongoDB system of record, immutable evidence workflow, SHA-256 integrity verification, chain of custody, tamper-evident audit logging, RBAC, background analysis jobs, specialist-tool adapters, investigator workspaces, administration, WebSockets, and forensic reporting.
 
 > **New here?** Go straight to [Run DFIP with Docker (step-by-step)](#run-dfip-with-docker-step-by-step). It takes you from an empty computer to a running DFIP, one command at a time.
+>
+> **Using DFIP?** The [User Guide](docs/USER_GUIDE.md) explains every function step by step, from the website and sign-in to the last administration page, with screenshots and a 15-minute demo script. It is also a web page: open [docs/user-guide.html](docs/user-guide.html) in a browser.
 
 ## Architecture
 
@@ -219,6 +221,18 @@ Then, in DFIP (signed in as the investigator):
 
 The full investigation workflow is described in [Forensic workflow](#forensic-workflow) below.
 
+### Step 9b (optional): Load the complete demo data
+
+For a demonstration, load ready-made cases in which every page has results: the laptop above plus an NTFS desktop, a network capture, an Android and an iPhone extraction, a Linux server, a Mac and triage packages. They are already analysed and come with findings, tags, physical evidence and a signed report. Run these from the `DFIP` folder while DFIP is running (PowerShell, macOS and Linux):
+
+```bash
+docker run --rm -v "${PWD}:/repo" -w /repo python:3.11-slim sh scripts/test-image/make-test-image.sh
+docker run --rm --privileged -v "${PWD}:/repo" -w /repo python:3.11-slim sh scripts/test-image/make-ntfs-image.sh
+docker compose run --rm --no-deps -v "${PWD}/scripts:/scripts:ro" -v "${PWD}/storage/test-images:/img:ro" backend python /scripts/demo/load_demo_data.py
+```
+
+The last command takes a few minutes and prints each step. Then pick a **DEMO** case in the case switcher. The [User Guide](docs/USER_GUIDE.md#1-load-the-demo-data) explains what each demo case holds. It also covers the optional extras: public samples with encrypted volumes and shadow copies, a Plaso timeline, and ClamAV.
+
 ### Step 10: Everyday commands
 
 Run these from the `DFIP` folder:
@@ -357,6 +371,8 @@ docker run --rm dfip-backend python -m pytest -q
 | `running scripts is disabled on this system` (Windows) | Run `powershell -ExecutionPolicy Bypass -File .\start-dfip.ps1`, or use the `docker compose` commands directly. |
 | Apple silicon Mac or ARM Linux: capa shows *failed* with `exec format error` | capa is published for Intel/AMD processors only. See [Running on Linux, macOS and Apple silicon](#running-on-linux-macos-and-apple-silicon). |
 | A feature says it has no database, symbols or key | See [After setup: turn on the optional features](#after-setup-turn-on-the-optional-features). |
+| Most pages are empty, or the sample case *CASE-2026-001* shows almost nothing | That case's evidence is a placeholder that cannot be analysed. Load the demo data ([Step 9b](#step-9b-optional-load-the-complete-demo-data)), or upload and analyse your own evidence. A page that stays empty needs another kind of evidence or the **Full** analysis profile: see the [User Guide](docs/USER_GUIDE.md#14-which-page-needs-which-evidence-and-profile). |
+| A feature behaves differently from the guide after `git pull` | The running containers still use the old images. Rebuild them: `docker compose up -d --build`. |
 | `git clone` gives an empty DFIP on a new computer | Cases are not stored in Git. See [Move DFIP to another computer](#move-dfip-to-another-computer-or-make-a-backup). |
 
 ### Settings you can change

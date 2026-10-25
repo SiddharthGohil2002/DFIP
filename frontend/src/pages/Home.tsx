@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Check, FileText, FolderPlus, HardDrive, Play, Upload } from 'lucide-react';
+import { ArrowRight, Check, FileText, FolderPlus, HardDrive, Play, Upload, X } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { formatBytes, humanize, useTime } from '../lib/format';
@@ -103,13 +103,13 @@ export function HomePage() {
         </div>
       </div>
 
-      <Card title="Recent jobs" subtitle="Background analysis and verification for this case" flush>
+      <Card title="Recent jobs" subtitle="Background analysis of this case's evidence" flush>
         {!jobs.length ? (
-          <Empty title="No jobs yet" text="Jobs appear here when you run an analysis or a hash verification." />
+          <Empty title="No jobs yet" text="Jobs appear here when you run an analysis." />
         ) : (
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>Job</th><th>Type</th><th>Evidence</th><th>Status</th><th>Progress</th><th>Started</th></tr></thead>
+              <thead><tr><th>Job</th><th>Type</th><th>Evidence</th><th>Status</th><th>Progress</th><th>Started</th><th /></tr></thead>
               <tbody>
                 {jobs.map((j) => (
                   <tr key={j.job_id}>
@@ -122,6 +122,7 @@ export function HomePage() {
                       {RUNNING.has(j.status) && <div className="tiny muted">{j.stage}</div>}
                     </td>
                     <td className="nowrap small">{time(j.created_at)}</td>
+                    <td className="nowrap right">{RUNNING.has(j.status) && can('JOB_CANCEL') && <CancelJobButton job={j} onCancelled={reloadOverview} />}</td>
                   </tr>
                 ))}
               </tbody>
@@ -131,6 +132,26 @@ export function HomePage() {
       </Card>
     </div>
   );
+}
+
+/** Cancels a queued or running job. A queued job never starts; a running one stops at its next checkpoint, so the
+ * records it already wrote stay complete (services/jobs.py cancel). */
+function CancelJobButton({ job, onCancelled }: { job: Job; onCancelled: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  async function cancel() {
+    setBusy(true);
+    try {
+      await post(`/jobs/${encodeURIComponent(job.job_id)}/cancel`);
+      toast(`${job.job_id} cancelled; a running analysis stops after its current step`, 'ok');
+      onCancelled();
+    } catch (e: any) {
+      toast(e.message, 'danger');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return <Button size="sm" variant="ghost" icon={<X size={13} />} busy={busy} onClick={cancel} title={`Cancel ${job.job_id}`}>Cancel</Button>;
 }
 
 function EvidenceCard({ evidence, jobs, onChange }: { evidence: Evidence[]; jobs: Job[]; onChange: () => void }) {
@@ -152,9 +173,9 @@ function EvidenceCard({ evidence, jobs, onChange }: { evidence: Evidence[]; jobs
   }
 
   return (
-    <Card title="Evidence" subtitle="Disk images in this case" actions={<Link to="/app/evidence" className="btn sm">Manage</Link>} flush>
+    <Card title="Evidence" subtitle="Disk images, collections, network captures and memory images in this case" actions={<Link to="/app/evidence" className="btn sm">Manage</Link>} flush>
       {!evidence.length ? (
-        <Empty icon={<HardDrive size={20} />} title="No disk images" text="Upload an image on the Evidence page." />
+        <Empty icon={<HardDrive size={20} />} title="No evidence yet" text="Upload evidence on the Evidence page." />
       ) : (
         evidence.map((e) => {
           const job = jobs.find((j) => j.payload?.evidence_id === e.evidence_id && RUNNING.has(j.status));
@@ -204,9 +225,9 @@ function EvidenceCard({ evidence, jobs, onChange }: { evidence: Evidence[]; jobs
 function GettingStarted({ counts }: { counts: CaseCounts }) {
   const { can } = useAuth();
   const steps = [
-    { label: 'Upload a disk image', hint: 'E01, RAW/DD or AFF; hashed and sealed read-only', done: counts.evidence > 0, to: '/app/evidence', action: 'Upload', permission: 'EVIDENCE_UPLOAD' },
+    { label: 'Upload evidence', hint: 'A disk image, a collection, a network capture or a memory image; hashed and sealed read-only', done: counts.evidence > 0, to: '/app/evidence', action: 'Upload', permission: 'EVIDENCE_UPLOAD' },
     { label: 'Run the full analysis', hint: 'Files, timeline, browser history, USB devices', done: counts.evidence_analyzed > 0, to: '/app/evidence', action: 'Analyze', permission: 'ANALYSIS_RUN' },
-    { label: 'Review and record findings', hint: 'Deleted files, timeline, indicators', done: counts.findings > 0, to: '/app/findings', action: 'Add finding', permission: 'FINDING_CREATE' },
+    { label: 'Review and record findings', hint: 'Deleted files, timeline, indicators', done: counts.findings > 0, to: '/app/findings', action: 'Record finding', permission: 'FINDING_CREATE' },
     { label: 'Generate the report', hint: 'Hash-sealed PDF for the case file', done: counts.reports > 0, to: '/app/reports', action: 'Generate', permission: 'REPORT_CREATE' },
   ];
   const done = steps.filter((s) => s.done).length;

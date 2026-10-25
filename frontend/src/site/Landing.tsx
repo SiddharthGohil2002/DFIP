@@ -19,9 +19,9 @@ import './site.css';
 const TOOLS = ['The Sleuth Kit', 'PhotoRec', 'Scalpel', 'YARA', 'libewf', 'regipy', 'ExifTool'];
 
 const FACTS = [
-  { value: '5 in 1', label: 'analyses from a single run' },
+  { value: '28', label: 'analysis modules in a single run' },
   { value: 'SHA-256', label: 'and SHA-512 on every image' },
-  { value: '12', label: 'sections in every PDF report' },
+  { value: '38', label: 'report sections to choose from' },
   { value: '0', label: 'writes to original evidence' },
 ];
 
@@ -64,7 +64,7 @@ const FEATURES: { icon: LucideIcon; eyebrow: string; title: string; text: string
 ];
 
 const STEPS: { icon: LucideIcon; title: string; text: string }[] = [
-  { icon: HardDrive, title: 'Acquire', text: 'Upload an E01, RAW/DD or AFF image of the device.' },
+  { icon: HardDrive, title: 'Acquire', text: 'Upload a disk image (E01, RAW/DD, VHD, VMDK, QCOW2, AFF), a collection of files, a network capture or a memory image.' },
   { icon: Fingerprint, title: 'Preserve', text: 'Hashed on arrival and sealed read-only.' },
   { icon: ScanSearch, title: 'Examine', text: 'Integrity re-checked, then every partition indexed.' },
   { icon: Layers, title: 'Analyze', text: 'Deleted files, timeline, browser, USB, YARA.' },
@@ -83,8 +83,8 @@ const SAFEGUARDS: { icon: LucideIcon; title: string; text: string }[] = [
 
 const FAQ = [
   { q: 'Does DFIP modify the original evidence?', a: 'No. Images are stored read-only, the analysis tools only read them, and the SHA-256 is re-verified before every analysis run. Recovered files are written to a separate analysis area and hashed.' },
-  { q: 'Which image formats and filesystems are supported?', a: 'E01/EX01 (EnCase), raw/dd and AFF/AFF4 images. Filesystems are read by The Sleuth Kit, which covers NTFS, FAT, exFAT, ext2/3/4 and others.' },
-  { q: 'Where is the evidence stored?', a: 'On the DFIP server your organisation runs. Evidence, analysis results and reports stay on that infrastructure; nothing is sent to a third party.' },
+  { q: 'Which image formats and filesystems are supported?', a: 'Disk images: E01/Ex01 (EnCase, with their segments), raw/dd and split raw, VHD, VHDX, VMDK, QCOW2 and AFF/AFF4. Collections of files as ZIP or TAR (KAPE, Velociraptor, phone extractions), network captures (pcap, pcapng) and memory images (raw, crash dump, LiME, VMware .vmem). Filesystems are read by The Sleuth Kit, which covers NTFS, FAT, exFAT, ext2/3/4, HFS+ and APFS; BitLocker and LUKS volumes are unlocked with their key.' },
+  { q: 'Where is the evidence stored?', a: 'On the DFIP server your organisation runs. Evidence, analysis results and reports stay on that infrastructure. Nothing is sent to a third party unless an administrator turns on an optional online lookup (VirusTotal, threat intelligence, Claude mode), and then only hashes, addresses or the facts you select.' },
   { q: 'Do I need the desktop app?', a: 'No. The web portal has every function. The Windows app gives you the same workspace in a native window and adds workstation features, such as checking a local copy of an image against the registered evidence without uploading it again.' },
   { q: 'How does DFIP relate to Autopsy?', a: 'DFIP uses the same Sleuth Kit engine and keeps the Sleuth Kit bodyfile for every analysis, so results can be cross-checked in Autopsy or with mactime.' },
   { q: 'Who can see a case?', a: 'The investigators assigned to it, the person who created it, and administrators. Roles decide what each user can do, and every action is written to the tamper-evident audit log.' },
@@ -178,7 +178,7 @@ export function Landing() {
           <div className="lp-head" style={{ marginTop: 96 }}>
             <div className="lp-eyebrow">Features</div>
             <h2>Everything an investigation needs, from one analysis run</h2>
-            <p>Upload an image, click Analyze, and DFIP produces all five results, each traceable to the exact file, inode or registry key it came from.</p>
+            <p>Upload an image, click Analyze, and DFIP produces these results and many more, each traceable to the exact file, inode or registry key it came from.</p>
           </div>
           {FEATURES.map((f, i) => {
             const Icon = f.icon;

@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useState } from 'react';
-import { Archive, Camera, LogIn, LogOut, MoveRight, PackageCheck, Plus, Printer, Trash2 } from 'lucide-react';
-import { api, downloadFile, fetchBlob, post } from '../lib/api';
+import { Archive, Camera, LogIn, LogOut, MoveRight, PackageCheck, Pencil, Plus, Printer, Trash2, X } from 'lucide-react';
+import { api, del, downloadFile, fetchBlob, patch, post } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
-import { useTime } from '../lib/format';
+import { isoToLocalInput, useTime } from '../lib/format';
 import { useApi } from '../lib/useApi';
 import { Badge, Banner, Button, Card, Empty, Field, Loading, Modal, PageHeader, type Tone, useToast } from '../ui';
 import { ExportButton } from '../ui/ExportButton';
@@ -33,6 +33,7 @@ export function PhysicalPage() {
   const path = `/physical?case_id=${encodeURIComponent(caseId)}`;
   const list = useApi<{ data: Item[] }>(path);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Item | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const items = list.data?.data ?? [];
   const current = items.find((i) => i.item_id === openId) ?? null;
@@ -65,28 +66,37 @@ export function PhysicalPage() {
           </div>
         </Card>
       )}
-      {adding && <NewItem caseId={caseId} evidence={overview?.evidence ?? []} onClose={() => setAdding(false)} onDone={(id) => { setAdding(false); list.reload(); setOpenId(id); toast(`${id} recorded`, 'ok'); }} />}
-      {current && <ItemDetail item={current} onClose={() => setOpenId(null)} onChanged={() => list.reload()} />}
+      {adding && <ItemForm caseId={caseId} evidence={overview?.evidence ?? []} onClose={() => setAdding(false)} onDone={(id) => { setAdding(false); list.reload(); setOpenId(id); toast(`${id} recorded`, 'ok'); }} />}
+      {editing && <ItemForm caseId={caseId} evidence={overview?.evidence ?? []} item={editing} onClose={() => setEditing(null)} onDone={(id) => { setEditing(null); list.reload(); toast(`${id} updated`, 'ok'); }} />}
+      {current && !editing && <ItemDetail item={current} onClose={() => setOpenId(null)} onChanged={() => list.reload()} onEdit={() => setEditing(current)} />}
     </div>
   );
 }
 
-function NewItem({ caseId, evidence, onClose, onDone }: { caseId: string; evidence: { evidence_id: string; filename: string }[]; onClose: () => void; onDone: (id: string) => void }) {
-  const [f, setF] = useState<Record<string, string>>({ kind: 'Laptop' });
-  const [linked, setLinked] = useState<string[]>([]);
+/** Books an item in, or (with `item`) corrects its details. Where it is kept and its seal change only through custody
+ * actions (check in, move…), so they are not edited here. */
+function ItemForm({ caseId, evidence, item, onClose, onDone }: { caseId: string; evidence: { evidence_id: string; filename: string }[]; item?: Item; onClose: () => void; onDone: (id: string) => void }) {
+  const [f, setF] = useState<Record<string, string>>((): Record<string, string> => item ? {
+    description: item.description, kind: item.kind, make: item.make ?? '', model: item.model ?? '', serial_number: item.serial_number ?? '',
+    bag_number: item.bag_number ?? '', seized_at: item.seized_at ? isoToLocalInput(item.seized_at, 'local') : '', seized_from: item.seized_from ?? '',
+    seized_by: item.seized_by ?? '', notes: item.notes ?? '',
+  } : { kind: 'Laptop' });
+  const [linked, setLinked] = useState<string[]>(item?.evidence_ids ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value });
   async function save() {
     setBusy(true); setError('');
+    const body = { ...f, seized_at: f.seized_at ? new Date(f.seized_at).toISOString() : null, evidence_ids: linked };
     try {
-      const r = await post<Item>('/physical', { case_id: caseId, ...f, seized_at: f.seized_at ? new Date(f.seized_at).toISOString() : null, evidence_ids: linked });
+      const r = item ? await patch<Item>(`/physical/${encodeURIComponent(item.item_id)}`, body) : await post<Item>('/physical', { case_id: caseId, ...body });
       onDone(r.item_id);
     } catch (e: any) { setError(e.message); } finally { setBusy(false); }
   }
   return (
-    <Modal open title="Add physical evidence" onClose={onClose} wide
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" busy={busy} disabled={(f.description ?? '').trim().length < 2 || (f.location ?? '').trim().length < 2} onClick={save}>Book in</Button></>}>
+    <Modal open title={item ? `Edit ${item.item_id}` : 'Add physical evidence'} onClose={onClose} wide
+      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" busy={busy} disabled={(f.description ?? '').trim().length < 2 || (!item && (f.location ?? '').trim().length < 2)} onClick={save}>{item ? 'Save changes' : 'Book in'}</Button></>}>
+      {item && <Banner tone="info">Where the item is kept and its seal number change through Check in, Check out and Move, so they stay in the custody log.</Banner>}
       <div className="grid cols-2">
         <Field label="Description"><input className="input" value={f.description ?? ''} onChange={set('description')} autoFocus placeholder="e.g. Dell Latitude laptop, grey" /></Field>
         <Field label="Kind"><select className="select" value={f.kind} onChange={set('kind')}>{KINDS.map((k) => <option key={k}>{k}</option>)}</select></Field>
@@ -94,8 +104,8 @@ function NewItem({ caseId, evidence, onClose, onDone }: { caseId: string; eviden
         <Field label="Model"><input className="input" value={f.model ?? ''} onChange={set('model')} /></Field>
         <Field label="Serial number"><input className="input" value={f.serial_number ?? ''} onChange={set('serial_number')} /></Field>
         <Field label="Bag number"><input className="input" value={f.bag_number ?? ''} onChange={set('bag_number')} /></Field>
-        <Field label="Seal number"><input className="input" value={f.seal_number ?? ''} onChange={set('seal_number')} /></Field>
-        <Field label="Stored at" hint="Where the item is kept now, e.g. Evidence room A, shelf 3"><input className="input" value={f.location ?? ''} onChange={set('location')} /></Field>
+        {!item && <Field label="Seal number"><input className="input" value={f.seal_number ?? ''} onChange={set('seal_number')} /></Field>}
+        {!item && <Field label="Stored at" hint="Where the item is kept now, e.g. Evidence room A, shelf 3"><input className="input" value={f.location ?? ''} onChange={set('location')} /></Field>}
         <Field label="Seized (date and time)"><input className="input" type="datetime-local" value={f.seized_at ?? ''} onChange={set('seized_at')} /></Field>
         <Field label="Seized from"><input className="input" value={f.seized_from ?? ''} onChange={set('seized_from')} placeholder="Place or person" /></Field>
         <Field label="Seized by"><input className="input" value={f.seized_by ?? ''} onChange={set('seized_by')} /></Field>
@@ -125,15 +135,27 @@ function Photo({ itemId, photoId, alt }: { itemId: string; photoId: string; alt:
   return url ? <img src={url} alt={alt} /> : <div className="media-box" style={{ height: 110 }}>…</div>;
 }
 
-function ItemDetail({ item, onClose, onChanged }: { item: Item; onClose: () => void; onChanged: () => void }) {
+function ItemDetail({ item, onClose, onChanged, onEdit }: { item: Item; onClose: () => void; onChanged: () => void; onEdit: () => void }) {
   const { can } = useAuth();
   const time = useTime();
   const toast = useToast();
   const [action, setAction] = useState<Action | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [sealIntact, setSealIntact] = useState<'' | 'yes' | 'no'>('');
+  const [removing, setRemoving] = useState<Item['photos'][number] | null>(null);
+  const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  async function removePhoto() {
+    if (!removing) return;
+    setBusy(true); setError('');
+    try {
+      await del(`/physical/${encodeURIComponent(item.item_id)}/photos/${removing.photo_id}`, { reason: reason.trim() });
+      toast(`Photo removed from ${item.item_id}`, 'ok');
+      setRemoving(null); setReason('');
+      onChanged();
+    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+  }
   const edit = can('EVIDENCE_UPLOAD');
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setForm({ ...form, [k]: e.target.value });
   async function act() {
@@ -171,6 +193,7 @@ function ItemDetail({ item, onClose, onChanged }: { item: Item; onClose: () => v
       </dl>
       {edit && (
         <div className="row" style={{ flexWrap: 'wrap', marginTop: 10 }}>
+          <Button size="sm" variant="ghost" icon={<Pencil size={13} />} onClick={onEdit}>Edit details</Button>
           {can_('CHECK_OUT') && <Button size="sm" icon={<LogOut size={13} />} onClick={() => setAction('CHECK_OUT')}>Check out</Button>}
           {can_('CHECK_IN') && <Button size="sm" variant="primary" icon={<LogIn size={13} />} onClick={() => setAction('CHECK_IN')}>Check in</Button>}
           {can_('TRANSFER') && <Button size="sm" icon={<MoveRight size={13} />} onClick={() => setAction('TRANSFER')}>Move</Button>}
@@ -203,9 +226,21 @@ function ItemDetail({ item, onClose, onChanged }: { item: Item; onClose: () => v
       <h4 style={{ margin: '14px 0 6px' }}>Photos</h4>
       <div className="photo-strip">
         {item.photos.map((p) => <figure key={p.photo_id}><Photo itemId={item.item_id} photoId={p.photo_id} alt={p.caption || p.name} />
-          <figcaption className="tiny muted">{p.caption || p.name}<br />{p.added_by_name} · {time(p.added_at)}</figcaption></figure>)}
+          <figcaption className="tiny muted">{p.caption || p.name}<br />{p.added_by_name} · {time(p.added_at)}
+            {edit && <><br /><button type="button" className="link-btn" onClick={() => { setRemoving(p); setReason(''); }}>Remove</button></>}</figcaption></figure>)}
         {!item.photos.length && <span className="small muted">No photos yet.</span>}
       </div>
+      {removing && (
+        <Card title={`Remove the photo ${removing.caption || removing.name}`}>
+          <Field label="Reason" hint="At least 5 characters; kept in the audit log. Not possible while the case is under legal hold.">
+            <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus placeholder="e.g. Photo of the wrong item" />
+          </Field>
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            <Button onClick={() => setRemoving(null)}>Cancel</Button>
+            <Button variant="danger" icon={<X size={13} />} busy={busy} disabled={reason.trim().length < 5} onClick={removePhoto}>Remove photo</Button>
+          </div>
+        </Card>
+      )}
       {edit && (
         <label className="btn sm" style={{ marginTop: 8, display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
           <Camera size={13} /> Add photo<input type="file" accept="image/jpeg,image/png" hidden aria-label="Add photo" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />

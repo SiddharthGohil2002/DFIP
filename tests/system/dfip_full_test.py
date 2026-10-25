@@ -5856,6 +5856,51 @@ def t_retention():
     req('PUT', '/api/admin/retention', adm, {'enabled': True, 'days': 2555})
 
 
+@section('31d Files an earlier database left in the storage')
+def t_leftovers():
+    """storage/ is a host folder that outlives a reset of the database (docker compose down -v), which starts the IDs
+    again: what was stored under an ID must not be taken for the new evidence, or the new timeline import, given it."""
+    db = mongo()
+    inv = C['INVESTIGATOR']
+    if not ANDROID_ZIP.exists():
+        note('leftovers of an earlier database', 'make-test-image.sh has not made the Android extraction; skipped')
+        return
+    case = post('/api/cases', inv, {'name': 'Leftovers of an earlier database', 'priority': 'LOW'}).json['case_id']
+    seq = (db.job_sequences.find_one({'_id': 'evidence'}) or {}).get('value', 0)
+    nxt = f'EVID-{max(seq, db.evidence.count_documents({})) + 1:03d}'
+    analysis = Path('/app/storage/analysis')
+    planted = [analysis / 'package' / nxt / 'filesystem1' / 'stale.txt', analysis / 'package' / f'{nxt}.manifest.jsonl',
+               analysis / 'working' / f'{nxt}.raw', analysis / 'text' / f'{nxt}.sqlite', analysis / 'recovered' / nxt / 'old' / 'stale.bin']
+    for p in planted:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b'left by an earlier database\n')
+    ev = upload(inv, case, ANDROID_ZIP.read_bytes(), ANDROID_ZIP.name).json
+    check('a new evidence item gets the ID the leftovers are stored under', ev.get('evidence_id') == nxt, (ev.get('evidence_id'), nxt))
+    check("the earlier database's working copy, unpacked package, content index and recovered files under that ID are removed",
+          not any(p.exists() for p in planted), [str(p) for p in planted if p.exists()])
+    j = _analyse(inv, nxt, {'profile': 'quick'})
+    pkg = db.evidence.find_one({'evidence_id': nxt}).get('package') or {}
+    paths = [f['path'] for f in db.fs_entries.find({'evidence_id': nxt, 'is_dir': False}, {'path': 1})]
+    dev = db.forensic_artifacts.find_one({'evidence_id': nxt, 'type': 'PHONE_DEVICE'}) or {}
+    check('the analysis unpacks the upload itself: the Android extraction is read as Android, with none of the leftovers',
+          j['status'] == 'COMPLETED' and [r['os'] for r in pkg.get('roots', [])] == ['android'] and (dev.get('os_family') or '').lower() == 'android'
+          and paths and not any('stale' in p for p in paths), (j['status'], pkg.get('roots'), dev.get('os_family'), paths[:5]))
+
+    if not PLASO_JSON.exists():
+        note('leftovers of an earlier database', 'make-plaso-timeline.sh has not been run; the timeline import part is skipped')
+        return
+    seq = (db.job_sequences.find_one({'_id': 'timeline_imports'}) or {}).get('value', 0)
+    ti = f'TI-{max(seq, db.timeline_imports.count_documents({})) + 1:04d}'
+    stale = Path('/app/storage/imports') / case / f'{ti}-timeline.jsonl'
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_bytes(b'{"left": "by an earlier database"}\n')
+    stale.chmod(0o444)
+    head = b''.join(PLASO_JSON.read_bytes().splitlines(keepends=True)[:20])
+    r = form('POST', f'/api/cases/{case}/timeline-imports', inv, {}, 'timeline.jsonl', head)
+    check('a Plaso timeline imports even where an earlier database left a file at the path its ID gives (read-only, as imports are)',
+          r.status == 200 and r.json.get('import_id') == ti and stale.read_bytes() == head, r)
+
+
 @section('32 Desktop-only writes (REQUIRE_DESKTOP_FOR_WRITES=true)')
 def t_desktop_writes():
     check('/health reports desktop-only writes', get('/health').json.get('require_desktop_for_writes') is True)
@@ -5911,7 +5956,7 @@ PHASES = {
              t_browser, t_usb, t_activity, t_computer, t_fileproc, t_content, t_containers, t_registry, t_eventlogs, t_user_activity, t_user_activity_samples, t_ntfs, t_ntfs_samples, t_email, t_chat_cloud, t_browser_depth,
              t_comms_samples, t_media, t_malware, t_disk_formats, t_encrypted_volumes, t_shadow_copies, t_packages, t_unix, t_more_filesystems, t_plaso, t_network, t_phones, t_memory,
              t_indicators, t_carving, t_search, t_findings, t_tags, t_review, t_physical, t_graph_summary, t_claude, t_analyst, t_reports, t_report_templates, t_exports, t_audit, t_notifications,
-             t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold, t_retention],
+             t_admin, t_desktop, t_websocket, t_misc, t_e01, t_bad_images, t_cancel, t_overview, t_dashboard, t_tamper, t_audit_tamper, t_delete, t_legal_hold, t_retention, t_leftovers],
     'desktop_writes': [t_desktop_writes],
     'reg_open': [t_reg_open],
     'reg_disabled': [t_reg_disabled],

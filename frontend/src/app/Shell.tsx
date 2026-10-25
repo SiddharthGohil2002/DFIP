@@ -12,6 +12,7 @@ import { CaseFormModal } from '../pages/Cases';
 import { Logo } from './Logo';
 import { DesktopDownload } from './DesktopDownload';
 import { ChangePasswordModal } from './ChangePassword';
+import { NotificationsButton } from './Notifications';
 import { NAV } from './nav';
 import { LegalHoldBadge } from '../pages/LegalHold';
 
@@ -117,6 +118,7 @@ export function Shell({ children }: { children: ReactNode }) {
               Local
             </Button>
           </div>
+          <NotificationsButton />
           <div className="topbar-user">
             <div className="avatar" aria-hidden="true">{initials(user?.name || '?')}</div>
             <div className="who hide-narrow">

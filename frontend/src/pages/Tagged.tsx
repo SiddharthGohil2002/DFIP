@@ -21,6 +21,20 @@ const SOURCE_PAGE: Record<TagItemType, string> = {
   NETWORK: '/app/network', PHONE: '/app/phones', MEMORY: '/app/memory',
 };
 
+/** Where Open goes: the page that lists the item. An ARTIFACT tag is a recovered, extracted or carved file or a YARA
+ * match; its snapshot detail starts with which (services/tags.py snapshot). */
+function openPath(t: Tag): string {
+  if (t.item_type === 'FILE' && t.evidence_id) return `/app/files?evidence=${t.evidence_id}`;
+  if (t.item_type === 'ARTIFACT') {
+    const detail = t.snapshot.detail || '';
+    if (detail.startsWith('Carved file')) return '/app/carving';
+    if (detail.startsWith('YARA match')) return '/app/indicators';
+    if (detail.startsWith('Extracted file')) return '/app/files?tab=members';
+    return '/app/files?tab=recovered';
+  }
+  return SOURCE_PAGE[t.item_type];
+}
+
 type Filter = 'ALL' | TagLabel;
 
 export function TaggedPage() {
@@ -76,7 +90,7 @@ export function TaggedPage() {
                     <td className="small nowrap">{t.created_by_name}<div className="tiny muted">{time(t.created_at)} · {t.tag_id}</div></td>
                     <td className="nowrap right">
                       <TagButton type={t.item_type} id={t.item_id} title={t.snapshot.title} />{' '}
-                      <Link className="btn sm" to={SOURCE_PAGE[t.item_type] + (t.item_type === 'FILE' && t.evidence_id ? `?evidence=${t.evidence_id}` : '')}>Open</Link>{' '}
+                      <Link className="btn sm" to={openPath(t)}>Open</Link>{' '}
                       <Button size="sm" variant="ghost" icon={<MessageSquare size={13} />} aria-expanded={open === t.tag_id} onClick={() => setOpen(open === t.tag_id ? null : t.tag_id)}>Comments</Button>
                     </td>
                   </tr>

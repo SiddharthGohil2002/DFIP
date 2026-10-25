@@ -232,8 +232,9 @@ async def add_photo(item_id: str, file: UploadFile = File(...), caption: str = F
     folder = _store() / item_id
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / f'{sha}.{kind[1]}'
-    dest.write_bytes(data)
-    dest.chmod(0o440)
+    if not dest.exists():  # named by its SHA-256, so a file already there holds these bytes (and is read-only)
+        dest.write_bytes(data)
+        dest.chmod(0o440)
     now = datetime.now(timezone.utc)
     photo = {'photo_id': sha[:16], 'sha256': sha, 'size': len(data), 'mime': kind[0], 'file': dest.name, 'caption': caption.strip()[:300],
              'name': Path(file.filename or 'photo').name[:200], 'added_by_name': u.get('name'), 'added_at': now}

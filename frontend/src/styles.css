@@ -199,6 +199,9 @@ button { font: inherit; }
 .banner.info { background: var(--accent-soft); color: var(--accent-ink); }
 
 .stat { padding: 16px 18px; }
+/* a row of stats (a capture's or a memory image's figures) that wraps on narrow screens */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.stats .stat .value { font-size: 20px; overflow-wrap: anywhere; }
 .stat .label { font-size: 12px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .stat .value { font-size: 26px; font-weight: 750; margin-top: 4px; letter-spacing: -0.02em; }
 .stat .hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
@@ -357,6 +360,13 @@ button { font: inherit; }
 .topbar-user .who { line-height: 1.2; }
 .topbar-user .who b { display: block; font-size: 13px; white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .topbar-user .who span { font-size: 11px; color: var(--muted); }
+
+/* notifications: unread count on the top-bar bell, and the list in its dialog */
+.notif-count { font-size: 11px; font-weight: 700; background: var(--danger); color: #fff; border-radius: 999px; padding: 0 6px; line-height: 17px; }
+.notif-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.notif { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.notif.unread { background: var(--accent-soft); border-color: var(--accent); }
+.notif .btn { margin-top: 6px; }
 .topbar .case-switch .select { width: 320px; max-width: 30vw; }
 @media (max-width: 1320px) { .hide-narrow { display: none !important; } }
 @media (max-width: 1600px) { .hide-medium { display: none !important; } }

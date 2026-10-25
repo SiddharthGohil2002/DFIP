@@ -17,7 +17,7 @@ export function RetentionPage() {
   const { can } = useAuth();
   const toast = useToast();
   const time = useTime();
-  const res = useApi<View>('/admin/retention');
+  const res = useApi<View>(can('SYSTEM_MANAGE') ? '/admin/retention' : null);
   const [enabled, setEnabled] = useState(true);
   const [days, setDays] = useState('2555');
   const [busy, setBusy] = useState('');
@@ -52,6 +52,7 @@ export function RetentionPage() {
   }
   const v = res.data;
   const years = Number(days) / 365;
+  if (!can('SYSTEM_MANAGE')) return <Banner tone="warn">Only administrators can manage retention.</Banner>;
   return (
     <div className="stack">
       <PageHeader title="Retention" subtitle="How long closed cases are kept. When a case is completed or archived its retention period starts; a daily check tells administrators which cases are due. Nothing is deleted automatically, and a case under legal hold is never due." />

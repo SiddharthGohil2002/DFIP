@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field, field_validator
 from pathlib import Path
 from datetime import datetime, timezone
 import hashlib
-import os
 import shutil
 from typing import Optional
 from ..security import current_user, require_write
@@ -11,7 +10,7 @@ from ..repositories.evidence import list_evidence, get_evidence, insert
 from ..repositories.cases import get_case
 from ..forensic.working_image import changed_files, evidence_sha256
 from ..services.audit import log
-from ..services.sequences import next_sequence
+from ..services.evidence_files import new_evidence_id, remove_analysis_outputs, remove_path
 from ..services.notifications import create as notify
 from ..database import get_db
 from ..core.config import settings
@@ -222,8 +221,7 @@ async def upload(
             pass
 
     now = datetime.now(timezone.utc)
-    n = next_sequence('evidence', floor=get_db()['evidence'].count_documents({}))
-    eid = f'EVID-{n:03d}'
+    eid = new_evidence_id(get_db())
     primary = order[0]
     fmt = image_set['format']
     if fmt == 'RAW' and image_set['kind'] == 'single':
@@ -383,24 +381,6 @@ class DeleteEvidence(BaseModel):
 ACTIVE_JOB_STATES = ['QUEUED', 'RUNNING', 'ASSIGNED']
 
 
-def _remove(path: Path, storage: Path, removed: list, problems: list):
-    """Deletes a file or directory, but only inside the DFIP storage area."""
-    try:
-        p = path.resolve()
-        if storage not in p.parents or not p.exists():
-            return
-        if p.is_dir():
-            from ..forensic.packages import remove_tree
-            remove_tree(p)  # clears read-only flags where the storage needs it
-        else:
-            if not os.access(p, os.W_OK):
-                p.chmod(0o600)
-            p.unlink()
-        removed.append(str(p))
-    except OSError as e:
-        problems.append(f'{path}: {e.strerror or e}')
-
-
 def _derived_tree(db, eid: str) -> list[dict]:
     """Evidence made from this one (decrypted volumes), and evidence made from those, children before parents."""
     out = []
@@ -462,23 +442,15 @@ def _delete_one(db, x: dict, u, reason: str) -> dict:
                                           {'$pull': {'evidence_ids': eid}, '$set': {'updated_at': now}}).modified_count
 
     storage = Path(settings.storage_path).resolve()
-    analysis = storage / 'analysis'
     removed, problems = [], []
     for f in x.get('image_files') or []:
-        _remove(Path(f['path']), storage, removed, problems)
+        remove_path(Path(f['path']), storage, removed, problems)
     if x.get('storage_path'):
-        _remove(Path(x['storage_path']), storage, removed, problems)
+        remove_path(Path(x['storage_path']), storage, removed, problems)
         folder = Path(x['storage_path']).parent  # an upload's own folder (older uploads were stored without one)
         if folder.resolve() != (storage / 'evidence' / 'original').resolve() and (storage / 'evidence' / 'original') in folder.resolve().parents:
-            _remove(folder, storage, removed, problems)
-    for p in (analysis / 'working').glob(f'{eid}.*'):
-        _remove(p, storage, removed, problems)
-    for area in ('recovered', 'carved', 'pipeline', 'members', 'members/mail', 'members/capture', 'thumbs', 'media', 'derived', 'package'):
-        _remove(analysis / area / eid, storage, removed, problems)
-    for p in (analysis / 'package').glob(f'{eid}.*'):  # the package's manifest (and an unfinished unpack)
-        _remove(p, storage, removed, problems)
-    for p in (analysis / 'text').glob(f'{eid}.*'):  # the content index (and an unfinished rebuild)
-        _remove(p, storage, removed, problems)
+            remove_path(folder, storage, removed, problems)
+    remove_analysis_outputs(eid, storage, removed, problems)
     db['evidence'].delete_one({'_id': x['_id']})
 
     # Patterns and anomalies are computed over the whole case timeline; recompute them without this image.

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Search, ShieldQuestion } from 'lucide-react';
 import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { useCase } from '../lib/caseContext';
 import { formatBytes, useTime } from '../lib/format';
 import { TagButton } from '../lib/tags';
@@ -58,11 +59,13 @@ export function NetworkPage() {
 
 /** Looks a host name or address up with the configured threat-intelligence providers (an explicit action, audited). */
 export function LookUp({ caseId, host }: { caseId: string; host: string }) {
+  const { can } = useAuth();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  if (!host) return null;
+  // The server only lets roles that may run analysis send lookups (ANALYSIS_RUN).
+  if (!host || !can('ANALYSIS_RUN')) return null;
   const ip = /^[0-9.]+$/.test(host) || host.includes(':');
   const run = async () => {
     setOpen(true); setBusy(true); setError(null);

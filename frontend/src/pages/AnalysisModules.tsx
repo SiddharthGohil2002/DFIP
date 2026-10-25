@@ -7,15 +7,16 @@ import type { AnalysisCatalog, Evidence } from '../lib/types';
 import { Badge, Banner, Button, Card, Modal, StatusBadge, useToast } from '../ui';
 
 const PROFILE_HINTS: Record<string, string> = {
-  quick: 'A fast first look: every file (including deleted ones), the file timeline, browser, USB and Windows activity.',
+  quick: 'A fast first look: every file (including deleted ones), the file timeline, browser, USB and Windows activity, Linux and macOS records, phones, network captures and memory images.',
   standard: 'Everything that is cheap enough to run on every disk. The default.',
   full: 'Everything, including the slower content modules.',
 };
 
-/** The kind of evidence, as the modules see it: a network capture, a logical package or a disk image. */
+/** The kind of evidence, as the modules see it: a network capture, a memory image, a logical package or a disk image
+ * (the same rule as evidence_kind in backend/app/forensic/source.py). */
 function evidenceKind(evidence: Evidence): string {
   const fmt = String(evidence.format || '').toUpperCase();
-  return fmt === 'PCAP' ? 'capture' : fmt === 'LOGICAL' ? 'logical' : 'disk';
+  return fmt === 'PCAP' ? 'capture' : fmt === 'MEMORY' ? 'memory' : fmt === 'LOGICAL' ? 'logical' : 'disk';
 }
 
 /** Starts an analysis with a chosen profile, or a custom set of modules. */

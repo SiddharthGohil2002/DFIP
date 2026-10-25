@@ -28,7 +28,7 @@ function useRecover() {
     setBusy(`${volumeId}:${inode}`);
     try {
       const r = await post<any>('/forensics/shadow-copies/recover', { evidence_id: evidenceId, volume_id: volumeId, inode, path });
-      toast(`${r.filename} recovered from shadow copy ${r.shadow_copy} (SHA-256 ${r.sha256.slice(0, 12)}…); it is listed under Files, Recovered`, 'ok');
+      toast(`${r.filename} recovered from shadow copy ${r.shadow_copy} (SHA-256 ${r.sha256.slice(0, 12)}…); it is listed under Files, Recovered files`, 'ok');
     } catch (e: any) {
       toast(e.message, 'danger');
     } finally {

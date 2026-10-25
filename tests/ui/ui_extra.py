@@ -429,8 +429,13 @@ with sync_playwright() as p:
     page.get_by_role('link', name=re.compile(r'^Memory\b')).first.click()
     expect(page.get_by_text(re.compile(r'1 of the 1 memory images in this case has not been read'))).to_be_visible()
     page.goto(f'{BASE}/app/evidence/{mem_eid}')
-    expect(page.get_by_text(re.compile('no Windows kernel was found in it'))).to_be_visible()
+    expect(page.get_by_text(re.compile('no Windows kernel was found in it')).first).to_be_visible()
     check('Memory says the image could not be read; the evidence page says why (no Windows kernel in random bytes)', True)
+    # The Analysis modules card lists the memory module (and no disk modules) for a memory image, with the same reason.
+    modules = page.locator('.card', has=page.get_by_role('heading', name='Analysis modules'))
+    expect(modules.locator('tr', has_text='Memory image').get_by_text(re.compile('no Windows kernel was found in it'))).to_be_visible()
+    expect(modules.get_by_text('File system index')).to_have_count(0)
+    check('the Analysis modules card lists the memory module for a memory image, not the disk modules', True)
     page.screenshot(path=f'{OUT}/x28-memory-unreadable.png', full_page=True)
 
     print('== Linux and macOS, collections, Plaso timelines')
@@ -517,6 +522,19 @@ with sync_playwright() as p:
     check('physical evidence: booked in, checked out, photographed, and its custody form downloaded',
           dl.value.suggested_filename.endswith('-custody.pdf'), dl.value.suggested_filename)
     page.screenshot(path=f'{OUT}/x21-physical.png', full_page=True)
+    d.get_by_role('button', name='Edit details').click()
+    e = page.get_by_role('dialog', name=re.compile(r'^Edit PHY-'))
+    expect(e.get_by_label('Stored at')).to_have_count(0)  # where it is kept changes through custody actions only
+    e.get_by_label('Serial number').fill('SN-UI-42')
+    e.get_by_role('button', name='Save changes').click()
+    d = page.get_by_role('dialog')
+    expect(d.get_by_text('SN-UI-42')).to_be_visible()
+    d.locator('.photo-strip').get_by_role('button', name='Remove').click()
+    d.get_by_label('Reason').fill('Photo of the wrong side')
+    d.get_by_role('button', name='Remove photo').click()
+    expect(d.locator('.photo-strip img')).to_have_count(0)
+    expect(d.get_by_text('No photos yet.')).to_be_visible()
+    check('physical evidence: its details corrected (not where it is kept), and a photo removed with a reason', True)
     page.keyboard.press('Escape')
 
     page.get_by_role('link', name='Link graph').first.click()

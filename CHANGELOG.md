@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed and added — running DFIP on another computer and demonstrating every function
+Found by running the full system and browser test suites on a fresh clone with only the README's steps, and by loading the new demo data.
+- **Evidence analysed with another image's files after a database reset.** `storage/` is a folder on the host and outlives `docker compose down -v`, which starts the evidence IDs again; a new upload given an ID that an earlier database had used was analysed from the working copy or unpacked package left under that ID (an Android extraction showed an iPhone's files). A new evidence ID now starts with nothing on disk: whatever an earlier database left under it is removed first (also for decrypted volumes). A Plaso import whose ID an earlier database had used no longer fails, and adding the same picture to a finding or a photo to a physical item twice no longer fails either. New system test section 31d.
+- **Memory images got the disk modules** in the analysis dialog and the Analysis modules card (the page did not know the memory kind); they now list the memory module.
+- **Notifications** (new bell in the top bar): the notifications the server already kept (analyses finished or failed, mentions, findings to review and review decisions, known-bad files, imports and downloads, cases assigned, legal holds, cases due for deletion) can be read and marked as read.
+- **Cancel** a queued or running analysis from Recent jobs on the case desktop.
+- **Physical evidence**: **Edit details** corrects an item after booking in (not where it is kept or its seal, which change through custody actions), and a photo can be removed with a reason.
+- Tagged items → **Open** goes to the right place for recovered, extracted and carved files and YARA matches (Files opens a tab given as `?tab=`).
+- Retention no longer shows a server error to non-administrators who open it; **Look up** (threat intelligence) is shown only to roles that may use it.
+- The figures of a network capture and a memory image are laid out in a row (the `stats` style was missing).
+- Wording: the website's facts and supported formats (28 modules, 38 report sections, every evidence kind), the getting-started steps, evidence cards, Recent jobs (verification is immediate, not a job) and labels that named tabs or modules differently from the pages.
+- **Demo data** (`scripts/demo/load_demo_data.py`): one command loads three analysed cases from the generated test evidence (and the public samples when downloaded) with findings in each review state, tags, comments, physical evidence, hash sets, a YARA rule set and a report, so every page has something to show; running it again completes what is missing.
+- **User guide** (`docs/USER_GUIDE.md`, and `docs/user-guide.html` built from it by `scripts/docs/build_user_guide.py`): every function step by step with screenshots of the demo data (`scripts/docs/take_screenshots.py`), a demo script and which evidence and profile each page needs. `.env.example` lists every setting `docker-compose.yml` passes on.
+- Tests: `ui_desktop` makes its own analysed case on a fresh installation instead of relying on one left by earlier runs.
+
 ### Fixed — found while wrapping up
 - A report of a case holding a Linux or macOS computer failed: the Computer and users section expected every computer's time zone in Windows' registry form. It now shows the zone name for Linux and macOS (and the column is headed "System").
 - The README's tooling, workflow and workspace sections describe the current platform; the desktop installer is rebuilt with every feature.

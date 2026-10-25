@@ -31,7 +31,7 @@ export function NtfsPage() {
         subtitle="NTFS internals: files whose times look altered (timestomping), alternate data streams including where downloads came from, and the USN change journal of files created, renamed and deleted."
       />
       {volumes.data && !volumes.data.data.length && (
-        <Banner tone="info">No NTFS volume has been analysed in this case. NTFS volumes are read by the Standard and Full analysis profiles (module "NTFS").</Banner>
+        <Banner tone="info">No NTFS volume has been analysed in this case. NTFS volumes are read by the Standard and Full analysis profiles (module "NTFS: timestomping, alternate data streams and USN journal").</Banner>
       )}
       <Card flush>
         <Tabs<Tab> value={tab} onChange={setTab} tabs={[

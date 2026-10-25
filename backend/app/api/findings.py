@@ -283,8 +283,9 @@ async def add_attachment(fid: str, file: UploadFile = File(...), caption: str = 
     folder = root() / fid
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / f'{sha}.{kind[1]}'
-    dest.write_bytes(data)
-    dest.chmod(0o440)
+    if not dest.exists():  # named by its SHA-256, so a file already there holds these bytes (and is read-only)
+        dest.write_bytes(data)
+        dest.chmod(0o440)
     a = {'attachment_id': sha[:16], 'sha256': sha, 'size': len(data), 'mime': kind[0], 'file': dest.name, 'name': Path(file.filename or 'picture').name[:200],
          'caption': caption.strip()[:300]}
     fresh = _update(f, u, 'EDITED', {'attachments': (f.get('attachments') or []) + [a]}, 'FINDING_ATTACHMENT_ADDED', changes={'attachments': ['', a['name']]})

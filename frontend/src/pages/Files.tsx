@@ -45,7 +45,9 @@ export function FilesPage() {
   const analyzed = (overview?.evidence || []).filter((e) => e.analysis_status === 'COMPLETED');
   const evidenceId = params.get('evidence') || analyzed[0]?.evidence_id || '';
   const initialFlag = (params.get('flag') || '') as Flag;
-  const [tab, setTab] = useState<Tab>(initialFlag ? 'all' : 'deleted');
+  // ?tab= opens a given tab (Tagged items links recovered files to the Recovered files tab).
+  const askedTab = params.get('tab') as Tab | null;
+  const [tab, setTab] = useState<Tab>(askedTab && ['deleted', 'all', 'members', 'recovered'].includes(askedTab) ? askedTab : initialFlag ? 'all' : 'deleted');
   const counts = overview?.counts;
 
   return (
@@ -277,7 +279,7 @@ export function FileDetails({ caseId, file: f, onClose }: { caseId: string; file
               <dt>Contains</dt>
               <dd className="small">{f.archive.error ? `Could not be opened: ${f.archive.error}` : f.archive.note ? f.archive.note
                 : `${formatNumber(f.archive.members || 0)} file(s): ${formatNumber(f.archive.extracted || 0)} extracted${f.archive.encrypted ? `, ${f.archive.encrypted} encrypted (listed only)` : ''}${f.archive.not_extracted ? `, ${f.archive.not_extracted} not extracted` : ''}${f.archive.names_encrypted ? ' · the member names are encrypted too' : ''}`}
-                {!!f.archive.members && <> — see the Archive contents tab</>}</dd>
+                {!!f.archive.members && <> — see the Archives and attachments tab</>}</dd>
             </>)}
             <dt>Size</dt><dd className="small">{formatBytes(f.size)} ({formatNumber(f.size)} bytes)</dd>
             {f.mime && (<>

@@ -343,8 +343,8 @@ def volume_decrypt_task(self, job_id: str, evidence_id: str, created_by: str):
     from .repositories.evidence import get_evidence
     from .services.audit import log
     from .services.jobs import queue
+    from .services.evidence_files import new_evidence_id
     from .services.secrets import decrypt
-    from .services.sequences import next_sequence
     from .websocket.manager import manager
 
     job, _ = _claim(job_id)
@@ -381,7 +381,7 @@ def volume_decrypt_task(self, job_id: str, evidence_id: str, created_by: str):
             opened.close()
 
         now = datetime.now(timezone.utc)
-        new_id = f'EVID-{next_sequence("evidence", floor=db["evidence"].count_documents({})):03d}'
+        new_id = new_evidence_id(db)
         target = folder / f'{new_id}.raw'
         partial.chmod(0o444)
         partial.replace(target)
